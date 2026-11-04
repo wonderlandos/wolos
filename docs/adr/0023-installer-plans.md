@@ -9,6 +9,7 @@ Decision:
 - The app builds a `Layout`; `wol_core::install::layout` compiles it to ordered steps and verifies them. Nothing is written until the summary, which lists exactly what will change.
 - `plan.json` names partitions by GPT UUID and carries a fingerprint of the disk. `install-run --plan` refuses a disk that no longer matches. After every step the table is read back; if a partition the plan does not name moved, the run stops.
 - The app runs as the live user and writes secrets as side files next to the plan (0600, in a 0700 directory under `XDG_RUNTIME_DIR`), never as arguments.
+- The install is encrypted unless the person turns it off (lead decision 135, recorded 2026-11-04, QA-ADR-35): `Flow::new` starts at `Protect::Tpm` when the machine has a chip, else `Protect::Password`, never `Off`; the plan carries the choice (`plan.protect`). 0040 names the unlock order.
 - Boot offers Install or Try. Install is a light session (compositor and the app, no wold); Try starts the live desktop, where Install WolOS is an app.
 - Two copies (A/B) need btrfs. Another file system for the system partition means one copy: the app says so, `/etc/wolos/single-copy` is set, there is no seal, and updates go in place.
 - A kept /home is mounted only after the system files are in, so nothing before that can write to it.

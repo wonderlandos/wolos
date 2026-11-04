@@ -39,6 +39,8 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "wallpaper.get" => get(env, wallpaper_state, json),
         "wallpaper.set" => wallpaper_set(env, &a("path"), json),
         "audio.get" => get(env, audio_state, json),
+        // `wol volume` without a number reads (`wol audio volume` always has one: the parser asks).
+        "audio.volume" if inv.get("percent").is_none() => get(env, audio_state, json),
         "audio.volume" => match percent(&a("percent"), 0) {
             Some(p) => control(env, json, audio_state, move |c| c.set_volume(p)),
             None => fail(

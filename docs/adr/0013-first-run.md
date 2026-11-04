@@ -12,6 +12,8 @@ Decision:
 - Pages are built from `kit::assistant` only (`tests/kit_only.rs`): fixed-size glass cards over the lock backdrop, the same as the login window and lock screen. Illustrations ship in `/usr/local/share/wolos/illustrations`.
 Consequences: the live image carries one sudo rule (`live` may run `install-run` and `install-check` as root). Time left is unknown until the first packages install. Language list is seven locales; more need translations first.
 
+Amended 2026-11-04 (QA-ADR-18, QA-ADR-9): Setup has seven steps (`shell::setup::STEPS`): Welcome, then Finish Secure Boot Setup (`Step::KeyScreen`, the one key screen of ADR 0025 at first start, shown only while the enrolment is pending), then the four questions as above, then You're All Set. Still four questions: the key screen asks nothing, it finishes a step the installer started.
+
 ## Second part: the first sign-in
 Status: accepted (0.13). Amends the "Setup steps" above: the Setup Assistant and the Install WolOS app keep what belongs to the whole computer (disk, the first administrator account, network, Secure Boot); what belongs to one person moves to that person's first sign-in.
 Context: a computer is often shared. The person who installs it answered the privacy, look and keyboard questions for everyone, and an account added later (Settings > Users & Groups, `useradd`) got no questions at all. The lead asked for a Fedora-style second part: the person's own pages, once, in their own session, before the desktop.

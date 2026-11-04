@@ -330,7 +330,7 @@ fn running_session() -> Option<SeatSession> {
         if shown.is_none() {
             eprintln!("wol-login: loginctl show-session {id} gave no answer within {t:?}");
         }
-        shown.unwrap_or_else(String::new)
+        shown.unwrap_or_default()
     })
 }
 

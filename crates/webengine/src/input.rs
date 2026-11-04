@@ -50,8 +50,16 @@ pub enum Input {
 pub enum Bridged {
     Input(Input),
     Focus(bool),
-    Resize { width: u32, height: u32, scale: f32 },
-    Theme { dark: bool },
+    Resize {
+        width: u32,
+        height: u32,
+        scale: f32,
+    },
+    /// The theme changed: dark or light, and the accent colour `0xRRGGBB` (QA-WEB-2).
+    Theme {
+        dark: bool,
+        accent_rgb: u32,
+    },
 }
 
 /// Modifier bits are wolkit's (`WOLKIT_MOD_*`) and the engine library's (`WWE_MOD_*`) alike.
@@ -130,6 +138,7 @@ pub fn bridge(record: &[u8], surface_node: u32) -> Vec<Bridged> {
             }],
             kind::THEME_CHANGED => vec![Bridged::Theme {
                 dark: u32_at(record, p)? != 0,
+                accent_rgb: u32_at(record, p + 4)? & 0x00ff_ffff,
             }],
             _ => return None,
         })
@@ -298,7 +307,13 @@ mod tests {
         );
         // A window event: whatever node the record names.
         let r = record(kind::THEME_CHANGED, 0, &words(&[1, 0x3b6df0, 0]));
-        assert_eq!(bridge(&r, 7), [Bridged::Theme { dark: true }]);
+        assert_eq!(
+            bridge(&r, 7),
+            [Bridged::Theme {
+                dark: true,
+                accent_rgb: 0x3b6df0
+            }]
+        );
         let r = record(kind::POINTER_LEAVE, 7, &words(&[0, 0]));
         assert_eq!(bridge(&r, 7), [Bridged::Input(Input::MouseLeave)]);
     }

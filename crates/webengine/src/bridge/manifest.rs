@@ -65,6 +65,13 @@ impl Manifest {
                 self.id
             ));
         }
+        // The scope name carries the id; a longer one would be cut there (QA-WEB-26).
+        if self.id.len() > shared::memsaver::APP_ID_MAX {
+            return Err(format!(
+                "id: at most {} characters",
+                shared::memsaver::APP_ID_MAX
+            ));
+        }
         if self.name.trim().is_empty() || self.name.chars().count() > 40 {
             return Err("name: 1 to 40 characters".into());
         }
@@ -186,6 +193,23 @@ permissions = ["system.read"]
         assert_eq!(m.entry, "index.html");
         assert_eq!(m.slug(), "hello");
         m.check().unwrap();
+    }
+
+    /// QA-WEB-26: the scope name keeps 64 bytes of the id (`shared::memsaver::app_id`), so a
+    /// longer id was cut, and wold, reading the id back from the scope, refused every call. The
+    /// check refuses such an id; the longest one it takes comes back whole from its scope.
+    #[test]
+    fn an_id_longer_than_the_scope_keeps_is_refused() {
+        let room = shared::memsaver::APP_ID_MAX - APP_ID_PREFIX.len();
+        let id = |n: usize| GOOD.replace("webapp.hello", &format!("webapp.{}", "a".repeat(n)));
+        assert!(Manifest::parse(&id(room + 1)).unwrap().check().is_err());
+        let longest = Manifest::parse(&id(room)).unwrap();
+        longest.check().unwrap();
+        let unit = crate::process::scope_unit(&longest.id, 4242, 7);
+        assert_eq!(
+            wol_core::sysapp::app_of_scope(&unit, 4242).as_deref(),
+            Some(longest.id.as_str())
+        );
     }
 
     #[test]

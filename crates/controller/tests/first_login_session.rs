@@ -16,7 +16,8 @@ struct Scratch {
 
 impl Scratch {
     fn new(tag: &str) -> Scratch {
-        let root = std::env::temp_dir().join(format!("wol-first-login-{tag}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("wol-first-login-{tag}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         for d in ["bin", "home", "run"] {
             fs::create_dir_all(root.join(d)).unwrap();
@@ -50,7 +51,10 @@ impl Scratch {
         }
         let st = Command::new("sh")
             .arg(repo("desktop/overlay/usr/bin/wol-session"))
-            .env("PATH", format!("{}:/usr/bin:/bin", self.root.join("bin").display()))
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin", self.root.join("bin").display()),
+            )
             .env("HOME", self.home())
             .env("XDG_RUNTIME_DIR", self.root.join("run"))
             .env("XDG_CONFIG_HOME", self.home().join(".config"))

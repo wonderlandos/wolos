@@ -395,10 +395,7 @@ fn other_folded(env: &dyn Env) -> Option<String> {
 pub fn list(env: &mut dyn Env, inv: &Invocation) -> i32 {
     // No folder (a machine without layers) is no layers; a size or a date that cannot be read is
     // shown as unknown ("-"), never as 0 bytes (the listing says what it could not read).
-    let ls = match capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]) {
-        Some(t) => t,
-        None => String::new(),
-    };
+    let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
     let names: Vec<String> = ls
         .lines()
         .map(str::trim)

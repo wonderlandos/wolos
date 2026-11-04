@@ -832,6 +832,41 @@ mod tests {
         );
     }
 
+    /// QA-STAB-9: `hl.window_rule({ name, enabled })` with no `match` updates the rule of that name
+    /// (Hyprland 0.57.1 `hlWindowRule`: a known name keeps its match, an unknown one makes an empty
+    /// rule), so every rule the include only switches must be defined, with its match, by the system
+    /// file the user file loads first.
+    #[test]
+    fn a_rule_the_include_only_switches_is_defined_with_its_match_by_the_system_file() {
+        let system = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+        let inc = DesktopPrefs::default().include();
+        let mut switched = 0;
+        for call in inc.lines().filter(|l| l.starts_with("hl.window_rule(")) {
+            if call.contains("match") {
+                continue;
+            }
+            switched += 1;
+            let name = call
+                .split("name = \"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .expect("a named rule");
+            let defined = system.lines().any(|l| {
+                l.starts_with("hl.window_rule(")
+                    && l.contains(&format!("name = \"{name}\""))
+                    && l.contains("match = {")
+            });
+            assert!(
+                defined,
+                "{name} is switched by the include but not defined in hyprland.lua"
+            );
+        }
+        assert!(
+            switched > 0,
+            "the include switches no rule: the test reads nothing"
+        );
+    }
+
     #[test]
     fn include_env_login_items_and_json_round_trip() {
         let p = DesktopPrefs {

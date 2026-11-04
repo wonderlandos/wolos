@@ -4,7 +4,7 @@
 // the empty state and the error state, keeps commands behind "Show the command", and takes
 // light and dark pictures at 1280 and 800 wide.
 //   node webapps/doctor/test/doctor.test.mjs
-// Env: CHROME (browser binary), PLAYWRIGHT (playwright-core folder), KIT (webapps/kit folder,
+// Env: CHROME (browser binary; without it the test is skipped), PLAYWRIGHT (playwright-core folder), KIT (webapps/kit folder,
 // default ../../kit), OUT (picture folder).
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
@@ -16,8 +16,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const app = resolve(here, "..");
 const kit = resolve(process.env.KIT || join(app, "..", "kit"));
 const out = resolve(process.env.OUT || join(app, "test", "out"));
-const chrome = process.env.CHROME || "/tmp/cw-tools/chrome";
-const pw = process.env.PLAYWRIGHT || "/tmp/cw-tools/node_modules/playwright-core";
+// No default location: a hand-placed browser in /tmp was the only way to run this (QA-WEB-12).
+const chrome = process.env.CHROME;
+const pw = process.env.PLAYWRIGHT || "playwright-core";
+if (!chrome) {
+  console.log("skipped: set CHROME to a headless Chromium binary (and PLAYWRIGHT to a playwright-core folder if it is not installed)");
+  process.exit(0);
+}
 const { chromium } = createRequire(import.meta.url)(pw);
 mkdirSync(out, { recursive: true });
 
@@ -87,6 +92,9 @@ for (const theme of ["light", "dark"]) {
     await pg.keyboard.press("Enter");
     await pg.waitForSelector('.dr-check[data-id="security.firewall"] wol-progress:not([hidden])', { timeout: 2000 });
     ok(true, `${tag}: Fix shows progress`);
+    // QA-WEB-25: the keyboard stays in the row while it works (the busy button is disabled).
+    ok(await pg.evaluate(() => !!document.activeElement.closest('.dr-check[data-id="security.firewall"]')),
+      `${tag}: focus stays in the check while the fix runs`);
     await pg.waitForFunction(() => {
       const r = document.querySelector('.dr-check[data-id="security.firewall"] .dr-result');
       return r && r.dataset.ok === "true";
@@ -95,6 +103,8 @@ for (const theme of ["light", "dark"]) {
       const w = document.querySelector('.dr-check[data-id="security.firewall"]');
       return { badge: w.querySelector("wol-badge").textContent, result: w.querySelector(".dr-result").textContent, status: w.dataset.status, open: w.querySelector(".dr-head").getAttribute("aria-expanded") };
     });
+    ok(await pg.evaluate(() => !!document.activeElement.closest('.dr-check[data-id="security.firewall"]')),
+      `${tag}: focus is still in the check after the fix, not on the page body`);
     ok(before === "Needs a fix" && after.badge === "Fine" && after.status === "ok" && after.result === "Fixed." && after.open === "true",
       `${tag}: Fix ran and the row says "${after.result}" (${before} -> ${after.badge})`);
     // "Show the command" opens to the command.

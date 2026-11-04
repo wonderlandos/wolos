@@ -195,6 +195,46 @@
       "interact": "scroll+type"
     },
     {
+      "id": "wol-doctor",
+      "kind": "web",
+      "runtime": "WolOS system web app (Doctor, wol-webhost on the Rust engine; ADR 0048)",
+      "engine": "servo",
+      "packages": [
+        "wolos-webapps",
+        "webengine-wolos"
+      ],
+      "origin": [
+        "example"
+      ],
+      "argv": [
+        "/usr/bin/wol-webhost",
+        "/usr/share/wolos/webapps/doctor/app.toml"
+      ],
+      "class": "^org\\.wolos\\.webapp\\.doctor$",
+      "interact": "none",
+      "optional": true
+    },
+    {
+      "id": "wol-hello",
+      "kind": "web",
+      "runtime": "WolOS system web app (Hello, wol-webhost on the Rust engine; ADR 0048)",
+      "engine": "servo",
+      "packages": [
+        "wolos-webapps",
+        "webengine-wolos"
+      ],
+      "origin": [
+        "example"
+      ],
+      "argv": [
+        "/usr/bin/wol-webhost",
+        "/usr/share/wolos/webapps/hello/app.toml"
+      ],
+      "class": "^org\\.wolos\\.webapp\\.hello$",
+      "interact": "none",
+      "optional": true
+    },
+    {
       "id": "wolkit-todos",
       "kind": "native",
       "runtime": "Wolkit app (wolos-crystal/examples/todos, release build)",

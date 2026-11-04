@@ -123,6 +123,10 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
     let mut te = ToolEnv::new(env, format!("webapp:{app}"));
     let code = crate::run::dispatch(&inv, &mut te);
     let (out, err) = (te.out, te.err);
+    let read = wol_core::sysapp::permission_of(method).is_some_and(|p| !p.admin);
+    if let Some(report) = (code != 0 && read).then(|| report_of(&out, &err)).flatten() {
+        return json!({ "ok": report });
+    }
     if code != 0 {
         let msg = err.trim().trim_start_matches("wol: ").trim().to_string();
         let msg = if msg.is_empty() {
@@ -134,6 +138,18 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
     }
     let text = out.trim_end();
     json!({"ok": serde_json::from_str::<Value>(text).unwrap_or_else(|_| Value::String(text.to_string()))})
+}
+
+/// The JSON report a read verb printed though it exited non-zero, when that is all it said: a
+/// check's exit status says what it found (`wol doctor` exits 1 when a check fails, QA-WEB-24),
+/// and the report is the answer. None when stderr has words or stdout is not one JSON object.
+fn report_of(out: &str, err: &str) -> Option<Value> {
+    if !err.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(out.trim_end())
+        .ok()
+        .filter(Value::is_object)
 }
 
 /// The verb: prints the reply line, exit status 0 whenever a reply was printed (the reply says).
@@ -175,6 +191,40 @@ mod tests {
             &mut env,
         );
         assert_eq!(v["ok"]["os"], "WolOS", "{v}");
+    }
+
+    /// QA-WEB-24: `wol doctor` exits 1 when a check fails, so Doctor showed "It did not work."
+    /// exactly when the computer had a problem. A read verb's JSON report is the answer whatever
+    /// its exit status says; a failing read with nothing on stdout is still a fault.
+    #[test]
+    fn a_check_that_finds_a_problem_answers_with_its_report() {
+        let mut env = FakeEnv {
+            captures: vec![(
+                "systemctl show -p UnitFileState --value nftables.service".into(),
+                "disabled\n".into(),
+            )],
+            ..Default::default()
+        };
+        let v = call(
+            "org.wolos.webapp.doctor",
+            "doctor.check",
+            r#"{"area":"security"}"#,
+            &mut env,
+        );
+        assert_eq!(v["ok"]["ready"], false, "{v}");
+        let fw = v["ok"]["checks"]
+            .as_array()
+            .and_then(|c| c.iter().find(|c| c["id"] == "security.firewall"))
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(fw["status"], "fail", "{v}");
+        assert_eq!(report_of("", "wol: no such area\n"), None);
+        assert_eq!(report_of("not json", ""), None);
+        assert_eq!(report_of("[1]", ""), None, "an object only");
+        assert_eq!(
+            report_of("{\"ready\":false}\n", ""),
+            Some(json!({"ready": false}))
+        );
     }
 
     #[test]

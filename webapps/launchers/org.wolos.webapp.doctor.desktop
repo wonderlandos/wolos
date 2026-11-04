@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Doctor
+Comment=Checks your computer and fixes what it finds
+Exec=/usr/bin/wol-webhost /usr/share/wolos/webapps/doctor/app.toml
+Icon=/usr/share/wolos/webapps/doctor/icon.svg
+Terminal=false
+Categories=System;
+StartupWMClass=org.wolos.webapp.doctor
+X-WolOS-WebApp=0.1.0

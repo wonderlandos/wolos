@@ -286,8 +286,30 @@ fn sysctl_hardening_and_no_core_files() {
         }
         prev = l;
     }
+    coredump_keeps_crash_details_not_core_files();
+}
+
+/// QA-CRASH-4: no core file is kept (`Storage=none`: a crashed compositor once left 27 MB in a
+/// home folder), but systemd-coredump still reads the core, so the journal gets the stack trace
+/// (`coredumpctl info`) and `/usr/lib/wolos/report` sees the crash. `ProcessSizeMax=0` skipped
+/// both: every crash read "terminated abnormally without generating a coredump".
+fn coredump_keeps_crash_details_not_core_files() {
     let c = read("files/usr/lib/systemd/coredump.conf.d/wolos.conf");
-    assert!(c.contains("Storage=none") && c.contains("ProcessSizeMax=0"));
+    let key = |k: &str| {
+        c.lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+            .map(str::trim)
+    };
+    assert_eq!(key("Storage"), Some("none"), "no core files on disk");
+    let max = key("ProcessSizeMax").expect("ProcessSizeMax");
+    let mb: u64 = max
+        .trim_end_matches('M')
+        .parse()
+        .expect("ProcessSizeMax in M");
+    assert!(
+        max.ends_with('M') && mb >= 64,
+        "ProcessSizeMax={max}: the core is read for its stack trace"
+    );
 }
 
 /// The power policy follows the AC adapter (udev) and locks sessions before sleep (system-sleep).

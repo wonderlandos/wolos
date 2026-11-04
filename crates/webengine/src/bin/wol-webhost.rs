@@ -18,7 +18,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use webengine::bridge::manifest::{KIT, Manifest, SYSTEM_DIR};
-use webengine::bridge::{AppInfo, Bridge, Theme};
+use webengine::bridge::{AppInfo, Bridge, Theme, accent_id};
 use webengine::host::{Host, WoldClient, initial_grants, locale};
 use webengine::{App, Channel, Target, WebView, ffi, input, process};
 use wolkit::event::{HEADER, kind};
@@ -87,6 +87,13 @@ fn ensure_scope(id: &str, name: &str, manifest_arg: &str) -> Result<(), String> 
     Err(format!("systemd-run: {err}"))
 }
 
+fn config_home() -> PathBuf {
+    match std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()) {
+        Some(d) => d.into(),
+        None => PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"),
+    }
+}
+
 fn data_home() -> PathBuf {
     match std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
         Some(d) => d.into(),
@@ -122,6 +129,28 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     }
     let system = std::fs::canonicalize(SYSTEM_DIR).is_ok_and(|s| s == root);
     ensure_scope(&manifest.id, &manifest.name, &toml.to_string_lossy())?;
+    // One host per app (QA-WEB-10): after the re-exec into the scope, whose exec closes a lock
+    // taken before it. A second launch raises the window of the first and ends.
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR").map(PathBuf::from);
+    let _single = match process::claim(runtime.as_deref(), &manifest.id) {
+        process::Single::First(lock) => Some(lock),
+        process::Single::Running => {
+            let argv = process::raise_argv(&manifest.id);
+            let _ = std::process::Command::new(&argv[0])
+                .args(&argv[1..])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .status();
+            return Ok(());
+        }
+        process::Single::Unchecked(why) => {
+            eprintln!(
+                "wol-webhost: could not tell whether {} runs already: {why}",
+                manifest.id
+            );
+            None
+        }
+    };
     let policy = manifest.policy(&dir, &kit);
     let env = |k: &str| std::env::var(k).ok();
 
@@ -140,8 +169,14 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
         theme: if dark { Theme::Dark } else { Theme::Light },
         accent: accent.to_owned(),
     };
-    let accent = wol_core::theme::accent::DEFAULT;
-    let bridge = Bridge::new(manifest.clone(), info(false, accent), &grants(&consent(())));
+    // The look the toolkit paints now (QA-WEB-2: the page started light violet whatever was set).
+    let look = wolkit::window::native::theme::read(
+        &config_home(),
+        wolkit::window::native::sys::local_time(),
+    )
+    .env;
+    let start = info(look.dark, accent_id(look.dark, look.accent_rgb));
+    let bridge = Bridge::new(manifest.clone(), start, &grants(&consent(())));
     let init = bridge.init().to_string();
     let host = Rc::new(RefCell::new(Host::new(bridge, Arc::new(WoldClient::new()))));
 
@@ -165,21 +200,30 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
         );
     }
     let profile = wol_core::webapps::profile_dir(&data_home(), &manifest.id);
-    let mut app = App::new(&manifest.id, profile);
-    let sink = host.clone();
-    app.channel = Some(Channel {
-        origin: format!("file://{}/", dir.display()),
-        init,
-        on_message: Box::new(move |text| {
-            if let Ok(mut h) = sink.try_borrow_mut() {
-                h.on_page_message(text);
-            }
-        }),
-    });
+    let origin = format!("file://{}/", dir.display());
+    // The page in its own view, with the channel at every document of the app's folder: the error
+    // page of the kit is shown in a view like this one, so its Try again returns to a page that
+    // has the channel (QA-WEB-9).
+    let make_view = |url: &str| -> Result<WebView, String> {
+        let mut app = App::new(&manifest.id, profile.clone());
+        let sink = host.clone();
+        app.channel = Some(Channel {
+            origin: origin.clone(),
+            init: init.clone(),
+            on_message: Box::new(move |text| {
+                if let Ok(mut h) = sink.try_borrow_mut() {
+                    h.on_page_message(text);
+                }
+            }),
+        });
+        // SAFETY: `sub` outlives every view: the view is dropped before the subsurface is
+        // destroyed below.
+        let target = unsafe { Target::surface(&sub) };
+        WebView::new(&policy, app, target, url).map_err(|e| e.to_string())
+    };
     let url = page_url(&dir, &manifest.entry, !carries);
-    // SAFETY: `sub` outlives the view: the view is dropped before the subsurface is destroyed below.
-    let target = unsafe { Target::surface(&sub) };
-    let view = WebView::new(&policy, app, target, &url).map_err(|e| e.to_string())?;
+    let mut view = Some(make_view(&url)?);
+    let mut error_shown = false;
 
     let mut buf = vec![0u8; 1 << 16];
     let mut last_grants = Instant::now();
@@ -202,17 +246,35 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
                 break 'run;
             }
             for b in input::bridge(record, SURFACE) {
-                if let input::Bridged::Theme { dark: d } = &b {
-                    host.borrow_mut().set_app(info(*d, accent));
+                if let input::Bridged::Theme { dark, accent_rgb } = &b {
+                    host.borrow_mut()
+                        .set_app(info(*dark, accent_id(*dark, *accent_rgb)));
                 }
-                view.apply(&b);
+                if let Some(v) = &view {
+                    v.apply(&b);
+                }
             }
             at += len;
         }
-        view.spin();
-        let _ = view.take_woken();
-        for url in view.take_refused() {
-            eprintln!("wol-webhost: refused to leave the app: {url}");
+        if let Some(v) = &view {
+            v.spin();
+            let _ = v.take_woken();
+            for url in v.take_refused() {
+                eprintln!("wol-webhost: refused to leave the app: {url}");
+            }
+        }
+        // The page's content process crashed: a blank window says nothing (QA-WEB-9). Show the
+        // kit's error page in a new view (the old one goes first: one engine at a time).
+        if !error_shown && view.as_ref().is_some_and(|v| v.state().crashed > 0) {
+            eprintln!("wol-webhost: the page's content process crashed");
+            error_shown = true;
+            view = None;
+            let retry = page_url(&dir, &manifest.entry, !carries);
+            let to = process::error_url(&kit, "crashed", &manifest.name, &retry);
+            match make_view(&to) {
+                Ok(v) => view = Some(v),
+                Err(e) => eprintln!("wol-webhost: the error page could not be shown: {e}"),
+            }
         }
         if !system && last_grants.elapsed() >= GRANTS_EVERY {
             last_grants = Instant::now();
@@ -224,7 +286,7 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
         }
         let ready = host.borrow().take_ready();
         for text in ready {
-            if !view.post_message(&text) {
+            if view.as_ref().is_some_and(|v| !v.post_message(&text)) {
                 eprintln!("wol-webhost: a message could not be handed to the page");
             }
         }

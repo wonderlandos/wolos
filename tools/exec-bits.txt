@@ -91,6 +91,7 @@ tools/crystal/pin-shards.sh
 tools/hooks/guard-test.sh
 tools/hooks/install.sh
 tools/hooks/public-guard
+tools/install-webapps.sh
 tools/license/relicense.py
 tools/ruby/lint.sh
 tools/site-shots.sh

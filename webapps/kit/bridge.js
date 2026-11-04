@@ -20,6 +20,20 @@
   var pending = new Map();
   var subs = new Map();
   var next = 1;
+  // The channel drops a message over 64 KiB without a word (crates/webengine/src/engine/channel.rs
+  // MAX_MESSAGE), so the page refuses it first; and a call that gets no answer ends in an error
+  // instead of a promise that never settles (QA-WEB-6). The host's own wait for wold is 150-180 s
+  // (wol_core::sysapp::host_wait_secs); an administrator method waits on a sheet for a person and
+  // has no page-side limit (ADMIN is test-checked against the catalog, tests/webapps.rs).
+  var MAX_BYTES = 64 * 1024;
+  var ADMIN = ["doctor.fix", "update.install"];
+  var WATCH_MS = 210000;
+  var watch = dev && /[?&]watch=(\d+)/.exec(location.search);
+  if (watch) WATCH_MS = Number(watch[1]);
+
+  function bytes(text) {
+    try { return unescape(encodeURIComponent(text)).length; } catch (x) { return text.length * 3; }
+  }
 
   function paint() {
     var r = document.documentElement;
@@ -48,6 +62,7 @@
     if (typeof m.id === "number" && pending.has(m.id)) {
       var p = pending.get(m.id);
       pending.delete(m.id);
+      if (p.timer) clearTimeout(p.timer);
       if ("err" in m) p.reject(fault(m.err)); else p.resolve(m.ok);
     } else if (typeof m.topic === "string") {
       if (m.topic === "app" && m.data) { app = Object.freeze(Object.assign({}, m.data)); paint(); }
@@ -71,10 +86,23 @@
       return Promise.reject(fault({ code: "usage", message: "The request was not understood.",
         hint: "call(method: string, params?: object)" }));
     }
+    var text = JSON.stringify({ id: next, call: method, params: params || {} });
+    if (bytes(text) > MAX_BYTES) {
+      return Promise.reject(fault({ code: "usage", message: "The request was too large.",
+        hint: "call(method, params): keep the whole request under 64 KiB" }));
+    }
     var id = next++;
     return new Promise(function (resolve, reject) {
-      pending.set(id, { resolve: resolve, reject: reject });
-      send({ id: id, call: method, params: params || {} });
+      var entry = { resolve: resolve, reject: reject, timer: 0 };
+      if (ADMIN.indexOf(method) < 0) {
+        entry.timer = setTimeout(function () {
+          if (!pending.delete(id)) return;
+          reject(fault({ code: "unavailable", message: "WolOS did not answer, so that did not finish.",
+            hint: "Try again" }));
+        }, WATCH_MS);
+      }
+      pending.set(id, entry);
+      t.post(text);
     });
   }
 

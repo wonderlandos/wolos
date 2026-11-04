@@ -1104,3 +1104,25 @@ fn an_unreadable_package_is_refused_before_the_sheet() {
     assert!(f.ran.borrow().is_empty());
     assert_eq!(f.discarded.borrow().len(), 1, "the copy is dropped");
 }
+
+/// QA-ADR-23: ADR 0034 publishes the staged-install caps; the constants are the same numbers
+/// (16 GiB unpacked = 4 x the 4 GiB copy cap; one copy per account, two in flight = 8 GiB).
+#[test]
+fn staged_caps_are_the_adr_0034_numbers() {
+    assert_eq!(MAX_UNPACKED, 16 << 30);
+    assert_eq!(MAX_STAGED, 4 << 30);
+    assert_eq!(MAX_STAGED * STAGED_TOTAL as u64, 8 << 30);
+    assert_eq!(ZSTD_TIMEOUT, Duration::from_secs(120));
+    let adr = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/adr/0034-root-staged-installs.md"
+    ))
+    .unwrap();
+    for quoted in [
+        "120 s, at most 16 GiB unpacked",
+        "4 GiB per copy",
+        "8 GiB of copies in flight",
+    ] {
+        assert!(adr.contains(quoted), "ADR 0034 no longer says {quoted:?}");
+    }
+}

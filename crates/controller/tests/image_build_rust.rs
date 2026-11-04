@@ -57,7 +57,8 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search
         "{calls}"
     );
     assert!(calls.contains("-p xguard-clam"), "{calls}\n{err}");
-    // QA-SHADOW-26: the web-app host is runtime-required (api webapp.rs HOST): it is installed
+    // QA-SHADOW-26, ADR 0048: the web-app host is runtime-required (wold takes a call only from
+    // /usr/bin/wol-webhost, QA-WEB-4): api webapp.rs HOST; it is installed
     // where HOST names it, from the workspace build (crates/webengine's bin).
     let host = t.join("dest/usr/bin/wol-webhost");
     assert!(

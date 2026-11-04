@@ -563,7 +563,7 @@ impl WebView {
                 height,
                 scale,
             } => self.resize(*width, *height, *scale),
-            Bridged::Theme { dark } => self.set_dark(*dark),
+            Bridged::Theme { dark, .. } => self.set_dark(*dark),
         }
     }
 

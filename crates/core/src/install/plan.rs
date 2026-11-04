@@ -887,7 +887,7 @@ mod tests {
             root(keep + 2 * MIB) < ROOMY_ROOT,
             "and Windows keeps the rest"
         );
-        assert!((lo..=hi).contains(&keep) && keep % MIB == 0);
+        assert!((lo..=hi).contains(&keep) && keep.is_multiple_of(MIB));
         // A big disk: the half way split is roomy and stays.
         let big = disk();
         let (lo, hi) = alongside_range(&big, &big.parts[1]).unwrap();

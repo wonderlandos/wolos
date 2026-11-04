@@ -175,3 +175,38 @@ fn rows_are_well_formed() {
         "the gap analysis needs native comparison rows"
     );
 }
+
+/// QA-WEB-11: the system web apps of the image are measured like the rest: a row per app in
+/// `webapps/SHIPPED` (and one for the starter, which shows the cost of the smallest app), running
+/// the installed host on the installed manifest, found by the window class the launcher gives.
+#[test]
+fn every_system_web_app_has_a_row_running_the_installed_host() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let shipped = std::fs::read_to_string(root.join("webapps/SHIPPED")).unwrap();
+    let mut slugs: Vec<&str> = shipped
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    slugs.push("hello");
+    let v = spec();
+    let rows = rows(&v);
+    for slug in slugs {
+        let r = rows
+            .iter()
+            .find(|r| r["id"] == format!("wol-{slug}"))
+            .unwrap_or_else(|| panic!("{APPS}: no row wol-{slug}"));
+        assert_eq!(
+            strs(&r["argv"]),
+            [
+                "/usr/bin/wol-webhost".to_string(),
+                format!("/usr/share/wolos/webapps/{slug}/app.toml")
+            ]
+        );
+        assert_eq!(
+            r["class"].as_str(),
+            Some(format!("^org\\.wolos\\.webapp\\.{slug}$").as_str())
+        );
+        assert_eq!(r["kind"], "web");
+    }
+}

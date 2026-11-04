@@ -133,13 +133,17 @@ fn percent_ok(s: &str) -> bool {
     })
 }
 
-/// Launcher id from a name: lowercase letters and digits joined by single `-`, at most 48
-/// bytes (`"My Mail!"` -> `my-mail`). None when no letter or digit is left.
+/// Most bytes of a [`slug`]: `org.wolos.webapp.` and the slug fill the 64 bytes a scope name keeps
+/// (`shared::memsaver::APP_ID_MAX`); 48 made a 65-byte id that was cut (QA-WEB-26).
+pub const SLUG_MAX: usize = 47;
+
+/// Launcher id from a name: lowercase letters and digits joined by single `-`, at most
+/// [`SLUG_MAX`] bytes (`"My Mail!"` -> `my-mail`). None when no letter or digit is left.
 pub fn slug(name: &str) -> Option<String> {
     let mut out = String::new();
     for c in name.chars() {
         if c.is_ascii_alphanumeric() {
-            if out.len() >= 48 {
+            if out.len() >= SLUG_MAX {
                 break;
             }
             out.push(c.to_ascii_lowercase());
@@ -488,7 +492,13 @@ mod tests {
             Some("youtube-music")
         );
         assert_eq!(slug("日本"), None);
-        assert_eq!(slug(&"a".repeat(80)).map(|s| s.len()), Some(48));
+        // 47: with the host's `org.wolos.webapp.` (17 bytes) the id fills the 64 bytes a scope
+        // name keeps (`shared::memsaver::APP_ID_MAX`), never more (QA-WEB-26).
+        assert_eq!(slug(&"a".repeat(80)).map(|s| s.len()), Some(SLUG_MAX));
+        assert_eq!(
+            "org.wolos.webapp.".len() + SLUG_MAX,
+            shared::memsaver::APP_ID_MAX
+        );
         assert_eq!(check_name(" Mail "), Ok("Mail".into()));
         for bad in ["", "   ", "!!!", "a\nb", &"m".repeat(MAX_NAME + 1)] {
             assert_eq!(check_name(bad), Err(Error::BadName), "{bad:?}");
