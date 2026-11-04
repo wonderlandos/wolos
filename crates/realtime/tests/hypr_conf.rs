@@ -921,7 +921,9 @@ fn the_session_starts_night_light_in_its_saved_state() {
     let rel = state_file(Toggle::NightLight, std::path::Path::new("/C"), s);
     let rel = rel.strip_prefix(s).unwrap().display().to_string();
     assert!(
-        SUNSET_RUN.contains(&format!("f=\"${{XDG_STATE_HOME:-$HOME/.local/state}}/{rel}\"")),
+        SUNSET_RUN.contains(&format!(
+            "f=\"${{XDG_STATE_HOME:-$HOME/.local/state}}/{rel}\""
+        )),
         "{SUNSET_RUN}"
     );
     assert!(
