@@ -411,7 +411,7 @@ pub fn name_of(dispatcher: &str, args: &str) -> Option<(&'static str, Group)> {
 
 use Group as G;
 /// (dispatcher, args, name, group) for every shipped bind (desktop conf + tiling set).
-const NAMES: [(&str, &str, &str, Group); 92] = [
+const NAMES: [(&str, &str, &str, Group); 100] = [
     ("exec", "wol-search", "Show Search", G::Search),
     ("exec", "foot", "Open Terminal", G::Apps),
     ("exec", "nautilus", "Open Files", G::Apps),
@@ -420,13 +420,13 @@ const NAMES: [(&str, &str, &str, Group); 92] = [
         "exec",
         "wol shell toggle control-center",
         "Show Control Center",
-        G::System,
+        G::Accessibility,
     ),
     (
         "exec",
         "wol shell toggle notifications",
         "Show Notification Center",
-        G::System,
+        G::Accessibility,
     ),
     (
         "exec",
@@ -448,6 +448,54 @@ const NAMES: [(&str, &str, &str, Group); 92] = [
     ("workspace", "2", "Switch to Desktop 2", G::Overview),
     ("workspace", "3", "Switch to Desktop 3", G::Overview),
     ("workspace", "4", "Switch to Desktop 4", G::Overview),
+    (
+        "exec",
+        "hyprctl dispatch movetoworkspace e-1",
+        "Move window left a space",
+        G::Overview,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movetoworkspace e+1",
+        "Move window right a space",
+        G::Overview,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movetoworkspace 1",
+        "Move window to Desktop 1",
+        G::Overview,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movetoworkspace 2",
+        "Move window to Desktop 2",
+        G::Overview,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movetoworkspace 3",
+        "Move window to Desktop 3",
+        G::Overview,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movetoworkspace 4",
+        "Move window to Desktop 4",
+        G::Overview,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movewindow mon:l",
+        "Move window to the display on the left",
+        G::Windows,
+    ),
+    (
+        "exec",
+        "hyprctl dispatch movewindow mon:r",
+        "Move window to the display on the right",
+        G::Windows,
+    ),
     ("exec", "wol shell show switcher", "Switch apps", G::Windows),
     (
         "exec",
@@ -706,6 +754,10 @@ pub struct Overrides {
 pub enum Refused {
     /// The combo is taken by this shortcut (id, name); call again with `swap`.
     Conflict(String, String),
+    /// The combo belongs to this custom shortcut (id, name) and the shortcut asking for it has
+    /// no combo to hand over: a swap would leave the custom one keyless, and a custom shortcut
+    /// without keys does not exist (it would be deleted). Change or remove the custom one first.
+    CustomNeedsKeys(String, String),
     Unknown,
     Fixed,
     /// Custom shortcut without a name or with an unusable command.
@@ -748,6 +800,14 @@ impl Overrides {
         if let Some(k) = &combo
             && let Some(other) = conflict(&e, k, id)
         {
+            if old.is_none() && custom_index(&other.id).is_some_and(|i| i < self.custom.len()) {
+                // QA-SET-35: `set(custom, None)` removes the entry. Refuse before anything
+                // changes, swap or not (the Swap button is only a second try of the same call).
+                return Err(Refused::CustomNeedsKeys(
+                    other.id.clone(),
+                    other.name.clone(),
+                ));
+            }
             if !swap {
                 return Err(Refused::Conflict(other.id.clone(), other.name.clone()));
             }
@@ -1140,6 +1200,112 @@ mod tests {
         assert_eq!(
             b[0].value(&c("SUPER ALT", "4")),
             "SUPER ALT, 4, exec, wol-screenshot region"
+        );
+    }
+
+    /// QA-SET-35: a built-in row turned Off, a custom shortcut on a combo, record that combo on
+    /// the Off row and press Swap: the custom shortcut used to be deleted (`set(custom, None)`).
+    #[test]
+    fn swap_from_off_row_keeps_custom() {
+        let d = defaults(SHIPPED, TILING);
+        let mut o = Overrides::default();
+        let off = "exec wol-search";
+        o.assign(&d, off, None, false).unwrap();
+        o.add_custom(
+            &d,
+            Custom {
+                name: "Bee".into(),
+                combo: c("SUPER", "B"),
+                command: "foot".into(),
+            },
+        )
+        .unwrap();
+        let before = o.clone();
+        for swap in [false, true] {
+            match o.assign(&d, off, Some(c("SUPER", "B")), swap) {
+                Err(Refused::CustomNeedsKeys(id, name)) => {
+                    assert_eq!((id.as_str(), name.as_str()), ("custom-1", "Bee"))
+                }
+                r => panic!("swap={swap}: {r:?}"),
+            }
+            assert_eq!(o, before, "refusal changes nothing");
+        }
+        assert_eq!(o.custom.len(), 1);
+        // A row that has a combo still swaps with a custom shortcut (it hands its combo over).
+        o.assign(&d, "exec foot", Some(c("SUPER", "B")), true)
+            .unwrap();
+        assert_eq!(o.custom.len(), 1);
+        assert_eq!(o.custom[0].combo, c("SUPER", "Return"));
+    }
+
+    /// QA-ACC-7: Control Center and Notification Center open from the keyboard, and the sheet lists
+    /// both under Accessibility (they used to have only the menu bar's pointer path).
+    #[test]
+    fn both_panels_have_a_key() {
+        let d = defaults(SHIPPED, TILING);
+        for (args, name, combo) in [
+            (
+                "wol shell toggle control-center",
+                "Show Control Center",
+                c("CTRL SUPER", "C"),
+            ),
+            (
+                "wol shell toggle notifications",
+                "Show Notification Center",
+                c("CTRL SUPER", "A"),
+            ),
+        ] {
+            let s = d
+                .iter()
+                .find(|s| s.id == format!("exec {args}"))
+                .unwrap_or_else(|| panic!("no shipped bind for {args}"));
+            assert_eq!((s.name.as_str(), s.group), (name, Group::Accessibility));
+            assert_eq!(s.combo.as_ref(), Some(&combo));
+            assert!(s.editable);
+        }
+    }
+
+    /// QA-PWR-11: keys exist to send the focused window to another space and display, and the
+    /// sheet names them (a shipped bind nobody named is listed as its raw command).
+    #[test]
+    fn shipped_binds_move_a_window_to_another_space_and_display() {
+        let d = defaults(SHIPPED, TILING);
+        let name = |args: &str| {
+            d.iter()
+                .find(|s| s.id == format!("exec {args}"))
+                .unwrap_or_else(|| panic!("no shipped bind for {args}"))
+                .name
+                .clone()
+        };
+        assert_eq!(
+            name("hyprctl dispatch movetoworkspace 3"),
+            "Move window to Desktop 3"
+        );
+        assert_eq!(
+            name("hyprctl dispatch movetoworkspace e+1"),
+            "Move window right a space"
+        );
+        assert_eq!(
+            name("hyprctl dispatch movewindow mon:r"),
+            "Move window to the display on the right"
+        );
+        let combo = |args: &str| {
+            d.iter()
+                .find(|s| s.id == format!("exec {args}"))
+                .and_then(|s| s.combo.clone())
+                .unwrap()
+        };
+        assert_eq!(
+            combo("hyprctl dispatch movetoworkspace 1"),
+            c("CTRL ALT SHIFT", "1")
+        );
+        assert_eq!(
+            combo("hyprctl dispatch movewindow mon:l"),
+            c("CTRL ALT SUPER", "Left")
+        );
+        assert!(
+            d.iter().all(|s| !s.name.starts_with("Run hyprctl")),
+            "every hyprctl bind is named"
         );
     }
 

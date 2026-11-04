@@ -254,6 +254,16 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     chroot.extend(b.pacman);
     steps.push(v(&chroot));
     steps.push(v(&["arch-chroot", &work, "mkinitcpio", "-P"]));
+    // Units a release adds or newly enables (wolos-etc-units.service, boot-ok's WantedBy) reach
+    // an installed system only through its presets; install runs them once, an update did not.
+    // enable-only: the slot never loses what it had on (the person's own changes live in the
+    // /etc overlay above it and stay as they are).
+    steps.push(v(&[
+        "systemctl",
+        &format!("--root={work}"),
+        "preset-all",
+        "--preset-mode=enable-only",
+    ]));
     let esp = format!("{ESP}/{slot}");
     steps.push(v(&["mkdir", "-p", &esp]));
     steps.push(v(&[
@@ -513,6 +523,7 @@ mod tests {
 /run/wolos/top/@wolos-b/etc/pacman.d/wolos-mirrorlist",
                 "arch-chroot /run/wolos/top/@wolos-b /usr/bin/pacman -Syu --noconfirm",
                 "arch-chroot /run/wolos/top/@wolos-b mkinitcpio -P",
+                "systemctl --root=/run/wolos/top/@wolos-b preset-all --preset-mode=enable-only",
                 "mkdir -p /efi/wolos-b",
                 "wol seal apply /run/wolos/top/@wolos-b /efi/wolos-b/verity",
                 "env WOLOS_ROOT=/run/wolos/top/@wolos-b WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
