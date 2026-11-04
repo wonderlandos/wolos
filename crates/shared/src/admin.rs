@@ -78,7 +78,8 @@ pub enum AdminAction {
     FlatpakInstall,
     /// Remove one system-wide Flatpak app: `<app-id>`.
     FlatpakRemove,
-    /// Automatic updates: download pending packages in the background, `on` or `off`.
+    /// Automatic updates: download pending packages in the background, `on` or `off`; or
+    /// `metered on|off`, whether the download also runs on a metered connection.
     AutoUpdate,
     /// Finish Secure Boot setup: queue this computer's key for the firmware's key screen
     /// (`wol boot enroll`, ADR 0025). No arguments; idempotent (an enrolled key is left alone).
@@ -92,6 +93,9 @@ pub enum AdminAction {
     SystemRollback,
     /// System update channel: `stable`, `beta` or `nightly` (`/etc/wolos/channel`).
     SystemChannel,
+    /// Error reports (Settings > Privacy), `on` or `off`: `send=1|0` in `/etc/wolos/reports.conf`
+    /// and the hourly `wolos-report.timer`.
+    Reports,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -141,6 +145,7 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::PkgInstallFile, "pkg-install-file"),
     (AdminAction::SystemRollback, "system-rollback"),
     (AdminAction::SystemChannel, "system-channel"),
+    (AdminAction::Reports, "reports"),
 ];
 
 impl AdminAction {

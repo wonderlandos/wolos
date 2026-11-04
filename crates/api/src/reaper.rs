@@ -28,6 +28,19 @@ const GRACE: std::time::Duration = std::time::Duration::from_secs(10);
 /// `wol pkg` runs pacman as a child) get SIGTERM, then SIGKILL after [`GRACE`], and the answer
 /// is [`TIMED_OUT`].
 pub fn run(cmd: &mut std::process::Command, deadline: std::time::Duration) -> i32 {
+    run_until(cmd, deadline, &|| false)
+}
+
+/// Exit code of a command [`run_until`] stopped because `cancel` said so.
+pub const CANCELLED: i32 = 125;
+
+/// [`run`], also stopped, the same way as at the deadline, once `cancel` says so (checked every
+/// 20 ms): the answer is [`CANCELLED`]. A web app call stops when its host is gone (QA-100 H9-05).
+pub fn run_until(
+    cmd: &mut std::process::Command,
+    deadline: std::time::Duration,
+    cancel: &dyn Fn() -> bool,
+) -> i32 {
     use std::os::unix::process::CommandExt;
     cmd.process_group(0);
     let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
@@ -55,6 +68,11 @@ pub fn run(cmd: &mut std::process::Command, deadline: std::time::Duration) -> i3
                 stop(&mut child, pid);
                 global().forget(pid);
                 return TIMED_OUT;
+            }
+            Ok(None) if cancel() => {
+                stop(&mut child, pid);
+                global().forget(pid);
+                return CANCELLED;
             }
             Ok(None) => std::thread::sleep(std::time::Duration::from_millis(20)),
             // The reaper has it, so its answer is on the way.
@@ -116,18 +134,32 @@ impl Reaper {
 
     /// Reap every dead child without blocking. `is_job` tells job roots from orphans.
     pub fn reap_all(&self, is_job: impl Fn(i32) -> bool) -> usize {
+        self.reap(-1, is_job)
+    }
+
+    /// Reap `pid` alone, if it is dead, without blocking (a job root, so its exit is kept): for a
+    /// caller that owns one child among others it must not take, such as a test binary.
+    pub fn reap_one(&self, pid: i32) -> bool {
+        self.reap(pid, |_| true) > 0
+    }
+
+    /// `waitpid(target, WNOHANG)` until nothing more is ready; how many were reaped.
+    fn reap(&self, target: i32, is_job: impl Fn(i32) -> bool) -> usize {
         let mut n = 0;
         loop {
             let mut status = 0;
             let held = SPAWNING.lock().unwrap_or_else(|p| p.into_inner());
             // SAFETY: waitpid with a valid out pointer.
-            let pid = unsafe { libc::waitpid(-1, &mut status, libc::WNOHANG) };
+            let pid = unsafe { libc::waitpid(target, &mut status, libc::WNOHANG) };
             drop(held);
             if pid <= 0 {
                 return n;
             }
             n += 1;
             self.exited(pid, exit_code(status), is_job(pid));
+            if target > 0 {
+                return n;
+            }
         }
     }
 }
@@ -249,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::zombie_processes)] // reaped by Reaper::reap_all, the point of the test
+    #[allow(clippy::zombie_processes)] // reaped by Reaper::reap_one, the point of the test
     fn reaps_real_child_with_code() {
         let r = Reaper::default();
         let child = std::process::Command::new("sh")
@@ -259,10 +291,9 @@ mod tests {
         let pid = child.id() as i32;
         let rx = r.register(pid);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        // Waits on the channel, not in a hot loop: reap_all is waitpid(-1), and hammering it would
-        // take the children other tests of this binary are waiting for.
+        // Only this test's child: waitpid(-1) would take the children other tests are waiting for.
         let code = loop {
-            r.reap_all(|p| p == pid);
+            r.reap_one(pid);
             if let Ok(code) = rx.recv_timeout(std::time::Duration::from_millis(5)) {
                 break code;
             }

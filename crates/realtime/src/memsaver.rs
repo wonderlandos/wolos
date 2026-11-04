@@ -83,13 +83,17 @@ pub fn players(playerctl: &str, windows: &[Window]) -> Vec<i32> {
             out.push(pid);
             continue;
         }
-        let name = shared::memsaver::app_id(inst.split('.').next().unwrap_or(inst));
-        out.extend(
-            windows
-                .iter()
-                .filter(|w| shared::memsaver::app_id(&w.app) == name)
-                .map(|w| w.pid),
-        );
+        // A dotted class names the app whole (`org.wolos.webapp.music`, QA-100 H9-20); only an
+        // instance suffix that names no window (`spotify.instance_2`) falls back to its first word.
+        let whole = shared::memsaver::app_id(inst);
+        let first = shared::memsaver::app_id(inst.split('.').next().unwrap_or(inst));
+        let named = |name: &str, w: &Window| shared::memsaver::app_id(&w.app) == name;
+        let name = if windows.iter().any(|w| named(&whole, w)) {
+            whole
+        } else {
+            first
+        };
+        out.extend(windows.iter().filter(|w| named(&name, w)).map(|w| w.pid));
     }
     out
 }
@@ -254,6 +258,31 @@ mod tests {
         let w = windows(CLIENTS, MONITORS);
         let out = "Playing\tchromium.instance4242\nPaused\tfirefox.instance_1_9\nPlaying\tspotify\nStopped\tcode\n";
         assert_eq!(players(out, &w), vec![4242, 40]);
+    }
+
+    /// QA-100 H9-20: a reverse-DNS class (a web app, a Flatpak) is compared whole, not by its
+    /// first word `org`, so a playing web app is kept and another app of the same vendor is not.
+    #[test]
+    fn dotted_exclusion_whole_class() {
+        let w = vec![
+            Window {
+                pid: 50,
+                app: "org.wolos.webapp.music".into(),
+                visible: false,
+            },
+            Window {
+                pid: 51,
+                app: "org.wolos.webapp.doctor".into(),
+                visible: false,
+            },
+            Window {
+                pid: 52,
+                app: "spotify".into(),
+                visible: false,
+            },
+        ];
+        let out = "Playing\torg.wolos.webapp.music\nPlaying\tspotify.instance_2\n";
+        assert_eq!(players(out, &w), vec![50, 52]);
     }
 
     #[test]

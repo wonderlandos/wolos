@@ -35,6 +35,15 @@ const INJECTING_ENV: [&str; 9] = [
 /// replaced since the shell started shows as deleted but is still the system's, so it passes.)
 const CODE_ROOTS: [&str; 3] = ["/usr/", "/lib/", "/lib64/"];
 
+/// What the kernel appends to `/proc/<pid>/exe` once the file was replaced or removed (an update
+/// replaced the binary the process still runs).
+const DELETED: &str = " (deleted)";
+
+/// Executables believed by their path, each held to [`PeerIdentity::injected`] (QA-100 L3): the
+/// notification shower, the helper gate that may raise an administrator sheet, and the web app
+/// host whose scope names the app.
+pub const PATH_TRUSTED: [&str; 3] = [SHOWERS[0], shared::portal::HELPER_GATE, crate::webapp::HOST];
+
 /// The kernel's account of a connected peer.
 #[derive(Debug)]
 pub struct PeerIdentity {
@@ -44,7 +53,7 @@ pub struct PeerIdentity {
     exe: Option<String>,
     /// `/proc/<pid>` opened at accept.
     dir: Option<std::fs::File>,
-    /// Executables identified by path alone ([`SHOWERS`]); a seam for tests.
+    /// Executables identified by path alone ([`PATH_TRUSTED`]); a seam for tests.
     showers: &'static [&'static str],
 }
 
@@ -62,7 +71,7 @@ impl PeerIdentity {
             pid: p.pid,
             exe,
             dir,
-            showers: &SHOWERS,
+            showers: &PATH_TRUSTED,
         })
     }
 
@@ -97,7 +106,8 @@ impl PeerIdentity {
 
     /// The calling app for a grant decision. None (refuse) if the executable is unknown, not an
     /// absolute path, or changed since accept; and, for a program trusted by its path alone (the
-    /// shower, audit P6-1), if the process shows signs of carrying foreign code ([`Self::injected`]).
+    /// shower, audit P6-1; the helper gate and the web host, QA-100 L3), if the process shows signs
+    /// of carrying foreign code ([`Self::injected`]).
     pub fn caller(&self) -> Option<Caller> {
         let app = self.exe.clone()?;
         if !(app.starts_with('/') && self.still_same()) {
@@ -173,6 +183,22 @@ impl PeerIdentity {
         wol_core::sysapp::app_of_cgroup(&String::from_utf8_lossy(&text), self.pid)
     }
 
+    /// The command line of the pinned process (its arguments, NUL-split, bounded), read now; None
+    /// when the process changed since accept or cannot be read. The web host's first argument is
+    /// the manifest it runs (QA-100 H9-08).
+    pub fn args(&self) -> Option<Vec<String>> {
+        if !self.still_same() {
+            return None;
+        }
+        let raw = proc_file(self.dir.as_ref()?, "cmdline")?;
+        let raw = raw.strip_suffix(&[0]).unwrap_or(&raw);
+        Some(
+            raw.split(|b| *b == 0)
+                .map(|a| String::from_utf8_lossy(a).into_owned())
+                .collect(),
+        )
+    }
+
     /// Executable bytes as captured at accept (for exact-path checks such as the realtime agent).
     pub fn exe(&self) -> Option<&str> {
         self.exe.as_deref()
@@ -234,11 +260,14 @@ fn maps_inject(maps: &str) -> bool {
 }
 
 /// `exe` of the process a `/proc/<pid>` descriptor pins, read through `/proc/self/fd` so the pid is
-/// never looked up again.
+/// never looked up again. The kernel's [`DELETED`] mark is dropped (QA-100 M3): after an update
+/// replaced `/usr/bin/wol-shell`, the running shell is still the program installed at that path
+/// (only root writes there), and a path elsewhere stays a path elsewhere.
 fn exe_of(dir: &std::fs::File) -> Option<String> {
     let link = PathBuf::from(format!("/proc/self/fd/{}/exe", dir.as_raw_fd()));
     let target = std::fs::read_link(link).ok()?;
     let s = target.into_os_string().into_string().ok()?;
+    let s = s.strip_suffix(DELETED).map(str::to_owned).unwrap_or(s);
     (s.len() < MAX_EXE).then_some(s)
 }
 
@@ -445,6 +474,55 @@ mod tests {
         assert!(id.caller().is_some());
         other.kill().unwrap();
         other.wait().unwrap();
+    }
+
+    /// QA-100 M3: a binary replaced by an update (here: a copy, run, then unlinked) is still
+    /// identified by its path, not by `<path> (deleted)`.
+    #[test]
+    fn exe_of_strips_deleted() {
+        let dir = std::env::temp_dir().join(format!("wold-peer-deleted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let copy = dir.join("sleepy");
+        std::fs::copy("/bin/sleep", &copy).unwrap();
+        let mut c = std::process::Command::new(&copy)
+            .arg("10")
+            .env_clear()
+            .env("HOME", "/")
+            .spawn()
+            .unwrap();
+        let pid = i32::try_from(c.id()).unwrap();
+        let want = copy.to_string_lossy().into_owned();
+        for _ in 0..10_000 {
+            if std::fs::read_link(format!("/proc/{pid}/exe")).is_ok_and(|e| e == copy) {
+                break;
+            }
+            std::thread::yield_now();
+        }
+        let id = PeerIdentity::of_process(pid, &SHOWERS);
+        std::fs::remove_file(&copy).unwrap();
+        let raw = std::fs::read_link(format!("/proc/{pid}/exe")).unwrap();
+        assert!(raw.to_string_lossy().ends_with(DELETED), "{raw:?}");
+        assert!(id.still_same(), "replaced is not changed");
+        assert_eq!(id.caller().map(|c| c.app), Some(want));
+        assert_eq!(id.args().unwrap(), [copy.to_string_lossy().as_ref(), "10"]);
+        let _ = c.kill();
+        let _ = c.wait();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// QA-100 L3: the helper gate and the web host are believed by path, so they are held to the
+    /// injection check like the shower.
+    #[test]
+    fn injected_runs_for_helper_gate_and_host() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let id = PeerIdentity::capture(&a).unwrap();
+        for exe in [SHOWERS[0], shared::portal::HELPER_GATE, crate::webapp::HOST] {
+            assert!(id.showers.contains(&exe), "{exe}");
+        }
+        // `caller()` holds every listed path to `injected()`: the child tests above run it for a
+        // listed path (a_shower_binary_under_ld_preload_is_not_a_shower); this is the list.
+        assert_eq!(PATH_TRUSTED.len(), 3);
     }
 
     #[test]

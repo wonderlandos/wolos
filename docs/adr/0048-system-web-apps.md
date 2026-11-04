@@ -63,6 +63,8 @@ The shim implements them with a user script and the page's console: the engine h
 - Until the shim has the channel and the host exists, apps run only in development mode; the bridge's Rust side and the contract are tested without the engine.
 - The locale system later replaces `strings.js` per language; the keys are the contract.
 - Wonderland Doctrine: app text says what the app does; no upstream names.
+- wold judges an app by where the kernel puts its host, never by what the host says (QA-100): the host is `/usr/bin/wol-webhost` and held to the injection check like the notification shower; its command line must name the `app.toml` of the folder wold resolved; a slug present in both `/usr/share/wolos/webapps` and `/opt/wolos/webapps` names no app; the host's own scope is not moved by Memory Saver.
+- One administrator call per app and account waits at a time (a second is told it is busy), a call stops when the host hangs up, and the wait for an administrator call follows the number of wol-admind steps, never past `shared::shell::WEBAPP_CALL_DEADLINE_SECS`; the host waits longer than that, so wold always answers first. One cap, `shared::shell::WEBAPP_MAX_PARAMS`, bounds the parameters of a call everywhere.
 
 ## Alternatives rejected
 - A bundler and npm packages per app: fast to start, but a build per change, a dependency tree in the image and supply-chain risk for system apps.

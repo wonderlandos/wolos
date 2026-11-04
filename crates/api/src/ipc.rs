@@ -31,6 +31,9 @@ struct Endpoint {
 struct Waiting {
     uid: u32,
     to: i32,
+    /// The receiving app's executable: a pid reused by another program is not the receiver
+    /// (QA-100 L2, as `Notes::posted_by`).
+    to_app: String,
     reply: Option<String>,
 }
 
@@ -106,6 +109,7 @@ impl Endpoints {
             let Some(pid) = found.map(|e| e.pid) else {
                 return Err("That app is not listening.");
             };
+            let to_app = peer.to_owned();
             if t.waiting.values().filter(|w| w.uid == c.uid).count() >= MAX_WAITING {
                 return Err("Too many messages are waiting for a reply.");
             }
@@ -113,6 +117,7 @@ impl Endpoints {
             let w = Waiting {
                 uid: c.uid,
                 to: pid,
+                to_app,
                 reply: None,
             };
             t.waiting.insert(id, w);
@@ -144,13 +149,13 @@ impl Endpoints {
         }
     }
 
-    /// The process a message went to answers it, once. False otherwise.
+    /// The process a message went to answers it, once, as the app it went to. False otherwise.
     pub fn reply(&self, c: &Caller, id: u32, body: String) -> bool {
         let mut t = lock(&self.0);
         let Some(w) = t.waiting.get_mut(&id) else {
             return false;
         };
-        if w.uid != c.uid || w.to != c.pid || w.reply.is_some() {
+        if w.uid != c.uid || w.to != c.pid || w.to_app != c.app || w.reply.is_some() {
             return false;
         }
         w.reply = Some(body);
@@ -248,6 +253,39 @@ mod tests {
         assert_eq!(err, Err("That app is not listening."));
     }
 
+    /// QA-100 L2: the reply is checked against the app the message went to, not only the
+    /// account and pid: a pid now running another program (the receiver exec'd or died and the
+    /// pid was reused) cannot answer for it.
+    #[test]
+    fn reply_compares_app() {
+        let e = Arc::new(Endpoints::default());
+        let bus = Arc::new(Bus::default());
+        let notes = app(1000, 10, NOTES);
+        let _listening = e.listen(&notes, "greet").unwrap();
+        let got = inbox(&bus, 1000, 10);
+        let (e2, bus2) = (e.clone(), bus.clone());
+        let t = std::thread::spawn(move || {
+            let wait = Duration::from_secs(10);
+            e2.send(
+                &bus2,
+                &app(1000, 20, MAIL),
+                (NOTES, "greet"),
+                "hi".into(),
+                wait,
+            )
+        });
+        let Event::Message { id, .. } = message(&got) else {
+            panic!()
+        };
+        let impostor = app(1000, 10, "/home/u/.local/bin/notes");
+        assert!(
+            !e.reply(&impostor, id, "forged".into()),
+            "same pid, other app"
+        );
+        assert!(e.reply(&notes, id, "hello".into()));
+        assert_eq!(t.join().unwrap(), Ok("hello".into()));
+    }
+
     #[test]
     fn another_account_has_no_such_endpoint() {
         let e = Endpoints::default();
@@ -279,6 +317,7 @@ mod tests {
             let w = Waiting {
                 uid: 1000,
                 to: 10,
+                to_app: NOTES.into(),
                 reply: None,
             };
             lock(&e.0).waiting.insert(id + 100, w);

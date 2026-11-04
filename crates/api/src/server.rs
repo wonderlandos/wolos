@@ -140,6 +140,7 @@ pub fn serve(
             // ADR 0048: the host of a system web app; the app is its scope's, not the request's.
             let who = caller();
             let app = peer.as_ref().and_then(PeerIdentity::web_app);
+            let args = peer.as_ref().and_then(PeerIdentity::args);
             let answer = webapp::handle(
                 rest,
                 who.as_ref(),
@@ -147,6 +148,10 @@ pub fn serve(
                 &webapp::Dirs::default(),
                 grants,
                 &webapp::WolVerbs,
+                &webapp::Conn {
+                    args: args.as_deref(),
+                    gone: &|| peer.as_ref().is_some_and(|p| !p.still_same()),
+                },
             );
             let mut w = &stream;
             let _ = w.write_all(answer.to_line().as_bytes());

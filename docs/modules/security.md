@@ -86,7 +86,7 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 - `/usr/lib/wolos/report` (`wolos-report.timer`, hourly) sends only when `/etc/wolos/reports.conf` has `send=1`.
 - Each new failed unit or coredump goes once to `https://wolos.squareweb.app/report`:
   `kind`, WolOS version, kernel, `detail` (unit name, or program and signal). No logs, user or host names.
-- Turn on: `echo send=1 | sudo tee /etc/wolos/reports.conf`. A Settings > Privacy switch comes next.
+- Turn on: `wol admin reports on` (off: `wol admin reports off`); it writes `send=1|0` in that file and enables or disables the timer. A Settings > Privacy switch uses the same request.
 
 ## Disk unlock (TPM disks)
 - Order at start: the security chip (TPM2), then the account's own password, then the 64-character

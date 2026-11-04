@@ -137,19 +137,25 @@ impl<S: Sys> Engine<S> {
     /// Windows not in a scope of ours yet: their whole process tree goes into a new one. The
     /// tree, not the cgroup: Chromium and Electron move their browser process into a user manager
     /// scope on their own and leave the zygote and renderers in the session. Ours are the scopes
-    /// this adopt made, right under the user's slice; an `app-wol-` scope of the user's manager (a
-    /// web app's, `webengine::process`) is not one of them and is adopted like any other.
+    /// this adopt made, right under the user's slice, and every `app-wol-` scope wherever it sits
+    /// under that slice: a web app's host makes its own in the user's manager
+    /// (`app-wol-<id>-<pid>-<n>.scope`, `webengine::process`), with its limits, and wold knows the
+    /// app by that name (`wol_core::sysapp::app_of_scope`); moving it would cut the app off
+    /// (QA-100 H9-01).
     fn adopt(&mut self, now: u64) {
         let Some(s) = &self.session else { return };
         let (uid, scope) = (s.uid, s.scope.clone());
         self.asked
             .retain(|_, (t, _, _)| now.saturating_sub(*t) < 6 * ADOPT_RETRY_MS);
         let home = format!("/user.slice/user-{uid}.slice/");
-        let ours = format!("{home}app-wol-");
         let sys = &self.sys;
+        let ours = |c: &str| {
+            c.split('/')
+                .any(|part| part.starts_with("app-wol-") && part.ends_with(".scope"))
+        };
         let movable = |pid: i32| {
             sys.cgroup(pid)
-                .is_some_and(|c| c.starts_with(&home) && !c.starts_with(&ours))
+                .is_some_and(|c| c.starts_with(&home) && !ours(&c))
                 && sys.owner_and_parent(pid).map(|o| o.0) == Some(uid)
                 && !procs::NEVER.contains(&sys.comm(pid).as_str())
         };
@@ -324,7 +330,9 @@ impl<S: Sys> Engine<S> {
             };
             let swap = self.sys.swapped(&pids);
             let saved = if matches!(app.phase, Phase::Saving { .. } | Phase::Napping { .. }) {
-                app.before.saturating_sub(memory).max(swap)
+                // Never more than the app held when it was saved: VmSwap summed over forks counts
+                // shared pages once per process (QA-100 PERF-15).
+                app.before.saturating_sub(memory).max(swap).min(app.before)
             } else {
                 0
             };

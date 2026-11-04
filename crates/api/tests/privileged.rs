@@ -143,6 +143,33 @@ fn item_end(b: &[u8], from: usize) -> usize {
     b.len()
 }
 
+/// `foo/tests.rs` is a test item only when `foo.rs` (or `foo/mod.rs`) declares it as
+/// `#[cfg(test)]` directly followed by `mod tests;`: any other `tests.rs` is shipped code.
+fn is_test_module_file(path: &Path) -> bool {
+    if path.file_name().is_none_or(|n| n != "tests.rs") {
+        return false;
+    }
+    let Some(dir) = path.parent() else {
+        return false;
+    };
+    let Some(name) = dir.file_name().and_then(|n| n.to_str()) else {
+        return false;
+    };
+    let parents = [dir.with_file_name(format!("{name}.rs")), dir.join("mod.rs")];
+    parents
+        .iter()
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .any(|text| declares_test_module(&text))
+}
+
+/// True when `text` has `#[cfg(test)]` on the line right before `mod tests;`.
+fn declares_test_module(text: &str) -> bool {
+    let lines: Vec<&str> = text.lines().map(str::trim).collect();
+    lines
+        .windows(2)
+        .any(|w| w[0] == "#[cfg(test)]" && w[1] == "mod tests;")
+}
+
 /// `text` without its `#[cfg(test)]` items.
 fn without_tests(text: &str) -> String {
     let mut out = String::new();
@@ -171,6 +198,9 @@ fn launches() -> Vec<(String, String, &'static str, usize, Vec<String>)> {
                 .strip_prefix(&root)
                 .map(|r| r.to_string_lossy().replace('\\', "/"))
                 .unwrap_or_default();
+            if is_test_module_file(p) {
+                continue;
+            }
             let code = without_tests(&std::fs::read_to_string(p).unwrap_or_default());
             for needle in LAUNCHES {
                 let lines: Vec<String> = code
@@ -234,4 +264,24 @@ fn test_items_are_dropped_by_brace_matching() {
     for keep in ["a();", "b();", "c();", "d();"] {
         assert!(code.contains(keep), "{keep} in {code}");
     }
+}
+
+#[test]
+fn only_a_declared_test_module_file_is_skipped() {
+    assert!(declares_test_module(
+        "fn a() {}\n#[cfg(test)]\nmod tests;\n"
+    ));
+    assert!(
+        !declares_test_module("mod tests;\n"),
+        "not behind cfg(test)"
+    );
+    assert!(!declares_test_module(
+        "#[cfg(test)]\nfn f() {}\nmod tests;\n"
+    ));
+    assert!(!declares_test_module("#[cfg(unix)]\nmod tests;\n"));
+    // The real files: admind/tests.rs is the test module of admind.rs, a made-up one is not.
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    assert!(is_test_module_file(&src.join("admind/tests.rs")));
+    assert!(!is_test_module_file(&src.join("admind.rs")));
+    assert!(!is_test_module_file(&src.join("nothing/tests.rs")));
 }

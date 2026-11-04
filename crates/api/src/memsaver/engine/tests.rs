@@ -300,6 +300,44 @@ fn an_app_that_moved_itself_to_a_user_scope_is_adopted_with_the_children_it_left
     assert_eq!(e.sys.0.borrow().adopted.len(), 1, "asked systemd once");
 }
 
+/// QA-100 H9-01: a web app's host already sits in its own `app-wol-` scope of the user's
+/// manager; the saver leaves it there (wold knows the app by that scope name) and still lists it.
+#[test]
+fn app_wol_scope_under_user_manager_not_movable() {
+    let mut e = session();
+    let host = "/user.slice/user-1000.slice/user@1000.service/app.slice/app-wol-org.wolos.webapp.doctor-20-1f.scope";
+    e.sys.set(host, |_| {});
+    for pid in 20..=24 {
+        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = host.into();
+    }
+    e.snapshot(Snapshot {
+        enabled: true,
+        front: 20,
+        windows: vec![Window {
+            pid: 20,
+            app: "org.wolos.webapp.doctor".into(),
+            visible: true,
+        }],
+        ..Snapshot::default()
+    });
+    let mut st = e.tick(0);
+    for t in [1, 2_000, 4_000, 10_000] {
+        st = e.tick(t);
+    }
+    assert!(
+        e.sys.0.borrow().adopted.is_empty(),
+        "nothing asked of systemd"
+    );
+    for pid in 20..=24 {
+        assert_eq!(e.sys.where_is(pid), host, "pid {pid}");
+    }
+    assert!(
+        wol_core::sysapp::app_of_cgroup(&format!("0::{host}"), 20).is_some(),
+        "wold still knows the app"
+    );
+    assert_eq!(st.apps.len(), 1, "{:?}", st.apps);
+}
+
 #[test]
 fn processes_without_a_window_are_left_where_they_are() {
     let m = Model::default();
@@ -352,6 +390,28 @@ fn saved_counts_what_was_compressed_away_wherever_it_was_charged() {
     e.snapshot(snap(20, true));
     let st = e.tick(41_000);
     assert_eq!(st.saved, 0, "in use: nothing is being saved");
+}
+
+/// QA-100 PERF-15: forks that share pages each report them as swapped; the total saved is
+/// still no more than the app held when it was saved.
+#[test]
+fn saved_never_exceeds_what_the_app_held() {
+    let mut e = adopted();
+    e.snapshot(snap(99, false));
+    e.tick(1_000);
+    e.sys
+        .0
+        .borrow_mut()
+        .swapped
+        .extend([(20, 900 * MIB), (22, 900 * MIB)]);
+    let st = e.tick(40_000);
+    let code = st.apps.iter().find(|a| a.app == "code").unwrap();
+    assert_eq!(code.saved, 1200 * MIB, "what it held");
+    assert_eq!(code.swap, 1800 * MIB, "what the kernel counts");
+    assert_eq!(st.saved, 1200 * MIB);
+    e.snapshot(snap(20, true));
+    let st = e.tick(41_000);
+    assert_eq!(st.saved, 0);
 }
 
 #[test]
@@ -463,49 +523,6 @@ fn one_app_at_its_own_limit_is_not_a_full_slice() {
     let mut e = adopted();
     slice_storm(&mut e, procs::APP_TASKS as u64);
     assert!(!e.sys.cg(SCOPE).killed);
-}
-
-/// A web app starts in an `app-wol-` scope of the user's manager (`webengine::process`): not one
-/// of ours, so it is adopted (whole tree, the ADR 0027 limits, bound to the session) like any app
-/// in a user scope, and once in our scope it is not asked for again.
-#[test]
-fn a_web_apps_own_scope_is_adopted_under_the_app_limits() {
-    let mut e = session();
-    let own = "/user.slice/user-1000.slice/user@1000.service/app.slice/app-wol-org.wolos.webapp.notes-20-1f00.scope";
-    e.sys.set(own, |_| {});
-    for pid in 20..=24 {
-        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = own.into();
-    }
-    let mut s = snap(20, false);
-    s.windows[0].app = "org.wolos.webapp.notes".into();
-    e.snapshot(s);
-    e.tick(0);
-    let ours = "/user.slice/user-1000.slice/app-wol-org.wolos.webapp.notes-20.scope";
-    for pid in 20..=24 {
-        assert_eq!(e.sys.where_is(pid), ours, "pid {pid}");
-    }
-    {
-        let m = e.sys.0.borrow();
-        assert_eq!(m.adopted.len(), 1);
-        let args = m.adopted[0].join(" ");
-        assert!(
-            args.contains(&format!("MemoryMaxScale u {}", procs::APP_MEMORY_SCALE)),
-            "{args}"
-        );
-        assert!(
-            args.contains(&format!("MemorySwapMaxScale u {}", procs::APP_SWAP_SCALE)),
-            "{args}"
-        );
-        assert!(args.contains("BindsTo as 1 session-2.scope"), "{args}");
-    }
-    for t in [1, 20_000, 70_000] {
-        e.tick(t);
-    }
-    assert_eq!(
-        e.sys.0.borrow().adopted.len(),
-        1,
-        "our own scope is never adopted again"
-    );
 }
 
 /// A saved app that quits: its give-back is stopped and forgotten with its scope.

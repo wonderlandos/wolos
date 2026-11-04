@@ -156,6 +156,34 @@ pub fn is_name(name: &str) -> bool {
     }
 }
 
+/// Longest wold lets a call that is not an administrator method run (seconds).
+pub const CALL_SECS: u64 = 120;
+/// What the web app host waits for wold beyond wold's own deadline (seconds): the reply on its way.
+pub const HOST_MARGIN_SECS: u64 = 30;
+
+/// How long wold lets one call of `method` run (seconds), the one table wold
+/// (`api::webapp::deadline`) and the host (`webengine::host::wait_for`) both use (QA-100 H9-03).
+/// [`CALL_SECS`]; for an administrator method also the sheet's wait and `steps` of wol-admind's long
+/// steps (at least one; a Doctor fix names its own count, QA-100 L5) plus the reply margin.
+pub fn call_deadline_secs(method: &str, steps: usize) -> u64 {
+    use crate::admin::{LONG_STEP_SECS, REPLY_MARGIN_SECS};
+    if !permission_of(method).is_some_and(|p| p.admin) {
+        return CALL_SECS;
+    }
+    let steps = steps.clamp(1, shared::shell::MAX_DOCTOR_STEPS) as u64;
+    u64::from(shared::shell::APPROVAL_WAIT_SECS)
+        + steps * u64::from(LONG_STEP_SECS)
+        + u64::from(REPLY_MARGIN_SECS)
+        + CALL_SECS
+}
+
+/// How long the host waits for wold's answer to `method` (seconds): wold's longest deadline for
+/// it (the host cannot know a fix's step count) plus [`HOST_MARGIN_SECS`], so wold always answers
+/// first, with its own sentence.
+pub fn host_wait_secs(method: &str) -> u64 {
+    call_deadline_secs(method, shared::shell::MAX_DOCTOR_STEPS) + HOST_MARGIN_SECS
+}
+
 /// Where the image installs system web apps: `<SYSTEM_DIR>/<slug>/app.toml`.
 pub const SYSTEM_DIR: &str = "/usr/share/wolos/webapps";
 /// Where an app of others installs (a package, ADR 0048): `<OPT_DIR>/<slug>/app.toml`.
@@ -237,6 +265,37 @@ mod tests {
             }
         }
         assert!(!is_name("System.read") && !is_name("a.b.c") && !is_name(".a"));
+    }
+
+    /// QA-100 H9-03: the host never gives up before wold does, for every catalog method and
+    /// every step count; an administrator method waits for its steps, not always for eight.
+    #[test]
+    fn the_shared_constant_is_the_longest_deadline() {
+        for perm in PERMISSIONS.iter().filter(|p| p.admin) {
+            for m in perm.methods {
+                let most = call_deadline_secs(m, shared::shell::MAX_DOCTOR_STEPS);
+                assert_eq!(most, shared::shell::WEBAPP_CALL_DEADLINE_SECS, "{m}");
+                assert!(host_wait_secs(m) > shared::shell::WEBAPP_CALL_DEADLINE_SECS);
+            }
+        }
+    }
+
+    #[test]
+    fn the_host_waits_longer_than_wold_for_every_method() {
+        for perm in PERMISSIONS {
+            for m in perm.methods {
+                for steps in 0..=shared::shell::MAX_DOCTOR_STEPS + 2 {
+                    assert!(host_wait_secs(m) > call_deadline_secs(m, steps), "{m} {steps}");
+                }
+                if perm.admin {
+                    assert!(call_deadline_secs(m, 1) > 1800, "{m}: one long step");
+                    assert!(call_deadline_secs(m, 1) < call_deadline_secs(m, 3), "{m}");
+                    assert!(host_wait_secs(m) > 300, "{m}: past the old 5 min");
+                } else {
+                    assert_eq!(call_deadline_secs(m, 5), CALL_SECS, "{m}");
+                }
+            }
+        }
     }
 
     #[test]

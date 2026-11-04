@@ -9,12 +9,48 @@ pub const FILE: &str = "/etc/wolos/auto-update";
 /// User unit that installs Flathub app updates for this account.
 pub const APPS_TIMER: &str = "wolos-app-update.timer";
 
+/// The comment the file starts with.
+const HEADER: &str = "# Written by WolOS (Settings > Software Update).\n";
+
 /// File content for the download switch.
 pub fn conf(download: bool) -> String {
-    format!(
-        "# Written by WolOS (Settings > Software Update).\ndownload={}\n",
-        if download { "on" } else { "off" }
-    )
+    set(None, "download", download)
+}
+
+/// `current` with `key=on|off` set: the last line for `key` is replaced (none: one is added), every
+/// other line stays, so changing `metered` keeps `download` and the other way round. No file yet:
+/// the header and the one line. `key` is `download` or `metered`.
+pub fn set(current: Option<&str>, key: &str, on: bool) -> String {
+    let line = format!("{key}={}", if on { "on" } else { "off" });
+    let Some(text) = current.filter(|t| !t.trim().is_empty()) else {
+        return format!("{HEADER}{line}\n");
+    };
+    let is_key = |l: &str| {
+        l.trim()
+            .split_once('=')
+            .is_some_and(|(k, _)| k.trim() == key)
+    };
+    let at = text
+        .lines()
+        .collect::<Vec<_>>()
+        .iter()
+        .rposition(|l| is_key(l));
+    let mut lines: Vec<&str> = text.lines().collect();
+    match at {
+        Some(i) => lines[i] = &line,
+        None => lines.push(&line),
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
+/// Downloads also run on a metered connection only when the file says `metered=on`.
+pub fn metered_allowed(text: Option<&str>) -> bool {
+    text.is_some_and(|t| {
+        t.lines()
+            .filter_map(|l| l.trim().split_once('='))
+            .rfind(|(k, _)| k.trim() == "metered")
+            .is_some_and(|(_, v)| v.trim() == "on")
+    })
 }
 
 /// Downloads are on unless the file says `download=off` (missing file: the default, on).
@@ -57,6 +93,32 @@ mod tests {
         assert_eq!(
             conf(false),
             "# Written by WolOS (Settings > Software Update).\ndownload=off\n"
+        );
+    }
+
+    /// QA-100: the metered switch and the download switch share one file and keep each other's line.
+    #[test]
+    fn metered_switch_keeps_the_download_line() {
+        assert!(!metered_allowed(None));
+        assert!(!metered_allowed(Some(&conf(true))));
+        let on = set(Some(&conf(false)), "metered", true);
+        assert_eq!(
+            on,
+            "# Written by WolOS (Settings > Software Update).\ndownload=off\nmetered=on\n"
+        );
+        assert!(metered_allowed(Some(&on)) && !downloads(Some(&on)));
+        let off = set(Some(&on), "metered", false);
+        assert!(!metered_allowed(Some(&off)) && !downloads(Some(&off)));
+        assert_eq!(off.matches("metered=").count(), 1, "{off}");
+        // No file yet, or a hand-written one without a trailing newline.
+        assert_eq!(set(None, "download", false), conf(false));
+        assert_eq!(
+            set(Some("metered=on"), "download", false),
+            "metered=on\ndownload=off\n"
+        );
+        assert_eq!(
+            set(Some("  metered = on\n"), "metered", false),
+            "metered=off\n"
         );
     }
 

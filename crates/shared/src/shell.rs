@@ -28,8 +28,9 @@ pub const PANELS: &[&str] = &[
     "banners",
     // `hide` closes every transient panel, Search and the widget gallery (Esc).
     "transient",
-    // `show` opens the session panel on its Log Out / Shut Down question (the WolOS menu).
+    // `show` opens the session panel on its Log Out / Restart / Shut Down question (the WolOS menu).
     "session-logout",
+    "session-restart",
     "session-shutdown",
     // ⌃⌘T: every theme as a preview card (ADR 0031 themes v2).
     "themes",
@@ -129,6 +130,20 @@ pub const DOCTOR_ACTIONS: &[crate::admin::AdminAction] = &[
 ];
 /// Most wol-admind requests one Doctor fix sends.
 pub const MAX_DOCTOR_STEPS: usize = 8;
+
+/// Most bytes of a web app call's parameters, the one cap for the page, the host, `wol webapp-call`
+/// and wold (QA-100 H9-19: they had 64 KiB, 60 KiB and a line limit counting the method too). The
+/// request line the host sends wold is `webapp-call <method> <params>`; what the cap leaves of
+/// [`crate::portal::MAX_LINE`] is room for the longest method name and the word before it.
+pub const WEBAPP_MAX_PARAMS: usize = crate::portal::MAX_LINE - 256;
+
+/// The longest wold lets one web app call run (seconds): the sheet's wait, [`MAX_DOCTOR_STEPS`]
+/// of wol-admind's long steps (1800 s each), its reply margin (60 s) and the call's own 120 s.
+/// The web app host waits longer than this, so wold always answers first, with its own sentence
+/// (QA-100 H9-03). `wol_core::sysapp::call_deadline_secs` computes the same figure from
+/// `wol_core::admin` and a test there keeps the two equal.
+pub const WEBAPP_CALL_DEADLINE_SECS: u64 =
+    APPROVAL_WAIT_SECS as u64 + MAX_DOCTOR_STEPS as u64 * 1800 + 60 + 120;
 
 /// Hex digits of a SHA-256 shown in a sheet's title; the full digest is on the detail line.
 pub const SHA_PREFIX: usize = 12;

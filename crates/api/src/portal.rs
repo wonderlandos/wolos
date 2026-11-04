@@ -85,6 +85,27 @@ pub const ASKS_KEPT: usize = 64;
 pub const ASKS_PER_UID: usize = 8;
 /// Approval sheets (package and system changes) of one account waiting at once (R2C-9).
 pub const APPROVALS_PER_UID: usize = 2;
+/// Who a call counts as for [`ASKS_PER_APP`]: the executable, except for web app hosts, which all
+/// run `/usr/bin/wol-webhost` and are told apart by their app scope (`cgroup` reads a process's
+/// cgroup text): one parked web app must not use up the others' places.
+fn app_key(caller: &Caller, cgroup: &dyn Fn(i32) -> Option<String>) -> String {
+    if caller.app == crate::webapp::HOST
+        && let Some(id) =
+            cgroup(caller.pid).and_then(|text| wol_core::sysapp::app_of_cgroup(&text, caller.pid))
+    {
+        return format!("webapp:{id}");
+    }
+    caller.app.clone()
+}
+
+fn cgroup_of(pid: i32) -> Option<String> {
+    std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()
+}
+
+/// Calls of one app (one executable of one account) waiting at once (QA-100 API-6): a file panel
+/// or share sheet waits up to [`PANEL_TIMEOUT`], so one app parking asks never fills
+/// [`ASKS_PER_UID`] for the account's other apps.
+pub const ASKS_PER_APP: usize = 2;
 pub use shared::portal::{BUSY, NO_ANSWER, NOT_RUNNING};
 /// How long a file panel may stay open.
 pub const PANEL_TIMEOUT: Duration = Duration::from_secs(600);
@@ -109,6 +130,8 @@ struct AskTable {
 
 struct Waiting {
     uid: u32,
+    /// The asking app's executable, counted against [`ASKS_PER_APP`]; None for wold's own asks.
+    app: Option<String>,
     /// An approval sheet ([`Ask::Approval`]), counted against [`APPROVALS_PER_UID`].
     approval: bool,
     answer: Option<(Answer, Option<OwnedFd>)>,
@@ -138,13 +161,55 @@ impl Asks {
         ask: Ask,
         timeout: Duration,
     ) -> (Answer, Option<OwnedFd>) {
+        self.ask_inner(bus, uid, None, ask, timeout)
+    }
+
+    /// [`Asks::ask`] for an app's call: also held to [`ASKS_PER_APP`].
+    pub fn ask_from<W: Write + Send>(
+        &self,
+        bus: &Bus<W>,
+        caller: &Caller,
+        ask: Ask,
+        timeout: Duration,
+    ) -> Answer {
+        let key = app_key(caller, &cgroup_of);
+        self.ask_inner(bus, caller.uid, Some(&key), ask, timeout).0
+    }
+
+    /// [`Asks::ask_from`], with the file the desktop attached to its answer.
+    pub fn ask_for_file_from<W: Write + Send>(
+        &self,
+        bus: &Bus<W>,
+        caller: &Caller,
+        ask: Ask,
+        timeout: Duration,
+    ) -> (Answer, Option<OwnedFd>) {
+        let key = app_key(caller, &cgroup_of);
+        self.ask_inner(bus, caller.uid, Some(&key), ask, timeout)
+    }
+
+    fn ask_inner<W: Write + Send>(
+        &self,
+        bus: &Bus<W>,
+        uid: u32,
+        app: Option<&str>,
+        ask: Ask,
+        timeout: Duration,
+    ) -> (Answer, Option<OwnedFd>) {
         let approval = matches!(ask, Ask::Approval { .. });
         let id = {
             let mut t = self.lock();
             let mine = t.waiting.values().filter(|w| w.uid == uid);
             let (n, sheets) = mine.fold((0, 0), |(n, a), w| (n + 1, a + usize::from(w.approval)));
+            let of_app = app.map_or(0, |a| {
+                t.waiting
+                    .values()
+                    .filter(|w| w.uid == uid && w.app.as_deref() == Some(a))
+                    .count()
+            });
             if t.waiting.len() >= ASKS_KEPT
                 || n >= ASKS_PER_UID
+                || of_app >= ASKS_PER_APP
                 || (approval && sheets >= APPROVALS_PER_UID)
             {
                 return (Answer::err(Code::Unavailable, BUSY), None);
@@ -161,6 +226,7 @@ impl Asks {
                 id,
                 Waiting {
                     uid,
+                    app: app.map(str::to_owned),
                     approval,
                     answer: None,
                 },
@@ -369,7 +435,7 @@ fn panel<W: Write + Send>(
     name: String,
 ) -> Answer {
     let ask = Ask::Panel { save, title, name };
-    let (a, file) = st.asks.ask_for_file(bus, caller.uid, ask, PANEL_TIMEOUT);
+    let (a, file) = st.asks.ask_for_file_from(bus, caller, ask, PANEL_TIMEOUT);
     extra.file = file;
     a
 }
@@ -515,10 +581,10 @@ fn decide<W: Write + Send>(
         }
         Call::ClipboardRead {} => st
             .asks
-            .ask(bus, caller.uid, Ask::ClipboardRead, ASK_TIMEOUT),
+            .ask_from(bus, caller, Ask::ClipboardRead, ASK_TIMEOUT),
         Call::ClipboardWrite { text } => {
             st.asks
-                .ask(bus, caller.uid, Ask::ClipboardWrite { text }, ASK_TIMEOUT)
+                .ask_from(bus, caller, Ask::ClipboardWrite { text }, ASK_TIMEOUT)
         }
         Call::PrefsGet { key } => st.prefs.get(caller.uid, &caller.app, &key),
         Call::PrefsSet { key, value } => st.prefs.set(caller.uid, &caller.app, key, value),
@@ -547,18 +613,18 @@ fn decide<W: Write + Send>(
             }
         }
         Call::NetworkInfo {} => Answer::with(crate::facts::network(&*st.host)),
-        Call::AudioInfo {} => st.asks.ask(bus, caller.uid, Ask::AudioInfo, ASK_TIMEOUT),
+        Call::AudioInfo {} => st.asks.ask_from(bus, caller, Ask::AudioInfo, ASK_TIMEOUT),
         Call::AudioSetVolume { percent } => {
             let ask = Ask::AudioSetVolume { percent };
-            st.asks.ask(bus, caller.uid, ask, ASK_TIMEOUT)
+            st.asks.ask_from(bus, caller, ask, ASK_TIMEOUT)
         }
         Call::AudioSetMuted { muted } => {
             let ask = Ask::AudioSetMuted { muted };
-            st.asks.ask(bus, caller.uid, ask, ASK_TIMEOUT)
+            st.asks.ask_from(bus, caller, ask, ASK_TIMEOUT)
         }
         Call::SearchQuery { text } => {
             st.asks
-                .ask(bus, caller.uid, Ask::Search { text }, ASK_TIMEOUT)
+                .ask_from(bus, caller, Ask::Search { text }, ASK_TIMEOUT)
         }
         Call::SearchProvide {} => {
             if !st.holds.take(caller.uid) {
@@ -649,19 +715,19 @@ fn decide<W: Write + Send>(
         }
         Call::ShareText { title, text } => {
             let ask = Ask::Share { title, text };
-            st.asks.ask(bus, caller.uid, ask, PANEL_TIMEOUT)
+            st.asks.ask_from(bus, caller, ask, PANEL_TIMEOUT)
         }
         // The desktop acts as the person: wold never opens or moves a path for an app.
         Call::FileTrash { path } => st
             .asks
-            .ask(bus, caller.uid, Ask::Trash { path }, ASK_TIMEOUT),
+            .ask_from(bus, caller, Ask::Trash { path }, ASK_TIMEOUT),
         Call::ShareFile { path } => {
             st.asks
-                .ask(bus, caller.uid, Ask::ShareFile { path }, PANEL_TIMEOUT)
+                .ask_from(bus, caller, Ask::ShareFile { path }, PANEL_TIMEOUT)
         }
         Call::OpenWith { path } => {
             st.asks
-                .ask(bus, caller.uid, Ask::OpenWith { path }, PANEL_TIMEOUT)
+                .ask_from(bus, caller, Ask::OpenWith { path }, PANEL_TIMEOUT)
         }
         Call::ServiceStart { name } => match st.background.start(caller, &name) {
             Ok(()) => Answer::ok(),
@@ -693,7 +759,7 @@ fn decide<W: Write + Send>(
             };
             let wait = Duration::from_secs(shared::shell::APPROVAL_WAIT_SECS.into());
             st.asks
-                .ask(bus, caller.uid, Ask::Approval { approval }, wait)
+                .ask_from(bus, caller, Ask::Approval { approval }, wait)
         }
         Call::NotificationAnswer { id, key } => {
             let Some(pid) = notes.owner(id, caller.uid) else {
@@ -1308,6 +1374,91 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
             assert_eq!(w.join().unwrap().message.as_deref(), Some(NO_ANSWER));
         }
         assert!(s.1.asks.lock().waiting.is_empty());
+    }
+
+    /// QA-100 API-6: one share-granted app parking file panels fills only its own
+    /// [`ASKS_PER_APP`]; the account's other apps still ask.
+    #[test]
+    fn per_app_ask_cap() {
+        let s = Arc::new((Bus::<UnixStream>::default(), State::default()));
+        let (a, _keep) = UnixStream::pair().unwrap();
+        assert!(s.0.subscribe(Some(1000), None, a));
+        let greedy = Caller {
+            uid: 1000,
+            pid: 10,
+            app: "/usr/bin/greedy".into(),
+        };
+        let wait = Duration::from_secs(5);
+        let parked: Vec<_> = (0..ASKS_PER_APP)
+            .map(|_| {
+                let (s, c) = (s.clone(), greedy.clone());
+                std::thread::spawn(move || {
+                    s.1.asks
+                        .ask_from(&s.0, &c, Ask::ShareFile { path: "/x".into() }, wait)
+                })
+            })
+            .collect();
+        while s.1.asks.lock().waiting.len() < ASKS_PER_APP {
+            std::thread::yield_now();
+        }
+        let more = s.1.asks.ask_from(&s.0, &greedy, Ask::ClipboardRead, wait);
+        assert_eq!(
+            more.message.as_deref(),
+            Some(BUSY),
+            "the app's own share is full"
+        );
+        // The same app in another process is the same app.
+        let twin = Caller {
+            pid: 11,
+            ..greedy.clone()
+        };
+        let more = s.1.asks.ask_from(&s.0, &twin, Ask::ClipboardRead, wait);
+        assert_eq!(more.message.as_deref(), Some(BUSY));
+        let other = Caller {
+            uid: 1000,
+            pid: 12,
+            app: "/usr/bin/notes".into(),
+        };
+        let short = Duration::from_millis(50);
+        let a = s.1.asks.ask_from(&s.0, &other, Ask::ClipboardRead, short);
+        assert_eq!(
+            a.message.as_deref(),
+            Some(NO_ANSWER),
+            "admitted, then unanswered"
+        );
+        const { assert!(ASKS_PER_APP < ASKS_PER_UID) };
+        for w in parked {
+            assert_eq!(w.join().unwrap().message.as_deref(), Some(NO_ANSWER));
+        }
+    }
+
+    /// QA-100 API-6: web app hosts share one executable; the cap counts each app on its own.
+    #[test]
+    fn per_app_cap_tells_web_apps_apart() {
+        let host = |pid| Caller {
+            uid: 1000,
+            pid,
+            app: crate::webapp::HOST.into(),
+        };
+        let scope = |pid: i32| {
+            let id = if pid < 100 { "doctor" } else { "notes" };
+            Some(format!(
+                "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-wol-org.wolos.webapp.{id}-{pid}-1.scope\n"
+            ))
+        };
+        let (doctor, doctor2, notes) = (host(50), host(51), host(200));
+        assert_eq!(app_key(&doctor, &scope), "webapp:org.wolos.webapp.doctor");
+        assert_ne!(app_key(&doctor, &scope), app_key(&notes, &scope));
+        // Two processes of one app are one app only while they share a scope name (pid is part of it).
+        assert!(app_key(&doctor2, &scope).starts_with("webapp:"));
+        // No scope readable: the executable, as before.
+        assert_eq!(app_key(&doctor, &|_| None), crate::webapp::HOST);
+        let other = Caller {
+            uid: 1000,
+            pid: 9,
+            app: "/usr/bin/notes".into(),
+        };
+        assert_eq!(app_key(&other, &scope), "/usr/bin/notes");
     }
 
     #[test]

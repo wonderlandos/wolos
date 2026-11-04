@@ -393,11 +393,14 @@ pub fn plan_with(
         AdminAction::WifiPower => vec![argv(&["nmcli", "radio", "wifi", &a[1]])],
         // bluetoothd as a systemd service (the FreeBSD `service bluetooth onestart ubt0` was dead
         // code on Linux, QA-SHADOW-42); the radio itself is `bluetoothctl power` as the user.
-        AdminAction::Bluetooth => vec![argv(&[
-            "systemctl",
-            if a[0] == "on" { "start" } else { "stop" },
-            "bluetooth.service",
-        ])],
+        // On: clear a hit start limit first (a bluetoothd that crashed five times in a minute is
+        // "failed" and refuses to start), then start it; Settings powers the radio as the user
+        // afterwards. `bluetoothctl` cannot start it: BlueZ's client waits for org.bluez for ever.
+        AdminAction::Bluetooth if a[0] == "on" => vec![
+            argv(&["systemctl", "reset-failed", "bluetooth.service"]),
+            argv(&["systemctl", "start", "bluetooth.service"]),
+        ],
+        AdminAction::Bluetooth => vec![argv(&["systemctl", "stop", "bluetooth.service"])],
         AdminAction::AudioDefault => vec![AdminStep::Run(audio_default_argv(&a[0]))],
         AdminAction::Appearance => vec![write(appearance::FILE, 0o644, a[0].clone())],
         AdminAction::Keybinds => {
@@ -1338,7 +1341,11 @@ mod tests {
             (SessionPower, &["restart"], "systemctl reboot"),
             (SessionPower, &["shutdown"], "systemctl poweroff"),
             (WifiPower, &["wlan0", "off"], "nmcli radio wifi off"),
-            (Bluetooth, &["on"], "systemctl start bluetooth.service"),
+            (
+                Bluetooth,
+                &["on"],
+                "systemctl reset-failed bluetooth.service; systemctl start bluetooth.service",
+            ),
             (Bluetooth, &["off"], "systemctl stop bluetooth.service"),
             (
                 UserAdd,
