@@ -2,7 +2,6 @@
 //! B7 network-stack image contract: `.local` names, the connectivity probe, the resolver's
 //! fallback, the AirPlay rule file shipped closed. Reads the overlaid sibling root (wolos +
 //! wolos-pkgbuilds + wolos-iso, `support/siblings.rs`).
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 

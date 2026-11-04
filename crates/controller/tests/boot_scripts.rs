@@ -24,6 +24,7 @@ impl std::ops::Deref for Scratch {
     }
 }
 
+// The scratch dir of one test goes with it, passed or failed.
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

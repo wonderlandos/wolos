@@ -961,10 +961,7 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
     .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
 }
 
-/// The exit status [`run_status`] reports for a child a signal ended (OOM kill, SIGKILL).
-pub(crate) const KILLED: i32 = wol_core::system::KILLED;
-
-/// Run `argv` with stdin closed: (exit status, stdout, stderr). [`KILLED`] when a signal ended it;
+/// Run `argv` with stdin closed: (exit status, stdout, stderr). `wol_core::system::KILLED` when a signal ended it;
 /// None when it cannot start or does not finish within `timeout` (it is killed): a hung
 /// `pacman -Qu` must not hang `wol update check`. One runner for every crate:
 /// [`wol_core::system::run_full`].

@@ -1000,8 +1000,20 @@ rule!(rr_032_no_tmp_literal, "RR-032", prod, |s| lit_has(
     &["\"/tmp/"]
 ));
 rule!(rr_033_no_wildcard_bind, "RR-033", prod, |s| {
-    lit_has(s, &["0.0.0.0", "[::]:"])
+    s.lits.iter().filter(|(_, t)| binds_everywhere(t)).count()
 });
+
+/// A wildcard listen address in a literal: `0.0.0.0` not inside a longer address
+/// (`10.0.0.0/8` is a network), or `[::]:`.
+fn binds_everywhere(t: &str) -> bool {
+    t.contains("[::]:")
+        || t.match_indices("0.0.0.0").any(|(i, _)| {
+            let before = t[..i].chars().next_back();
+            let after = t[i + 7..].chars().next();
+            !before.is_some_and(|c| c.is_ascii_digit() || c == '.')
+                && !after.is_some_and(|c| c.is_ascii_digit() || c == '.' || c == '/')
+        })
+}
 rule!(rr_034_no_plain_http, "RR-034", prod, |s| {
     s.lits
         .iter()
@@ -1720,4 +1732,14 @@ fn the_doc_and_the_tests_agree() {
 fn rr_066_counts_the_fs_module_not_names_ending_in_fs() {
     assert_eq!(n_words(b"let d = crate::hyprprefs::load(h);", &["fs::"]), 0);
     assert_eq!(n_words(b"std::fs::read(p); fs::write(p, b)", &["fs::"]), 2);
+}
+
+/// RR-033 finds a listen address, not a network that ends in .0.0.0.
+#[test]
+fn rr_033_finds_wildcard_binds_not_networks() {
+    assert!(binds_everywhere("0.0.0.0:8080"));
+    assert!(binds_everywhere("bind 0.0.0.0"));
+    assert!(binds_everywhere("[::]:631"));
+    assert!(!binds_everywhere("ip saddr { 10.0.0.0/8, 172.16.0.0/12 }"));
+    assert!(!binds_everywhere("100.0.0.0"));
 }

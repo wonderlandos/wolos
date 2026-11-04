@@ -2,6 +2,7 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
+use wol_core::system::KILLED;
 
 /// QA-STORE-1 review: a pacman a signal ended is not "nothing pending", and a hung one does
 /// not hang the check.

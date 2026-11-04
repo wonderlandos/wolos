@@ -3,7 +3,6 @@
 //! medium's /etc/pacman.conf names it (wolos-iso build.sh: `[NAME]` + `Server = URL`);
 //! install-run's `install-channel ROOT` puts the mirrorlist back in that section and moves the
 //! mirrorlist's release tag to the channel's. The wolos-mirrorlist package's own file is the input.
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 

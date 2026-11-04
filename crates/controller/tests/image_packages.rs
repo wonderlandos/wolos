@@ -2,7 +2,6 @@
 //! What the image must ship for what the code relies on: `.wol` double-click wiring (ADR 0011), script
 //! interpreters, fonts, devices, phones and shares, optional module records. Reads the overlaid
 //! sibling root (wolos + wolos-pkgbuilds + wolos-iso, `support/siblings.rs`).
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 

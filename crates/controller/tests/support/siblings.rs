@@ -58,27 +58,63 @@ fn overlay(src: &Path, dst: &Path) {
 
 /// The overlaid tree as a string (for `format!("{}/path", root_str())`).
 pub fn root_str() -> &'static str {
-    static ROOT: OnceLock<String> = OnceLock::new();
-    ROOT.get_or_init(|| {
-        let own = repo_root();
-        let parent = own.parent().unwrap().to_path_buf();
-        let u = std::env::temp_dir().join(format!("wolos-tree-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&u);
-        fs::create_dir_all(&u).unwrap();
-        overlay(&own, &u);
-        for (var, dir) in [
-            ("WOLOS_SRC", "wolos"),
-            ("WOLOS_PKGBUILDS", "wolos-pkgbuilds"),
-            ("WOLOS_ISO", "wolos-iso"),
-        ] {
-            let r = std::env::var_os(var).map_or_else(|| parent.join(dir), PathBuf::from);
-            match r.canonicalize() {
-                Ok(r) if r != own => overlay(&r, &u),
-                _ => {}
+    static ROOT: OnceLock<(TreeDir, String)> = OnceLock::new();
+    &ROOT
+        .get_or_init(|| {
+            let own = repo_root();
+            let parent = own.parent().unwrap().to_path_buf();
+            sweep_dead_trees(&std::env::temp_dir());
+            let u = std::env::temp_dir().join(format!("{TREE_PREFIX}{}", std::process::id()));
+            let _ = fs::remove_dir_all(&u);
+            fs::create_dir_all(&u).unwrap();
+            let guard = TreeDir(u.clone());
+            overlay(&own, &u);
+            for (var, dir) in [
+                ("WOLOS_SRC", "wolos"),
+                ("WOLOS_PKGBUILDS", "wolos-pkgbuilds"),
+                ("WOLOS_ISO", "wolos-iso"),
+            ] {
+                let r = std::env::var_os(var).map_or_else(|| parent.join(dir), PathBuf::from);
+                match r.canonicalize() {
+                    Ok(r) if r != own => overlay(&r, &u),
+                    _ => {}
+                }
             }
+            let text = u.to_string_lossy().into_owned();
+            (guard, text)
+        })
+        .1
+}
+
+/// Name of a process's overlaid tree in the temp dir: the prefix, then the process id.
+pub const TREE_PREFIX: &str = "wolos-tree-";
+
+/// The overlaid tree (symlinks and directories only), removed when dropped. A `static` is never
+/// dropped, so [`root_str`]'s copy outlives its process: [`sweep_dead_trees`] removes those.
+pub struct TreeDir(pub PathBuf);
+
+// Removes the symlink tree; the files it points at are the repos' own and are never touched.
+impl Drop for TreeDir {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Removes every `wolos-tree-<pid>` in `tmp` whose process is gone (no `/proc/<pid>`): the copies
+/// test processes left (3126 of them filled the forge's /tmp inodes on 2026-11-04).
+pub fn sweep_dead_trees(tmp: &Path) {
+    let Ok(entries) = fs::read_dir(tmp) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some(pid) = name.strip_prefix(TREE_PREFIX) else {
+            continue;
+        };
+        if pid.parse::<u32>().is_ok() && !Path::new("/proc").join(pid).exists() {
+            let _ = fs::remove_dir_all(e.path());
         }
-        u.to_string_lossy().into_owned()
-    })
+    }
 }
 
 pub fn root() -> PathBuf {

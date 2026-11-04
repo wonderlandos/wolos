@@ -2,7 +2,6 @@
 //! WolOS mirrors (ADR 0030): repo order in pacman.conf, the wolos-mirrorlist package (the `[wolos]`
 //! list and the CachyOS `/cachy/` redirect list), the CPU gate of the three CachyOS x86-64-v3
 //! sections (`wol mirror`), status and latency ranking of `[wolos]` only.
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 

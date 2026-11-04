@@ -2,7 +2,6 @@
 //! WolOS on systemd (ADR 0016): the rc.d scripts became units in files/usr/lib/systemd, devd
 //! became udev, cron became a timer, dhclient hooks became a NetworkManager dispatcher script,
 //! sysctl.conf.local became sysctl.d. Scripts run against fakes; units are checked key by key.
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 
