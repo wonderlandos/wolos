@@ -236,6 +236,49 @@ pub const DEVICE_DNS_ARGV: [&str; 6] = [
     "show",
 ];
 
+/// Where NetworkManager's connectivity check is configured, in the order it reads them (a later
+/// setting wins): the packaged drop-ins, its own file, the admin's drop-ins.
+pub const NM_CONFS: [&str; 3] = [
+    "/usr/lib/NetworkManager/conf.d",
+    "/etc/NetworkManager/NetworkManager.conf",
+    "/etc/NetworkManager/conf.d",
+];
+
+/// The `uri=` of the `[connectivity]` section in `text`: the plain-HTTP address NetworkManager
+/// probes. A captive portal intercepts it and answers with its sign-in page, so opening it in the
+/// browser lands there (QA-NET2-3). Plain HTTP is the point: a portal cannot answer for HTTPS.
+pub fn connectivity_uri(text: &str) -> Option<String> {
+    let mut inside = false;
+    let mut uri = None;
+    for l in text.lines().map(str::trim) {
+        if l.starts_with('[') {
+            inside = l == "[connectivity]";
+        } else if inside && let Some(v) = l.strip_prefix("uri=") {
+            uri = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
+        }
+    }
+    uri
+}
+
+/// The address NetworkManager's connectivity check uses, from its configuration ([`NM_CONFS`];
+/// in a directory, the `.conf` files by name; the last that sets it wins). None when no check is
+/// configured: then there is no portal state either.
+pub fn nm_connectivity_uri(h: &dyn Host) -> Option<String> {
+    let mut files = Vec::new();
+    for p in NM_CONFS {
+        let inside = h.list_dir(p);
+        if inside.is_empty() {
+            files.push(p.to_owned());
+        } else {
+            files.extend(inside.into_iter().filter(|f| f.ends_with(".conf")));
+        }
+    }
+    files
+        .iter()
+        .rev()
+        .find_map(|f| h.read_text(f).and_then(|t| connectivity_uri(&t)))
+}
+
 /// Interfaces, addresses, DNS (whole computer and per link), the default route, connectivity and
 /// metered (short commands side by side; call off the UI thread).
 pub fn read(h: &dyn Host) -> NetInfo {
@@ -339,6 +382,32 @@ pub fn known_ssids(h: &dyn Host) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-NET2-3: the sign-in page is the address NetworkManager probes, the last setting winning.
+    #[test]
+    fn the_portal_page_is_what_networkmanager_probes() {
+        let conf = "[main]\nuri=http://wrong.example\n[connectivity]\nuri=http://ping.archlinux.org/nm-check.txt\n";
+        assert_eq!(
+            connectivity_uri(conf).as_deref(),
+            Some("http://ping.archlinux.org/nm-check.txt")
+        );
+        assert_eq!(connectivity_uri("[connectivity]\nenabled=false\n"), None);
+        let h = FakeHost::linux();
+        assert_eq!(nm_connectivity_uri(&h), None, "no check configured");
+        h.file("/usr/lib/NetworkManager/conf.d/20-connectivity.conf", conf)
+            .file(
+                "/etc/NetworkManager/conf.d/90-mine.conf",
+                "[connectivity]\nuri=http://portal.test/\n",
+            )
+            .file(
+                "/etc/NetworkManager/conf.d/91-other.conf",
+                "[main]\nplugins=keyfile\n",
+            );
+        assert_eq!(
+            nm_connectivity_uri(&h).as_deref(),
+            Some("http://portal.test/")
+        );
+    }
     use crate::system::fake::FakeHost;
 
     #[test]

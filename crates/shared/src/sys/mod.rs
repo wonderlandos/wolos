@@ -325,14 +325,10 @@ pub fn flock_write_held(locks: &str, dev: u64, ino: u64) -> bool {
             return false;
         };
         let hex = |t: &str| u64::from_str_radix(t, 16).ok();
-        if i.parse::<u64>().ok() != Some(ino) {
+        let (Some(a), Some(b)) = (hex(maj), hex(min)) else {
             return false;
-        }
-        match (hex(maj), hex(min)) {
-            (Some(0), Some(_)) if major == 0 => true,
-            (Some(a), Some(b)) => a == major && b == minor,
-            _ => false,
-        }
+        };
+        i.parse::<u64>().ok() == Some(ino) && ((a == 0 && major == 0) || (a == major && b == minor))
     })
 }
 

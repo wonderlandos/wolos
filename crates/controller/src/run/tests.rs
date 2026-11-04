@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+//! Unit tests of controller run, split out of the parent file (`#[cfg(test)] mod tests;`).
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;

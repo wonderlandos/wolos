@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
+//! Unit tests of core admin, split out of the parent file (`#[cfg(test)] mod tests;`).
 use super::*;
 use AdminAction::*;
 

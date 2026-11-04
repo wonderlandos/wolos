@@ -925,7 +925,11 @@ rule!(
 rule!(
     rr_023_no_sleep_in_core_and_shared,
     "RR-023",
-    |s| lib(s) && matches!(s.krate.as_str(), "core" | "shared"),
+    // core/src/system/ is the OS adaptor (as RR-019, RR-066 and RR-067 have it): it waits for
+    // children; the pure core around it never sleeps.
+    |s| lib(s)
+        && matches!(s.krate.as_str(), "core" | "shared")
+        && !s.rel.contains("core/src/system/"),
     |s| n_all(&s.code, &["thread::sleep("])
 );
 rule!(

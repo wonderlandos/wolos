@@ -83,7 +83,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 | RR-021 | No `.read_line(`, `.read_to_end(` or `.read_to_string(` on a stream outside `shared::bounded`; a read on `.take(N)` is bounded and does not count. | An unbounded read lets one peer eat memory. | rules_rust.rs RR-021 |
 | RR-078 | A file that connects or accepts on a Unix socket sets a read timeout or uses `shared::bounded`. | A silent peer must not hold a thread. | rules_rust.rs RR-078 |
 | RR-022 | No `thread::sleep(` in the shell crate. | A frame is 8 ms; the GTK main thread never blocks. | rules_rust.rs RR-022 |
-| RR-023 | No `thread::sleep(` in core or shared libraries. | Core is pure and tests run fast. | rules_rust.rs RR-023 |
+| RR-023 | No `thread::sleep(` in core or shared libraries (not in `core/src/system/`, the OS adaptor that waits for children). | Core is pure and tests run fast. | rules_rust.rs RR-023 |
 | RR-037 | No bare `thread::spawn(`; use `thread::Builder::new().name(…)`. | A named thread shows up in a backtrace and `top -H`. | rules_rust.rs RR-037 |
 | RR-027 | A library reads the environment through an `Env` value, not `env::var(`, `var_os(` or `vars(`. | Tests can then set it without touching the process. | rules_rust.rs RR-027 |
 | RR-028 | No `env::set_var(` or `env::remove_var(`. | They are `unsafe` in 2024 and racy with other threads. | rules_rust.rs RR-028 |
