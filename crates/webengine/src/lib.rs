@@ -23,7 +23,12 @@
 //!
 //! System web apps (ADR 0048) add [`bridge`]: the `app.toml` manifest, the permission catalog and the
 //! host's end of `window.wolos`, with recorded answers for development ([`bridge::mock`]).
+//!
+//! Every view serves Federate Network addresses (`fed://name.tld/path`) natively ([`fed`], ADR 0052):
+//! the library hands each load to the `federate` crate, which verifies the whole signature chain
+//! and every content address before a byte reaches the page.
 pub mod bridge;
+pub mod fed;
 pub mod ffi;
 pub mod host;
 pub mod input;

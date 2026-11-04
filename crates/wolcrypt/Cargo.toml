@@ -1,0 +1,38 @@
+[package]
+name = "wolcrypt"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "WolOS's cryptography in one place: hybrid signatures (Ed25519 + ML-DSA-65, roots Ed25519 + SLH-DSA-SHA2-128s), the hybrid KEM (X25519 + ML-KEM-768) with ChaCha20-Poly1305, derived ids, SHA-512, PBKDF2; pure Rust, no I/O, a std crate written no_std-friendly (core and alloc only)"
+
+[lib]
+name = "wolcrypt"
+
+# `wolcrypt verify-detached`: checks a witness's detached signature with nothing but wolcrypt.
+[[bin]]
+name = "wolcrypt"
+path = "src/bin/wolcrypt.rs"
+
+# Every dependency is pure Rust (`cargo build -p wolcrypt --target wasm32-unknown-unknown`). No
+# ring: ChaCha20-Poly1305 and PBKDF2 come from RustCrypto.
+[dependencies]
+ed25519-dalek = { workspace = true, features = ["zeroize"] }
+curve25519-dalek = { workspace = true }
+fips203.workspace = true
+fips204.workspace = true
+fips205.workspace = true
+sha2.workspace = true
+subtle = { version = "2.6", default-features = false }
+zeroize = { workspace = true, features = ["alloc"] }
+chacha20poly1305 = { version = "0.10.1", default-features = false }
+pbkdf2 = { version = "0.12.2", default-features = false, features = ["hmac"] }
+# The detached-signature check reads the small JSON of a `.wsig` and a `.wolcert`.
+serde.workspace = true
+serde_json.workspace = true
+# `tls` (ADR 0052 "Transport"): the hybrid TLS key exchange X25519MLKEM768 as a rustls group. Only
+# the trait crate, no provider of its own (the caller brings the generator and the rest).
+rustls = { version = "0.23", default-features = false, features = ["std"], optional = true }
+
+[features]
+tls = ["dep:rustls"]

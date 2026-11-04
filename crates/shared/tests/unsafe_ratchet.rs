@@ -64,6 +64,17 @@ use std::path::{Path, PathBuf};
 /// the callback the library calls with the view's context, the `set_host_channel` call and
 /// `post_message`. `src/bin/wol-webhost.rs` (+1): `Target::surface` for the app's window. Each has a
 /// SAFETY line, and the pair is covered by `tests/shim_loader_11.rs` against a C stand-in library.
+/// `webengine` 135 -> 173 (FEDERATE, 2026-11-04, ADR 0052): the host's `fed:` scheme, symbol
+/// version WWE_1.2. `src/engine/scheme.rs` (+7, new, std only and tested by
+/// `tests/engine_scheme.rs`): the three function-pointer types, the body sink that appends the
+/// host's bytes, and the calls of the host's `load` and `map` with its context.
+/// `src/engine/lib.rs` (+3): the export `wwe_engine_set_scheme` (`#[unsafe(no_mangle)] pub unsafe
+/// extern`) and the block reading its pointers. `src/ffi.rs` (+4): the four function-pointer types.
+/// `src/view.rs` (+1): the `set_scheme` call. `src/fed.rs` (+8, new): the two callbacks the library
+/// calls (`unsafe extern "C"`), their reads of the library's bytes, the NUL-terminated copy into the
+/// library's buffers and the body hand-off. `tests/engine_scheme.rs` (+8) and
+/// `tests/shim_loader_12.rs` (+7): the stand-in host and the stand-in library's hooks called through
+/// the C ABI. Each has a SAFETY line. `federate` 0 and `wolcrypt` 0 (copied from wave3/trust-core): no unsafe, `#![forbid(unsafe_code)]`.
 /// realtime 69 -> 79 (DT-2, compositor animations, counted at the wave-3 merge): `src/ffi.rs`
 /// `wol_anim_curve_name` and `wol_anim_curve` for the wol-hypr plugin (two `unsafe(no_mangle)`, one
 /// `unsafe extern`, the name read and the four-float out-write, each with a SAFETY line) and five
@@ -103,7 +114,9 @@ const BASELINE: &[(&str, usize)] = &[
     ("shell", 8),
     ("wol-lua", 3),
     ("xguard-clam", 13),
-    ("webengine", 135),
+    ("webengine", 173),
+    ("federate", 0),
+    ("wolcrypt", 0),
 ];
 
 fn crates_dir() -> PathBuf {

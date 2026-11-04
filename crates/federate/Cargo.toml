@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# federate (ADR 0052): native support for Federate Network addresses (fed://label.tld/path). Parses
+# the address, fetches the signed root zone, the domain's manifest and the content block, and
+# verifies every layer (Ed25519 signatures over canonical JSON, BLAKE3 content addresses) before a
+# byte reaches a page. Shared by the web-app runtime (crates/webengine) and the browser's bridge.
+[package]
+name = "federate"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+# Content addresses are BLAKE3 (the protocol's choice). `pure`: no C or assembly build step.
+blake3 = { version = "1.8", default-features = false, features = ["pure"] }
+# The network's HTTPS compatibility door (already in the lock through wopkg).
+ureq = { version = "3.5", default-features = false, features = ["rustls", "platform-verifier"] }
+# The door's TLS (ADR 0052 "Transport"): the ring provider ureq already uses, with wolcrypt's hybrid
+# X25519MLKEM768 group first (the OS's one ML-KEM).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+wolcrypt = { workspace = true, features = ["tls"] }
+
+[dev-dependencies]
+# The pinned anchors' fingerprints (already a workspace dependency).
+sha2.workspace = true

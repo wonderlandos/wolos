@@ -8,8 +8,10 @@
 //! What it adds to the engine, and nothing else: the origin gate (every navigation and every
 //! resource load asks the host's `allow`; a refusal is a network error, a refused navigation does
 //! not happen), the profile directory as the engine's only place for files, the page's features as
-//! preferences, the host's clipboard and waker, a synchronous screenshot for the goldens, and (WWE_1.1,
-//! ADR 0048) a message channel between the app's own page and the host ([`channel`]).
+//! preferences, the host's clipboard and waker, a synchronous screenshot for the goldens, (WWE_1.1,
+//! ADR 0048) a message channel between the app's own page and the host ([`channel`]), and (WWE_1.2,
+//! ADR 0052) the `fed:` scheme served by the host, with `http(s)://` Federate names opened as
+//! `fed://` ([`scheme`]).
 //!
 //! A fault in the engine stays on this side ([`boundary`]): no export unwinds (a panic is an error
 //! return, or a log line where the call returns nothing), the waker stops when the engine is
@@ -17,17 +19,25 @@
 mod boundary;
 mod channel;
 mod confine;
+mod scheme;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_void};
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dpi::PhysicalSize;
 use raw_window_handle::{
     DisplayHandle, RawDisplayHandle, RawWindowHandle, WaylandDisplayHandle, WaylandWindowHandle,
     WindowHandle,
+};
+use servo::protocol_handler::{
+    DoneChannel, FetchContext, HttpStatus, ProtocolHandler, ProtocolRegistry, Request,
+    ResourceFetchTiming, Response, ResponseBody,
 };
 use servo::{
     ClipboardDelegate, Code, CompositionEvent, CompositionState, ConsoleLogLevel, DevicePoint,
@@ -186,6 +196,8 @@ pub struct Engine {
     servo: Servo,
     host: Host,
     channel: RefCell<Option<Rc<HostChannel>>>,
+    /// WWE_1.2: the host's `fed:` handler, registered with the engine at build, filled later.
+    scheme: Arc<scheme::Slot>,
     waker: Option<boundary::Revocable<(WakeFn, usize)>>,
     /// Last: the slot comes back once the engine is gone.
     _slot: boundary::Claim<'static>,
@@ -202,6 +214,55 @@ struct Delegate {
     host: Host,
     state: Rc<ViewState>,
     channel: Option<Rc<HostChannel>>,
+    scheme: Arc<scheme::Slot>,
+}
+
+/// The engine's protocol handler for [`scheme::SCHEME`]: each load runs the host's handler on its
+/// own thread ([`scheme::spawn`]) and becomes the response, status and content type the host gave.
+struct HostScheme(Arc<scheme::Slot>);
+
+impl ProtocolHandler for HostScheme {
+    // The trait's own signature at the pin (`FutureResponse<'a>`, a private alias spelled out).
+    fn load<'a>(
+        &'a self,
+        request: &'a mut Request,
+        _done_chan: &mut DoneChannel,
+        _context: &FetchContext,
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        let url = request.current_url();
+        let timing = ResourceFetchTiming::new(request.timing_type());
+        // A document may be larger than what it loads (the host caps the two differently).
+        let kind = if request.is_navigation_request() {
+            scheme::LOAD_NAVIGATION
+        } else {
+            scheme::LOAD_RESOURCE
+        };
+        let pending = scheme::spawn(self.0.clone(), url.as_str().to_owned(), kind);
+        Box::pin(async move {
+            let reply = pending.await;
+            let mut response = Response::new(url, timing);
+            *response.body.lock() = ResponseBody::Done(reply.body);
+            if let Ok(v) = http::HeaderValue::from_str(&reply.mime) {
+                response.headers.insert(http::header::CONTENT_TYPE, v);
+            }
+            let reason = http::StatusCode::from_u16(reply.status)
+                .ok()
+                .and_then(|c| c.canonical_reason())
+                .unwrap_or("");
+            response.status = HttpStatus::new_raw(reply.status, reason.as_bytes().to_vec());
+            response
+        })
+    }
+
+    // Its pages fetch their own files (`fetch("/index.en.md")`) like any page's.
+    fn is_fetchable(&self) -> bool {
+        true
+    }
+
+    // Every byte is verified against signatures and content addresses before it is served.
+    fn is_secure(&self) -> bool {
+        true
+    }
 }
 
 impl WebViewDelegate for Delegate {
@@ -223,7 +284,24 @@ impl WebViewDelegate for Delegate {
     // left as it was (HTML: a 204 or 205 response aborts the navigation); for anything else an
     // empty `403 Forbidden`, so a frame gets an empty document and fires `load` (a cancelled load
     // stalls the parent's `load` like a denied navigation at the pin).
-    fn load_web_resource(&self, _webview: WebView, load: WebResourceLoad) {
+    //
+    // WWE_1.2: a page load of an http(s) URL the host spells as `fed://` (the network's
+    // compatibility spelling, `http://home.fed`) ends the same way and loads that address instead,
+    // which then passes the gate like any other navigation.
+    fn load_web_resource(&self, webview: WebView, load: WebResourceLoad) {
+        let mapped = load
+            .request()
+            .is_for_main_frame
+            .then(|| self.scheme.map(load.request().url.as_str()))
+            .flatten()
+            .and_then(|u| Url::parse(&u).ok());
+        if let Some(to) = mapped {
+            let url = load.request().url.clone();
+            load.intercept(WebResourceResponse::new(url).status_code(http::StatusCode::NO_CONTENT))
+                .finish();
+            webview.load(to);
+            return;
+        }
         if self.host.allows(&load.request().url, LOAD_RESOURCE) {
             return;
         }
@@ -477,7 +555,16 @@ pub unsafe extern "C" fn wwe_engine_new(
             clip_set: config.clip_set,
             ctx: config.ctx,
         };
-        let mut builder = ServoBuilder::default().opts(opts).preferences(prefs);
+        // WWE_1.2: `fed:` is the host's (ADR 0052); until wwe_engine_set_scheme its loads say so.
+        let scheme = Arc::new(scheme::Slot::default());
+        let mut protocols = ProtocolRegistry::default();
+        protocols
+            .register(scheme::SCHEME, HostScheme(scheme.clone()))
+            .map_err(|_| "the fed: scheme cannot be registered")?;
+        let mut builder = ServoBuilder::default()
+            .opts(opts)
+            .preferences(prefs)
+            .protocol_registry(protocols);
         if let Some(w) = &waker {
             builder = builder.event_loop_waker(Box::new(Waker(w.clone())));
         }
@@ -486,6 +573,7 @@ pub unsafe extern "C" fn wwe_engine_new(
             servo,
             host,
             channel: RefCell::new(None),
+            scheme,
             waker: waker.clone(),
             _slot: slot,
         })))
@@ -520,6 +608,7 @@ pub unsafe extern "C" fn wwe_engine_free(engine: *mut Engine) {
     let Engine {
         servo,
         waker,
+        scheme,
         _slot: slot,
         ..
     } = *engine;
@@ -535,6 +624,8 @@ pub unsafe extern "C" fn wwe_engine_free(engine: *mut Engine) {
     if let Some(w) = waker {
         w.revoke();
     }
+    // A fed: load in progress is waited for; none calls the host after this.
+    scheme.revoke();
     drop(slot);
 }
 
@@ -618,6 +709,7 @@ pub unsafe extern "C" fn wwe_view_new(
             host: e.host,
             state: state.clone(),
             channel: channel.clone(),
+            scheme: e.scheme.clone(),
         });
         let scale = if t.scale > 0.0 { t.scale } else { 1.0 };
         let mut builder = WebViewBuilder::new(&e.servo, context.clone())
@@ -956,6 +1048,45 @@ pub unsafe extern "C" fn wwe_engine_set_host_channel(
         on_message,
         ctx,
     }));
+    0
+}
+
+/// WWE_1.2 (ADR 0052). The host serves `scheme` (only `fed` at this build): each load calls `load`
+/// on a thread of its own, and before each page load of an http(s) URL `map` (optional) may spell
+/// it as a `fed://` address to load instead.
+///
+/// # Safety
+/// `engine` is live; `scheme` is a NUL-terminated string; `load` and `map` are callable with
+/// `ctx` from any thread until `wwe_engine_free` returns; `err` as in `wwe_engine_new`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wwe_engine_set_scheme(
+    engine: *mut Engine,
+    scheme_name: *const c_char,
+    load: Option<scheme::LoadFn>,
+    map: Option<scheme::MapFn>,
+    ctx: *mut c_void,
+    err: *mut c_char,
+    errlen: usize,
+) -> i32 {
+    // SAFETY: contract above.
+    let (e, name) = unsafe { (engine.as_ref(), opt_str(scheme_name)) };
+    let Some(e) = e else {
+        put_err(err, errlen, "engine is NULL");
+        return -1;
+    };
+    let (Some(name), Some(load)) = (name, load) else {
+        put_err(err, errlen, "scheme and load are required");
+        return -1;
+    };
+    if name != scheme::SCHEME {
+        put_err(err, errlen, "this build serves the fed scheme only");
+        return -1;
+    }
+    e.scheme.set(scheme::Host {
+        load,
+        map,
+        ctx: ctx.expose_provenance(),
+    });
     0
 }
 

@@ -31,6 +31,8 @@ enum Rule {
     },
     /// `file:///dir/` (ends with `/`).
     Folder(String),
+    /// `fed://label.tld`: a Federate Network name (ADR 0052), every path under it.
+    Fed(String),
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +74,11 @@ fn parse_rule(entry: &str) -> Option<Rule> {
     if let Some(dir) = entry.strip_prefix("file://") {
         let ok = dir.starts_with('/') && dir.ends_with('/') && !dir.contains("/../");
         return ok.then(|| Rule::Folder(dir.to_owned()));
+    }
+    if let Some(name) = entry.strip_prefix("fed://") {
+        let name = name.strip_suffix('/').unwrap_or(name);
+        let ok = federate::FedUrl::parse(entry).is_ok_and(|u| u.domain() == name);
+        return ok.then(|| Rule::Fed(name.to_owned()));
     }
     let (scheme, host, port, path) = split_web(entry)?;
     let https = match scheme {
@@ -143,7 +150,7 @@ impl Gate {
                 host: h,
                 port: p,
             } => *s == https && *p == port && host_matches(h, host),
-            Rule::Folder(_) => false,
+            Rule::Folder(_) | Rule::Fed(_) => false,
         })
     }
 
@@ -172,6 +179,17 @@ impl Gate {
                 .rules
                 .iter()
                 .any(|r| matches!(r, Rule::Folder(d) if path.starts_with(d.as_str())));
+        }
+        if url.starts_with("fed://") {
+            // Already in the canonical spelling the engine serialises; anything else is refused.
+            return federate::FedUrl::parse(url).is_ok_and(|u| {
+                let d = u.domain();
+                url[6..].starts_with(&d)
+                    && self
+                        .rules
+                        .iter()
+                        .any(|r| matches!(r, Rule::Fed(n) if *n == d))
+            });
         }
         let Some((scheme, host, port, path)) =
             split_web(url).filter(|(_, h, _, _)| !h.contains('*'))
@@ -205,6 +223,44 @@ mod tests {
             Path::new("/home/a/.local/share/wolos/webapps/profiles/x"),
         )
         .unwrap()
+    }
+
+    /// ADR 0052: a Federate name is an origin like a web host: every path under it, nothing else.
+    #[test]
+    fn a_federate_name_is_an_origin() {
+        let g = gate(&["fed://home.fed"], &[], &[]);
+        for ok in [
+            "fed://home.fed",
+            "fed://home.fed/",
+            "fed://home.fed/style.css?v=1",
+            "fed://home.fed#top",
+        ] {
+            assert!(g.allows(ok, Load::Navigation), "{ok}");
+            assert!(g.allows(ok, Load::Resource), "{ok}");
+        }
+        for no in [
+            "fed://lobo.pagina/",
+            "fed://home.fedx/",
+            "fed://home.fed:80/",
+            "fed://x.home.fed/",
+            "http://home.fed/",
+            "fed://HOME.fed/",
+        ] {
+            assert!(!g.allows(no, Load::Navigation), "{no}");
+        }
+        assert!(gate(&["fed://home.fed/"], &[], &[]).allows("fed://home.fed/a", Load::Resource));
+        let bad = Policy {
+            origins: vec!["fed://home.fed/about".into()],
+            ..Policy::default()
+        };
+        assert!(
+            Gate::new(&bad, Path::new("/p")).is_err(),
+            "an origin has no path"
+        );
+        assert!(
+            !gate(&[], &[], &[]).allows("fed://home.fed/", Load::Navigation),
+            "no origin, no load"
+        );
     }
 
     #[test]
