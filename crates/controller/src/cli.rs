@@ -1155,14 +1155,14 @@ pub const TREE: &[Cmd] = &[
         &["undo"],
         "undo",
         &[opt("id")],
-        "Undo the last change, or change <id>",
+        "Undo the last change (asks first at a terminal; --yes skips), or change <id>",
     ),
     alias(&["restore"], "restore.list", &[]),
     cmd(
         &["restore", "list"],
         "restore.list",
         &[],
-        "Restore points (the system copies you can start from)",
+        "Restore points (the system copies you can start from); JSON: name, active, next_boot, release, tries_left, rollback",
     ),
     cmd(
         &["restore", "activate"],

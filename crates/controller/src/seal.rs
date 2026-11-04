@@ -200,6 +200,29 @@ pub(crate) fn failed_mark(kind: &str, slot: &str) -> PathBuf {
     PathBuf::from(format!("/var/lib/wolos/{kind}-{slot}"))
 }
 
+/// The safety notice (`seal::NOTICE`) goes once its cause is gone (QA-LIVE3-16: it outlived the
+/// failure for good). Two causes write it: a slot that failed an early-boot check (it carries a
+/// failed mark until it boots and passes) and `wol boot bless` finding the other slot's image
+/// damaged (no mark; the cause is that image, until it verifies again or is re-sealed). While
+/// either holds, the notice stays.
+pub(crate) fn clear_notice_if_healthy(env: &mut dyn Env) {
+    let marked = update::SLOTS.into_iter().any(|slot| {
+        [VERITY_MARK, EPOCH_MARK]
+            .iter()
+            .any(|k| env.read_file(&failed_mark(k, slot)).is_some())
+    });
+    if marked {
+        return;
+    }
+    // Only a notice that is there needs the (costly) image check.
+    if env.read_file(Path::new(seal::NOTICE)).is_some()
+        && update::SLOTS.into_iter().any(|s| image_damaged(env, s))
+    {
+        return;
+    }
+    let _ = env.remove_file(Path::new(seal::NOTICE));
+}
+
 /// The other slot's menu entry the early-boot checks (`wol seal check`, `wol boot check`) may
 /// restart into: found under any counter state with tries left (QA-SYS-12), its image on the ESP
 /// and not empty (a ghost entry restarts into this slot again: BOOT2-2, QA-STORE-51), and that
@@ -362,6 +385,7 @@ fn check_at(env: &mut dyn Env, slot: &str, expected: &str, root: &Path) -> i32 {
         // A slot that passes has not failed: an old mark (a check that could not see every file)
         // would keep the other slot from ever falling back to this one.
         let _ = env.remove_file(&failed_mark(VERITY_MARK, slot));
+        clear_notice_if_healthy(env);
         return 0;
     }
     // This slot failed before and is running again: the fallback did not take (the other one

@@ -108,6 +108,30 @@ fn enroll_retries_with_one_command_and_says_what_comes_next() {
     assert!(e.out.contains("type boot"), "{}", e.out);
 }
 
+/// QA-LIVE3-11: `wol boot enroll` as root on a computer with Secure Boot off said "run this as
+/// root". It names the firmware first, then the account.
+#[test]
+fn enroll_names_why_it_queued_nothing() {
+    // Secure Boot off, as root.
+    let d = efivars("en-off", 0, 0, b"");
+    let mut e = env_for(&d);
+    e.root = true;
+    assert_eq!(run("boot enroll", &mut e), 1, "{}", e.out);
+    assert!(e.err.contains("Secure Boot is off"), "{}", e.err);
+    assert!(!e.err.contains("as root"), "{}", e.err);
+    // Secure Boot on, not root.
+    let d = efivars("en-user", 1, 0, b"");
+    let mut e = env_for(&d);
+    e.root = false;
+    assert_eq!(run("boot enroll", &mut e), 1);
+    assert!(e.err.contains("as root"), "{}", e.err);
+    // Secure Boot on, root: the firmware's side.
+    let mut e = env_for(&d);
+    e.root = true;
+    assert_eq!(run("boot enroll", &mut e), 1);
+    assert!(e.err.contains("firmware did not take"), "{}", e.err);
+}
+
 #[test]
 fn an_nvidia_card_needs_the_key_screen_even_with_own_keys() {
     let d = efivars("nv", 0, 1, b"");
@@ -341,6 +365,47 @@ fn manual_fallback_sets_default() {
     assert!(e.execs.is_empty(), "{:?}", e.execs);
 }
 
+/// QA-LIVE3-16 on the boot check's pass path: the notice goes once no slot is marked and the
+/// other image is sound; a mark on the other slot or a damaged image keeps it.
+#[test]
+fn a_boot_check_that_passes_clears_the_notice_only_when_its_cause_is_gone() {
+    let sum = |c: char| c.to_string().repeat(64);
+    let notice = std::path::Path::new(wol_core::seal::NOTICE);
+    let with = |extra: Vec<(&str, String)>, got: char| {
+        let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+        e.files.push((notice.to_path_buf(), "A notice.\n".into()));
+        for (p, t) in extra {
+            e.files.push((PathBuf::from(p), t));
+        }
+        e.captures.push((
+            "sha256sum /efi/EFI/wolos/wolos-b.efi".into(),
+            format!("{}  /efi/EFI/wolos/wolos-b.efi\n", sum(got)),
+        ));
+        e
+    };
+    let removed = |e: &FakeEnv| e.removed.iter().any(|p| p == notice);
+    // Nothing marked, nothing damaged: gone.
+    let mut e = with(vec![], 'a');
+    assert_eq!(run("boot check", &mut e), 0, "{}", e.err);
+    assert!(removed(&e), "{:?}", e.removed);
+    // The other slot still carries a failed mark: kept.
+    let mut e = with(
+        vec![("/var/lib/wolos/epoch-failed-wolos-b", "older\n".into())],
+        'a',
+    );
+    assert_eq!(run("boot check", &mut e), 0);
+    assert!(!removed(&e), "{:?}", e.removed);
+    // No mark, but the other image does not match its digest (what bless wrote the notice for).
+    let digest = ("/efi/wolos-b/image.sha256", format!("{}\n", sum('a')));
+    let mut e = with(vec![digest.clone()], 'f');
+    assert_eq!(run("boot check", &mut e), 0);
+    assert!(!removed(&e), "{:?}", e.removed);
+    // Re-sealed: the image matches again.
+    let mut e = with(vec![digest], 'a');
+    assert_eq!(run("boot check", &mut e), 0);
+    assert!(removed(&e), "{:?}", e.removed);
+}
+
 #[test]
 fn a_good_boot_moves_the_floor_and_names_the_other_slot() {
     let mut e = booted("rootflags=subvol=@wolos-b wolos.epoch=6", "2\n");
@@ -353,6 +418,13 @@ fn a_good_boot_moves_the_floor_and_names_the_other_slot() {
             .unwrap_or_else(|| panic!("{n}: {:?}", e.written))
     };
     assert_eq!(w("floor").trim(), "6");
+    // QA-LIVE3-11: bless says which slot it marked and where the floor stands.
+    assert!(
+        e.out.contains("wolos-b is marked as a good start"),
+        "{}",
+        e.out
+    );
+    assert!(e.out.contains("floor is 6"), "{}", e.out);
     assert!(w("wolos-a.conf").starts_with("title WolOS 1.1 (previous version)\n"));
     assert!(w("wolos-b+3.conf").starts_with("title WolOS 1.0\n"));
     assert!(

@@ -675,6 +675,44 @@ mod tests {
         assert_eq!((d.sector, d.first, d.last), (512, 2048, 67108864 - 34));
     }
 
+    /// QA-SHADOW-25: a partitioned 4Kn disk (the table says `sectorsize` 4096): sizes in bytes
+    /// are sectors x 4096, 1 MiB is 256 sectors, and free space starts and ends on that grain.
+    #[test]
+    fn a_partitioned_4k_disk_counts_in_its_own_sectors() {
+        let sf = r#"{"partitiontable":{"label":"gpt","id":"AAAA-4","device":"/dev/nvme0n1","unit":"sectors","firstlba":256,"lastlba":8388602,"sectorsize":4096,"partitions":[
+          {"node":"/dev/nvme0n1p1","start":256,"size":131072,"type":"C12A7328-F81F-11D2-BA4B-00A0C93EC93B","uuid":"E1E1"},
+          {"node":"/dev/nvme0n1p2","start":131328,"size":1048576,"type":"0FC63DAF-8483-4772-8E79-3D69D8477DE4","uuid":"E2E2"}]}}"#;
+        let ls = r#"{"blockdevices":[{"path":"/dev/nvme0n1","size":34359738368,"model":null,"log-sec":4096,"children":[
+          {"path":"/dev/nvme0n1p1","size":536870912,"model":null,"fstype":"vfat","label":null,"uuid":"AB12","mountpoints":[null]},
+          {"path":"/dev/nvme0n1p2","size":4294967296,"model":null,"fstype":"ext4","label":null,"uuid":"CD34","mountpoints":[null]}]}]}"#;
+        let d = parse(Some(sf), ls).unwrap();
+        assert_eq!(
+            (d.table, d.sector, d.first, d.last),
+            (Table::Gpt, 4096, 256, 8388602)
+        );
+        assert_eq!(grain(d.sector), 256);
+        assert_eq!(
+            d.bytes_of(&d.parts[0]),
+            536_870_912,
+            "131072 sectors of 4096"
+        );
+        assert_eq!(d.bytes_of(&d.parts[1]), 4_294_967_296);
+        let free = d.free();
+        assert_eq!(free.len(), 1, "{free:?}");
+        let (start, sectors) = free[0];
+        assert_eq!(start, 131328 + 1048576, "right after the last partition");
+        assert_eq!(start % grain(d.sector), 0, "on the MiB grain");
+        assert!(start + sectors <= d.last + 1, "{free:?}");
+        let after = d.bytes - start * 4096;
+        assert!(
+            sectors * 4096 <= after && sectors * 4096 >= after - 2 * MIB,
+            "{free:?}"
+        );
+        // A table that does not say its sector size: the lsblk one (4096), never a silent 512.
+        let sf2 = sf.replace("\"sectorsize\":4096,", "");
+        assert_eq!(parse(Some(&sf2), ls).unwrap().sector, 4096);
+    }
+
     /// audit core-install #3: a blank 4Kn disk counts in 4096-byte sectors, from lsblk's LOG-SEC:
     /// 1 MiB is 256 of them, the backup GPT takes 5 at the end, and Create sizes come out right.
     #[test]

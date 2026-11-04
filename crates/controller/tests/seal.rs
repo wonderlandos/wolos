@@ -224,6 +224,108 @@ fn boot_check_that_passes_clears_the_slots_old_mark() {
     );
 }
 
+/// QA-LIVE3-16: the safety notice written for a failed slot went on for good. A pass clears it
+/// once no slot carries a failed mark; while the other slot still does, the notice stays.
+#[test]
+fn a_pass_clears_the_notice_when_no_slot_stays_marked() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let passing = |other_mark: Option<&str>| {
+        let mut files = vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                format!("rootflags=subvol=@wolos-a wolos.seal={}", m.root_digest()),
+            ),
+            (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+        ];
+        if let Some(mark) = other_mark {
+            files.push((PathBuf::from(mark), "failed\n".into()));
+        }
+        FakeEnv {
+            files,
+            captures: vec![(
+                "fsverity measure /usr/bin/a".into(),
+                format!("sha256:{} /usr/bin/a\n", d('a')),
+            )],
+            ..Default::default()
+        }
+    };
+    let notice = std::path::Path::new(wol_core::seal::NOTICE);
+    let mut env = passing(None);
+    assert_eq!(run("seal check", &mut env), 0, "{}", env.err);
+    assert!(env.removed.iter().any(|p| p == notice), "{:?}", env.removed);
+    for mark in [
+        "/var/lib/wolos/verity-failed-wolos-b",
+        "/var/lib/wolos/epoch-failed-wolos-b",
+    ] {
+        let mut env = passing(Some(mark));
+        assert_eq!(run("seal check", &mut env), 0, "{}", env.err);
+        assert!(
+            !env.removed.iter().any(|p| p == notice),
+            "{mark} still marks a slot: {:?}",
+            env.removed
+        );
+    }
+}
+
+/// QA-LIVE3-16, the other cause: `wol boot bless` writes the notice for a damaged other image
+/// without a failed mark. A passing check keeps it while that image stays damaged and clears it
+/// once the image verifies again (re-sealed) or no digest is kept.
+#[test]
+fn a_pass_keeps_the_notice_while_the_other_image_is_damaged() {
+    let m = Manifest::parse(&format!("{} usr/bin/a\n", d('a')));
+    let notice = std::path::Path::new(wol_core::seal::NOTICE);
+    let env_with = |kept: Option<char>, got: char| {
+        let mut files = vec![
+            (
+                PathBuf::from("/proc/cmdline"),
+                format!("rootflags=subvol=@wolos-a wolos.seal={}", m.root_digest()),
+            ),
+            (PathBuf::from("/usr/lib/wolos/verity.manifest"), m.to_text()),
+            (
+                PathBuf::from(wol_core::seal::NOTICE),
+                "The other version is damaged.\n".into(),
+            ),
+        ];
+        if let Some(c) = kept {
+            files.push((
+                PathBuf::from("/efi/wolos-b/image.sha256"),
+                format!("{}\n", d(c)),
+            ));
+        }
+        FakeEnv {
+            files,
+            captures: vec![
+                (
+                    "fsverity measure /usr/bin/a".into(),
+                    format!("sha256:{} /usr/bin/a\n", d('a')),
+                ),
+                (
+                    "sha256sum /efi/EFI/wolos/wolos-b.efi".into(),
+                    format!("{}  /efi/EFI/wolos/wolos-b.efi\n", d(got)),
+                ),
+            ],
+            ..Default::default()
+        }
+    };
+    let mut damaged = env_with(Some('a'), 'f');
+    assert_eq!(run("seal check", &mut damaged), 0, "{}", damaged.err);
+    assert!(
+        !damaged.removed.iter().any(|p| p == notice),
+        "{:?}",
+        damaged.removed
+    );
+    let mut resealed = env_with(Some('a'), 'a');
+    assert_eq!(run("seal check", &mut resealed), 0);
+    assert!(
+        resealed.removed.iter().any(|p| p == notice),
+        "{:?}",
+        resealed.removed
+    );
+    let mut no_digest = env_with(None, 'f');
+    assert_eq!(run("seal check", &mut no_digest), 0);
+    assert!(no_digest.removed.iter().any(|p| p == notice));
+}
+
 #[test]
 fn boot_check_passes_a_slot_that_was_never_sealed() {
     let mut env = FakeEnv {

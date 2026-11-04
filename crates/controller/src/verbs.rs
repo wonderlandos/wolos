@@ -102,7 +102,7 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "windows.focus" => windows_focus(env, &a("window")),
         "files.tidy" => files_tidy(env, inv.get("plan"), json),
         "history" => history(env, json),
-        "undo" => undo(env, inv.get("id"), json),
+        "undo" => undo(env, inv.get("id"), json, inv.flag("yes")),
         "restore.list" => restore_list(env, json),
         "restore.activate" => restore_activate(env, &a("be")),
         "helpers.status" => get(env, helpers_state, json),
@@ -898,12 +898,33 @@ fn history(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
-fn undo(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
+fn undo(env: &mut dyn Env, id: Option<&str>, json: bool, yes: bool) -> i32 {
     let id = match id.map(str::parse::<u64>) {
         None => None,
         Some(Ok(n)) => Some(n),
         Some(Err(_)) => return fail(env, ErrorCode::Usage, "<id> must be a number (wol history)"),
     };
+    // QA-LIVE3-20: a person at a terminal who names no change is shown which one this reverts
+    // and asked; a script (not a terminal, --json or --yes) keeps the old "the last change".
+    if id.is_none()
+        && !json
+        && !yes
+        && env.stdout_tty()
+        && let Some(t) = journal_of(env).undo_target()
+    {
+        env.out(&format!(
+            "This undoes change #{} ({}, by {}). Undo it? [y/N] ",
+            t.id, t.what, t.by
+        ));
+        let said = env.read_line().unwrap_or_default();
+        if !matches!(said.trim().to_lowercase().as_str(), "y" | "yes") {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                "nothing was undone; see `wol history`, then `wol undo <id>`",
+            );
+        }
+    }
     let by = env.actor();
     let e = match journal_of(env).undo(id, &by, env.now_secs()) {
         Ok(e) => e,

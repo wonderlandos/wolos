@@ -182,6 +182,44 @@ fn slots_env(tag: &str) -> FakeEnv {
     }
 }
 
+/// QA-LIVE3-20: `wol undo` with no id at a terminal says which change it reverts and asks; a
+/// script (no terminal, --yes) still undoes the last one.
+#[test]
+fn undo_without_id_asks_at_a_terminal() {
+    let setup = || {
+        let mut e = FakeEnv {
+            home: temp_home("undo-ask"),
+            tty: true,
+            ..Default::default()
+        };
+        assert_eq!(run("theme dark", &mut e), 0, "{}", e.err);
+        e.out.clear();
+        e
+    };
+    // No answer: nothing is undone.
+    let mut e = setup();
+    assert_eq!(run("undo", &mut e), 1);
+    assert!(e.out.contains("This undoes change #1 (theme"), "{}", e.out);
+    assert!(e.err.contains("nothing was undone"), "{}", e.err);
+    let j = wol_core::journal::Journal::new(&e.home.join("state"), &e.home);
+    assert_eq!(j.entries().len(), 1, "no revert recorded");
+    // "n" too.
+    let mut e = setup();
+    e.stdin = vec!["n\n".into()];
+    assert_eq!(run("undo", &mut e), 1);
+    // "y" undoes it.
+    let mut e = setup();
+    e.stdin = vec!["y\n".into()];
+    assert_eq!(run("undo", &mut e), 0, "{}", e.err);
+    assert!(e.out.contains("undid #1 (theme)"), "{}", e.out);
+    // --yes and a named id never ask.
+    let mut e = setup();
+    assert_eq!(run("undo --yes", &mut e), 0, "{}", e.err);
+    let mut e = setup();
+    assert_eq!(run("undo 1", &mut e), 0, "{}", e.err);
+    assert!(!e.out.contains("[y/N]"), "{}", e.out);
+}
+
 #[test]
 fn restore_list_marks_the_rollback_target() {
     let mut e = slots_env("restorelist");
@@ -192,6 +230,26 @@ fn restore_list_marks_the_rollback_target() {
         v[0]["rollback"], true,
         "pending update: rollback keeps the running slot"
     );
+    // QA-LIVE3-12: the fields say what they hold: `tries_left` (a number, null once the slot
+    // booted fine) and `release` (the slot's release date); `space` and `created` stay one
+    // release as aliases with their old text.
+    let pending = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["next_boot"] == true && b["active"] == false)
+        .expect("the slot that boots next");
+    assert_eq!(pending["tries_left"], 3, "{pending}");
+    assert_eq!(pending["release"], "2026/11/02", "{pending}");
+    assert_eq!(pending["space"], "3 tries left", "alias");
+    assert_eq!(pending["created"], "2026/11/02", "alias");
+    let running = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["active"] == true)
+        .unwrap();
+    assert!(running["tries_left"].is_null(), "{running}");
     let mut none = FakeEnv {
         home: temp_home("nobe"),
         ..Default::default()

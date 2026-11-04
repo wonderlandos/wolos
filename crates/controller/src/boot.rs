@@ -81,14 +81,28 @@ pub fn enroll(env: &mut dyn Env) -> i32 {
             }
         }
         None => {
-            return fail(
-                env,
-                ErrorCode::Failed,
-                "the key could not be queued; run this as root",
-            );
+            let why = enroll_refusal(&firmware(env), env.is_root());
+            return fail(env, ErrorCode::Failed, &why);
         }
     }
     0
+}
+
+/// Why `boot-enroll` queued nothing (QA-LIVE3-11: it blamed the account for a computer with
+/// Secure Boot off, as root): the first true one of the firmware, then the account.
+pub fn enroll_refusal(fw: &boot::Firmware, root: bool) -> String {
+    if !fw.uefi {
+        "This computer did not start in UEFI mode, so there is no key screen to enroll a key for."
+            .into()
+    } else if !fw.secure_boot {
+        "Secure Boot is off on this computer, so there is nothing to enroll. Turn it on in the \
+         firmware's settings first; then run this again."
+            .into()
+    } else if !root {
+        "the key could not be queued; run this as root".into()
+    } else {
+        "the firmware did not take the key; run `wol boot status` to see why".into()
+    }
 }
 
 /// `wol boot detect [yes|no]`: prints the tier.
@@ -202,6 +216,7 @@ pub fn check(env: &mut dyn Env) -> i32 {
     if boot::epoch_allowed(epoch, number(env.read_file(&state("floor")))) {
         // Updated since it was refused: the other slot may fall back to it again.
         let _ = env.remove_file(&mark);
+        crate::seal::clear_notice_if_healthy(env);
         return 0;
     }
     // The same rule as `wol seal check`: only to a slot that has an entry and failed neither
@@ -306,5 +321,9 @@ pub fn bless(env: &mut dyn Env) -> i32 {
             );
         }
     }
+    // The line the service log shows: which slot was marked good and where the floor stands.
+    env.out(&format!(
+        "{running} is marked as a good start; the rollback floor is {floor}.\n"
+    ));
     0
 }
