@@ -51,9 +51,10 @@ elif [ ! -r "$lua" ]; then
 	echo "wol-session: $lua cannot be read: starting on the WolOS defaults" >&2
 	own_config=
 fi
-# Hyprland's own arguments after `--`: the defaults' file when the account's cannot be used.
-defaults=
-[ -n "$own_config" ] || defaults="--config $share/hypr/hyprland.lua"
+# Hyprland's own arguments after `--` ($@, each one quoted): the defaults' file when the account's
+# cannot be used.
+set --
+[ -n "$own_config" ] || set -- --config "$share/hypr/hyprland.lua"
 # The compositor reads only Lua. A hyprland.conf left by an older release is ignored; the files under
 # hypr/wolos/ (theme, Settings) load after the defaults, none yet is not an error, a broken one is.
 # Third-party apps look like WolOS before the first `wol theme set`: link the shipped defaults
@@ -128,8 +129,9 @@ fi
 # password. The variable stops here; apps never see it.
 if [ "${WOL_SESSION_LOCKED:-}" = 1 ]; then
 	unset WOL_SESSION_LOCKED
-	# shellcheck disable=SC2086 # $defaults is two words or none
-	exec ${bus:+$bus --} start-hyprland -- --locked-cmd "$WOLOS_CRASH_LOCK_CMD" $defaults
+	set -- -- --locked-cmd "$WOLOS_CRASH_LOCK_CMD" "$@"
+elif [ $# -gt 0 ]; then
+	set -- -- "$@"
 fi
-# shellcheck disable=SC2086
-exec ${bus:+$bus --} start-hyprland ${defaults:+-- $defaults}
+# shellcheck disable=SC2086 # $bus is a command and its argument, or nothing
+exec ${bus:+$bus --} start-hyprland "$@"

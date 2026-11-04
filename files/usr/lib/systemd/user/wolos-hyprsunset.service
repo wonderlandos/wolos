@@ -10,7 +10,7 @@ StartLimitBurst=5
 ConditionPathExists=/usr/bin/hyprsunset
 
 [Service]
-ExecStart=/bin/sh -c 'f="${XDG_STATE_HOME:-$HOME/.local/state}/wolos/toggles/org.wolos.nightlight"; [ -e "$f" ] && exec hyprsunset -t 4500; exec hyprsunset -i'
+ExecStart=/usr/lib/wolos/hyprsunset-run
 StandardOutput=null
 Restart=on-failure
 RestartSec=2

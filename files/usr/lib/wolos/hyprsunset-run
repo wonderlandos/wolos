@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Starts hyprsunset for wolos-hyprsunset.service: warm (4500 K) when Night Light's toggle file says
+# it is on, else at the identity (no tint). A script, so the unit runs no shell string (RS-043).
+set -eu
+f="${XDG_STATE_HOME:-$HOME/.local/state}/wolos/toggles/org.wolos.nightlight"
+[ -e "$f" ] && exec hyprsunset -t 4500
+exec hyprsunset -i

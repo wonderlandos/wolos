@@ -10,6 +10,6 @@ StartLimitBurst=5
 ConditionPathExists=!/etc/wolos-live
 
 [Service]
-ExecStart=/bin/sh -c 'c="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"; [ -f "$c" ] || c=/usr/share/wolos/hypr/hypridle.conf; exec hypridle -c "$c"'
+ExecStart=/usr/lib/wolos/hypridle-run
 Restart=on-failure
 RestartSec=2
