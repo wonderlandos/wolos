@@ -5,5 +5,5 @@
 # One `key value` per line: `tag` the release tag, `wolos` the commit it names, `shell` the
 # crates/shell commit that commit records. Update all three in the commit that merges a release.
 tag v0.12.1
-wolos baeb1c671580bd818cb940f316ba9ffa31076f76
-shell 463d730d496ad0d83d01a014686b3fe93f953e9e
+wolos 639c070ed007bfd1ecaee3a6eb41d8e2499e33e6
+shell 9dd66eddb2fa0015e94c0db0bdca7a57969bbad3
