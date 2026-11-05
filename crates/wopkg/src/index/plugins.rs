@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The `plugins` source (ADR 0031 W4, docs/modules/plugins.md "Distribution"): the signed plugin
-//! index (`index.json` + `index.json.sig`, Ed25519 by the key in `/usr/share/wolos/keys/`) and the
+//! index (`index.json` + `index.json.sig`, Ed25519 by a key in `/usr/share/wolos/keys/` or its `hub/`,
+//! `wol_core::package::read_keys_for(.., Purpose::Plugins)`) and the
 //! check of one downloaded `.wolplug` against its index entry. Plugins install for the person
 //! only, so nothing here asks wold for anything. Order of trust: the index signature before the
 //! index is parsed; the entry's size and SHA-256 before the download is decompressed; the
@@ -468,7 +469,10 @@ mod tests {
     fn release_gate_the_published_plugin_index_loads() {
         let dir =
             std::env::var("WOL_KEYS_DIR").unwrap_or_else(|_| shared::package::KEYS_DIR.into());
-        let keys = wol_core::package::read_keys(std::path::Path::new(&dir));
+        let keys = wol_core::package::read_keys_for(
+            std::path::Path::new(&dir),
+            wol_core::package::Purpose::Plugins,
+        );
         assert!(!keys.is_empty(), "no package keys in {dir}");
         let cache = std::env::temp_dir().join(format!("wol-plugin-gate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&cache);

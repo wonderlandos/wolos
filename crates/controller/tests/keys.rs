@@ -80,7 +80,12 @@ fn an_installed_system_ships_signing_keys() {
 fn the_revocation_list_parses_and_revokes_no_shipped_key() {
     let rows = revoked();
     let mut shipped = Vec::new();
-    for d in key_dirs() {
+    // keys/ and keys/hub (the Hub's plugin index key).
+    let dirs = key_dirs()
+        .into_iter()
+        .flat_map(|d| [d.join(wol_core::package::HUB_KEYS_SUBDIR), d])
+        .filter(|d| d.is_dir());
+    for d in dirs {
         // Every .pub file, not read_keys (which already drops revoked keys).
         for e in std::fs::read_dir(&d).expect("keys dir").flatten() {
             let pem = std::fs::read_to_string(e.path()).unwrap_or_default();
@@ -117,4 +122,27 @@ fn read_keys_honours_the_shipped_revocation_list_format() {
         revoked().len()
     );
     assert_eq!(wol_core::package::REVOKED_FILE, "revoked.list");
+}
+
+/// HUB-KEYDIR: the Hub's plugin index key ships in keys/hub, so it verifies plugins only: it is a
+/// plugin key and never a system key (release feed, update manifest, .wol packages).
+#[test]
+fn the_hub_index_key_is_scoped_to_plugins() {
+    use wol_core::package::{HUB_KEYS_SUBDIR, Purpose, public_key, read_keys_for};
+    let d = siblings::root().join("desktop/overlay").join(KEYS);
+    let pem = std::fs::read_to_string(d.join(HUB_KEYS_SUBDIR).join("hub-index-2026.pub"))
+        .expect("keys/hub/hub-index-2026.pub");
+    let hub = public_key(&pem).expect("an Ed25519 PEM key");
+    assert!(
+        !d.join("hub-index-2026.pub").exists(),
+        "not in keys/ itself"
+    );
+    let system = read_keys_for(&d, Purpose::System);
+    let plugins = read_keys_for(&d, Purpose::Plugins);
+    assert!(!system.contains(&hub), "the hub key never signs the system");
+    assert!(plugins.contains(&hub));
+    assert!(
+        system.iter().all(|k| plugins.contains(k)),
+        "release keys still sign plugins"
+    );
 }

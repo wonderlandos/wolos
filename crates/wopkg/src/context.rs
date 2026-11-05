@@ -111,6 +111,17 @@ impl Context {
         })
     }
 
+    /// The trusted keys below [`Self::keys`] (the `keys_dir` override, else
+    /// `/usr/share/wolos/keys`) for `purpose`: [`Purpose::System`] for packages, the release feed
+    /// and anything that changes the system; [`Purpose::Plugins`] for the plugin index and
+    /// `.wolplug` files, which also trusts `keys/hub` (`wol_core::package::read_keys_for`).
+    ///
+    /// [`Purpose::System`]: wol_core::package::Purpose::System
+    /// [`Purpose::Plugins`]: wol_core::package::Purpose::Plugins
+    pub fn keys_for(&self, purpose: wol_core::package::Purpose) -> Vec<[u8; 32]> {
+        wol_core::package::read_keys_for(&self.keys, purpose)
+    }
+
     pub fn index_dir(&self) -> PathBuf {
         self.cache.join("index")
     }
@@ -195,6 +206,62 @@ impl Installed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HUB-KEYDIR: through the context's `keys_dir` override, a key in keys/hub verifies the
+    /// plugin index and a `.wolplug` index entry's list, never the release feed; a key in keys/
+    /// verifies both.
+    #[test]
+    fn hub_keys_sign_plugins_only() {
+        use wol_core::package::{HUB_KEYS_SUBDIR, Purpose, public_of, public_pem, sign};
+        let d = std::env::temp_dir().join(format!("wopkg-keydir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let keys = d.join("keys");
+        std::fs::create_dir_all(keys.join(HUB_KEYS_SUBDIR)).unwrap();
+        let (hub, release) = ([5u8; 32], [6u8; 32]);
+        std::fs::write(
+            keys.join(HUB_KEYS_SUBDIR).join("hub-index-2026.pub"),
+            public_pem(&public_of(&hub)),
+        )
+        .unwrap();
+        let c = Context::new(Config {
+            home: Some(d.clone()),
+            cache_dir: Some(d.join("cache")),
+            state_dir: Some(d.join("state")),
+            data_dir: Some(d.join("data")),
+            keys_dir: Some(keys.clone()),
+            ..Config::default()
+        })
+        .unwrap();
+        let index = br#"{"format":1,"plugins":[]}"#;
+        let feed = br#"{"format":1,"channel":"stable","releases":[]}"#;
+        let plugin_index = |seed: &[u8; 32]| {
+            crate::index::plugins::verify(
+                index,
+                Some(&sign(seed, index)),
+                &c.keys_for(Purpose::Plugins),
+            )
+        };
+        let release_feed = |seed: &[u8; 32]| {
+            crate::release::Feed::verify(feed, &sign(seed, feed), &c.keys_for(Purpose::System))
+        };
+        assert!(plugin_index(&hub).is_ok(), "hub key signs the plugin index");
+        assert!(
+            release_feed(&hub).is_err(),
+            "hub key never signs the release feed"
+        );
+        std::fs::write(
+            keys.join("wolos-2026.pub"),
+            public_pem(&public_of(&release)),
+        )
+        .unwrap();
+        assert!(
+            plugin_index(&release).is_ok(),
+            "a release-signed index still verifies"
+        );
+        assert!(release_feed(&release).is_ok());
+        assert!(release_feed(&hub).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     /// QA-STORE-62: the image makes root's folders at boot (tmpfiles.d), state root's alone.
     #[test]

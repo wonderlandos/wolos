@@ -658,11 +658,60 @@ pub fn parse_revoked(text: &str) -> Vec<[u8; 32]> {
 }
 
 /// Every `*.pub` in `dir` that is an Ed25519 key and not in `dir`/[`REVOKED_FILE`], sorted by
-/// file name. Empty when the directory is unreadable.
+/// file name. Empty when the directory is unreadable. Only `dir` itself is read, never a
+/// subfolder (keys/[`HUB_KEYS_SUBDIR`] and keys/shards hold keys with a narrower reach).
 pub fn read_keys(dir: &Path) -> Vec<[u8; 32]> {
-    let revoked = std::fs::read_to_string(dir.join(REVOKED_FILE))
+    let revoked = read_revoked(dir);
+    pub_keys(dir)
+        .into_iter()
+        .filter(|k| !revoked.contains(k))
+        .collect()
+}
+
+/// The subfolder of the keys folder with the Hub's plugin index key(s)
+/// (`/usr/share/wolos/keys/hub`): trusted for plugins only ([`Purpose::Plugins`]).
+pub const HUB_KEYS_SUBDIR: &str = "hub";
+
+/// What a set of keys is trusted to verify ([`read_keys_for`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Purpose {
+    /// Everything that changes the system: `.wol` packages, the release feed, the update
+    /// manifest (`base.sig`), xguard rules. Only the keys folder itself.
+    System,
+    /// The plugin index and `.wolplug` signatures: the keys folder plus its
+    /// [`HUB_KEYS_SUBDIR`] (a release-signed index still verifies).
+    Plugins,
+}
+
+/// The trusted keys below the keys folder `dir` for `purpose`. [`Purpose::System`] is exactly
+/// [`read_keys`]`(dir)`. [`Purpose::Plugins`] adds `dir`/[`HUB_KEYS_SUBDIR`]; a key listed in
+/// either folder's [`REVOKED_FILE`] is dropped, and a key in both folders counts once.
+pub fn read_keys_for(dir: &Path, purpose: Purpose) -> Vec<[u8; 32]> {
+    match purpose {
+        Purpose::System => read_keys(dir),
+        Purpose::Plugins => {
+            let hub = dir.join(HUB_KEYS_SUBDIR);
+            let mut revoked = read_revoked(dir);
+            revoked.extend(read_revoked(&hub));
+            let mut out: Vec<[u8; 32]> = Vec::new();
+            for k in pub_keys(dir).into_iter().chain(pub_keys(&hub)) {
+                if !revoked.contains(&k) && !out.contains(&k) {
+                    out.push(k);
+                }
+            }
+            out
+        }
+    }
+}
+
+fn read_revoked(dir: &Path) -> Vec<[u8; 32]> {
+    std::fs::read_to_string(dir.join(REVOKED_FILE))
         .map(|t| parse_revoked(&t))
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// The Ed25519 keys of the `*.pub` files directly in `dir`, sorted by file name.
+fn pub_keys(dir: &Path) -> Vec<[u8; 32]> {
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .into_iter()
         .flatten()
@@ -674,7 +723,6 @@ pub fn read_keys(dir: &Path) -> Vec<[u8; 32]> {
     files
         .iter()
         .filter_map(|p| public_key(&std::fs::read_to_string(p).ok()?))
-        .filter(|k| !revoked.contains(k))
         .collect()
 }
 
@@ -1227,6 +1275,86 @@ not-a-key x
             ),
             Vec::<[u8; 32]>::new()
         );
+    }
+
+    /// HUB-KEYDIR: `read_keys` reads only `dir` itself, never a subfolder (keys/hub, keys/shards).
+    #[test]
+    fn read_keys_ignores_subfolders() {
+        let d = dir();
+        std::fs::create_dir_all(d.join(HUB_KEYS_SUBDIR)).unwrap();
+        std::fs::write(
+            d.join(HUB_KEYS_SUBDIR).join("hub.pub"),
+            public_pem(&public_of(&OTHER)),
+        )
+        .unwrap();
+        // A folder whose name ends in .pub is not a key either.
+        std::fs::create_dir_all(d.join("nested.pub")).unwrap();
+        std::fs::write(
+            d.join("nested.pub").join("x.pub"),
+            public_pem(&public_of(&OTHER)),
+        )
+        .unwrap();
+        assert!(read_keys(&d).is_empty());
+        std::fs::write(d.join("wolos.pub"), public_pem(&public_of(&SEED))).unwrap();
+        assert_eq!(read_keys(&d), [public_of(&SEED)]);
+    }
+
+    /// HUB-KEYDIR: a key in keys/hub is trusted for plugins (index + .wolplug) only; a key in
+    /// keys/ is trusted for both. Revoked in either list means not trusted for plugins.
+    #[test]
+    fn hub_keys_are_scoped_to_plugins() {
+        let d = dir();
+        let hub = d.join(HUB_KEYS_SUBDIR);
+        std::fs::create_dir_all(&hub).unwrap();
+        std::fs::write(hub.join("hub-index.pub"), public_pem(&public_of(&OTHER))).unwrap();
+        let text = br#"{"format":1}"#;
+        let by_hub = sign(&OTHER, text);
+        let system = read_keys_for(&d, Purpose::System);
+        let plugins = read_keys_for(&d, Purpose::Plugins);
+        assert!(system.is_empty(), "a hub key is never a system key");
+        assert_eq!(plugins, [public_of(&OTHER)]);
+        assert!(matches!(
+            verify_index(text, Some(&by_hub), &plugins),
+            Ok(Trust::Signed(_))
+        ));
+        assert!(verify_index(text, Some(&by_hub), &system).is_err());
+        // A release key verifies both.
+        std::fs::write(d.join("wolos.pub"), public_pem(&public_of(&SEED))).unwrap();
+        let by_release = sign(&SEED, text);
+        let system = read_keys_for(&d, Purpose::System);
+        let plugins = read_keys_for(&d, Purpose::Plugins);
+        assert_eq!(system, [public_of(&SEED)]);
+        assert_eq!(plugins, [public_of(&SEED), public_of(&OTHER)]);
+        assert!(matches!(
+            verify_index(text, Some(&by_release), &system),
+            Ok(Trust::Signed(_))
+        ));
+        assert!(matches!(
+            verify_index(text, Some(&by_release), &plugins),
+            Ok(Trust::Signed(_))
+        ));
+        assert!(verify_index(text, Some(&by_hub), &system).is_err());
+        // The same key in both folders counts once.
+        std::fs::write(hub.join("dup.pub"), public_pem(&public_of(&SEED))).unwrap();
+        assert_eq!(
+            read_keys_for(&d, Purpose::Plugins),
+            [public_of(&SEED), public_of(&OTHER)]
+        );
+        // The system revocation list also revokes hub keys.
+        std::fs::write(
+            d.join(REVOKED_FILE),
+            format!("{} leaked\n", hex(public_of(&OTHER))),
+        )
+        .unwrap();
+        assert_eq!(read_keys_for(&d, Purpose::Plugins), [public_of(&SEED)]);
+        std::fs::remove_file(d.join(REVOKED_FILE)).unwrap();
+        // And keys/hub has its own.
+        std::fs::write(
+            hub.join(REVOKED_FILE),
+            format!("{} leaked\n", hex(public_of(&OTHER))),
+        )
+        .unwrap();
+        assert_eq!(read_keys_for(&d, Purpose::Plugins), [public_of(&SEED)]);
     }
 
     #[test]

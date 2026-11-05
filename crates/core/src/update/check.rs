@@ -215,7 +215,10 @@ impl Updates {
     /// [`Self::read_with`] the trusted package keys, at the time `now` (seconds since 1970; core
     /// takes the clock from its caller, RR-067).
     pub fn read(dir: &Path, now: u64) -> Option<Self> {
-        let keys = crate::package::read_keys(Path::new(shared::package::KEYS_DIR));
+        let keys = crate::package::read_keys_for(
+            Path::new(shared::package::KEYS_DIR),
+            crate::package::Purpose::System,
+        );
         Self::read_with(dir, &keys, now)
     }
 
@@ -715,6 +718,44 @@ mod tests {
             Some("2026.11")
         );
         assert_eq!(Updates::read_with(&d, &[[9; 32]], 1).unwrap().base, None);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
+    /// HUB-KEYDIR: the Hub's plugin index key (keys/hub) never verifies an update manifest;
+    /// a release key in keys/ does.
+    #[test]
+    fn a_hub_key_cannot_sign_the_update_manifest() {
+        use crate::package::{
+            HUB_KEYS_SUBDIR, Purpose, hex, public_of, public_pem, read_keys_for, sign,
+        };
+        let d = std::env::temp_dir().join(format!("wol-updates-hub-{}", std::process::id()));
+        let keys = d.join("keys");
+        let hub = keys.join(HUB_KEYS_SUBDIR);
+        std::fs::create_dir_all(&hub).unwrap();
+        let (hub_seed, release_seed) = ([5u8; 32], [7u8; 32]);
+        std::fs::write(hub.join("hub-index.pub"), public_pem(&public_of(&hub_seed))).unwrap();
+        std::fs::write(d.join("checked"), "42\n").unwrap();
+        std::fs::write(d.join("base"), RELEASE).unwrap();
+        let by_hub = hex(sign(&hub_seed, RELEASE.as_bytes()));
+        std::fs::write(d.join("base.sig"), format!("{by_hub}\n")).unwrap();
+        let system = read_keys_for(&keys, Purpose::System);
+        assert_eq!(Updates::read_with(&d, &system, 1).unwrap().base, None);
+        // Control: the same files do verify with the plugin keys, so only the scope refuses it.
+        let plugins = read_keys_for(&keys, Purpose::Plugins);
+        assert!(Updates::read_with(&d, &plugins, 1).unwrap().base.is_some());
+        // A release key in keys/ verifies the manifest.
+        std::fs::write(
+            keys.join("wolos.pub"),
+            public_pem(&public_of(&release_seed)),
+        )
+        .unwrap();
+        let by_release = hex(sign(&release_seed, RELEASE.as_bytes()));
+        std::fs::write(d.join("base.sig"), format!("{by_release}\n")).unwrap();
+        let system = read_keys_for(&keys, Purpose::System);
+        assert_eq!(
+            Updates::read_with(&d, &system, 1).unwrap().base.as_deref(),
+            Some("2026.11")
+        );
         std::fs::remove_dir_all(&d).unwrap();
     }
 

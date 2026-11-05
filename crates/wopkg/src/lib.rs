@@ -287,7 +287,7 @@ enum VerifyReq {
 pub fn verify(c: &context::Context, body: &str) -> Result<serde_json::Value> {
     let r: VerifyReq = serde_json::from_str(body)
         .map_err(|e| Error::invalid(format!("The request is not valid: {e}.")))?;
-    let keys = || wol_core::package::read_keys(&c.keys);
+    let keys = || c.keys_for(wol_core::package::Purpose::System);
     match r {
         VerifyReq::Sha256 { path, sha256 } => {
             let got = fetch::sha256_file(&path)
@@ -587,7 +587,7 @@ fn checked_feed(
 /// the error is returned. The highest serial accepted per channel is kept in the state dir, which
 /// outlives the cache.
 fn release_feed(c: &context::Context, bases: &[String], channel: &str) -> Result<release::Feed> {
-    let keys = wol_core::package::read_keys(&c.keys);
+    let keys = c.keys_for(wol_core::package::Purpose::System);
     let dir = c.cache.join("releases");
     let feed = dir.join(format!("{channel}.json"));
     let sig = dir.join(format!("{channel}.json.sig"));

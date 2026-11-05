@@ -1039,7 +1039,11 @@ fn verified_wolplug(file: &Path) -> Result<wol_core::package::VerifiedPlugin, St
         // The file exists (read above): zstd refused what is in it.
         _ => "This file is not a plugin package (.wolplug), or it is damaged.".to_owned(),
     })?;
-    let keys = wol_core::package::read_keys(Path::new(shared::package::KEYS_DIR));
+    // A .wolplug may be signed by a release key or the Hub's index key (keys/hub).
+    let keys = wol_core::package::read_keys_for(
+        Path::new(shared::package::KEYS_DIR),
+        wol_core::package::Purpose::Plugins,
+    );
     wol_core::package::verify_wolplug(&tar, &keys)
 }
 
