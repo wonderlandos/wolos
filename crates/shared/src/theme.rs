@@ -42,19 +42,26 @@ pub const SCALE: [(&str, &str); 16] = [
     ("--ease", "cubic-bezier(0.2, 0.8, 0.2, 1)"),
 ];
 
-/// AppWindow scaffold metrics in px (HIG §1/§2, Kit `AppWindow` in the shell's kit.css): third-party
+/// AppWindow scaffold metrics in px (HIG §1/§1.1, Kit `AppWindow` in the shell's kit.css): third-party
 /// app themes (`wol_core::theme::apps`, GTK 3/4, Firefox) draw the same geometry. Tests hold the Kit
-/// stylesheet and the compositor config to these values.
+/// stylesheet and the compositor config to these values, and `tests/hig_numbers.rs` holds the HIG
+/// table (`docs/modules/hig.md` §1.1) and the brand documents to them: change a number in all of
+/// them together. The approved values are the brand documents': toolbar 40, sidebar 240, sidebar
+/// row 24 with a 4 px gap (pitch 28), list row 40, control 24, switch 36 x 24 (compact 24 x 16).
 pub mod scaffold {
+    /// The header bar of third-party apps (generated GTK 3/4 themes, `adw-gtk3.css`, `adwaita.css`):
+    /// not a Kit surface and not the Kit toolbar, which is [`KIT_TOOLBAR_HEIGHT`].
     pub const TOOLBAR_HEIGHT: i32 = 52;
-    /// Kit's own toolbar, under the 28 px compositor strip.
+    /// The Kit's own toolbar (`.toolbar`), under the 28 px compositor strip
+    /// (`realtime::titlebar::HEIGHT`). This is the HIG's toolbar.
     pub const KIT_TOOLBAR_HEIGHT: i32 = 40;
     /// Toolbar side padding.
     pub const TOOLBAR_PADDING: i32 = 16;
+    /// Sidebar width, hairline included (HIG §1.1).
     pub const SIDEBAR_WIDTH: i32 = 240;
     /// Sidebar source rows: 24 high with a 4 px gap, a pitch of 28.
     pub const SOURCE_ROW: i32 = 24;
-    /// Rows in card lists.
+    /// Rows in card lists: the contract; the Kit draws 52 today (ADR 0058 gap M1).
     pub const LIST_ROW: i32 = 40;
     /// Buttons, entries, menu items.
     pub const CONTROL_HEIGHT: i32 = 24;
