@@ -84,6 +84,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
 | [0057](adr/0057-search-by-meaning.md) | Search by meaning in Settings, the Search bar and `wol help` | accepted |
 | [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
+| [0061](adr/0061-runtime-tuning-js-engines.md) | Runtime tuning: kernel and userland memory for JavaScript engines (fault-around, KSM, Bun allocator, page-out) | accepted |
 
 ## Modules
 
@@ -129,6 +130,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/packages.md](modules/packages.md) | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory | [0011](adr/0011-wol-packages.md) |
 | [modules/performance.md](modules/performance.md) | measured desktop latency and frame targets, the probes and how to reproduce them | [0006](adr/0006-vendored-blocking-idle-exit.md) |
 | [modules/monitor.md](modules/monitor.md) | wol-monitor: System Monitor (live graphs of processor, memory, disks, network, graphics, temperatures; apps from their scopes with Memory Saver state; process tree; disks; startup services) | |
+| [modules/runtime-tuning.md](modules/runtime-tuning.md) | kernel and userland memory for JavaScript engines: fault-around, KSM, Bun allocator, page-out, `wolos-mm`; the measured table | [0061](adr/0061-runtime-tuning-js-engines.md) |
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |

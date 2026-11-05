@@ -13,6 +13,7 @@ enable wolos-shm-limit.service
 enable wolos-gpu.service
 enable wolos-firstboot.service
 enable wolos-power.service
+enable wolos-mm.service
 enable wolos-update-check.timer
 enable wolos-update-download.timer
 enable wolos-report.timer

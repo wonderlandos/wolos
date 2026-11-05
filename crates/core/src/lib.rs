@@ -25,6 +25,7 @@ pub mod install;
 pub mod iphone;
 pub mod jobs;
 pub mod journal;
+pub mod jsruntime;
 pub mod looks;
 pub mod malware;
 pub mod memsaver;

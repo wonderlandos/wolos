@@ -1,38 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Page out a background app with process_madvise (MADV_PAGEOUT) over its anonymous and memfd
-//! mappings. This works wherever the pages were charged, which memory.reclaim on the app's scope
+//! mappings (and writable file data). This works wherever the pages were charged, which memory.reclaim on the app's scope
 //! cannot do for pages touched before the app was adopted: charges do not move with a process.
 //! Only pages this process alone maps go; anything else stays for memory.reclaim.
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Writable private anonymous ranges (heap, stacks, `[anon:...]`, JS heaps) and memfd/shm
-/// mappings from /proc/<pid>/maps text.
+/// The ranges Memory Saver asks about: `wol_core::jsruntime::pageout_ranges` with the default
+/// filter (writable anonymous memory, shared memory, writable file data), the one function
+/// `wolos-mm pageout` uses too. Its test table is in `crates/core/src/jsruntime.rs`.
 pub fn ranges(maps: &str) -> Vec<(usize, usize)> {
-    maps.lines()
-        .filter_map(|l| {
-            let mut f = l.split_ascii_whitespace();
-            let (range, perms) = (f.next()?, f.next()?);
-            let (_off, _dev, inode) = (f.next()?, f.next()?, f.next()?);
-            let path = f.collect::<Vec<_>>().join(" ");
-            let anon = inode == "0"
-                && perms.contains('w')
-                && (path.is_empty()
-                    || path == "[heap]"
-                    || path.starts_with("[stack")
-                    || path.starts_with("[anon:"));
-            let shm = path.starts_with("/memfd:") || path.starts_with("/dev/shm/");
-            if !(anon || shm) {
-                return None;
-            }
-            let (a, b) = range.split_once('-')?;
-            let (a, b) = (
-                usize::from_str_radix(a, 16).ok()?,
-                usize::from_str_radix(b, 16).ok()?,
-            );
-            (b > a).then_some((a, b - a))
-        })
-        .collect()
+    wol_core::jsruntime::pageout_ranges(maps, wol_core::jsruntime::Pageout::Anon)
 }
 
 /// Advise at most this much per range and this many ranges per call, so `stop` is seen quickly.
@@ -53,15 +31,17 @@ fn split(r: &[(usize, usize)]) -> Vec<(usize, usize)> {
 /// Page out every range of `pid` until `stop`. Returns the bytes advised (0 when the process is
 /// gone or the kernel refuses). Runs on a worker thread: a large app takes a while.
 pub fn pageout(proc: &Path, pid: i32, stop: &AtomicBool) -> usize {
-    let Ok(maps) = std::fs::read_to_string(proc.join(pid.to_string()).join("maps")) else {
-        return 0;
-    };
-    let r = split(&ranges(&maps));
+    // The pid is pinned first: the maps below are read after, so a pid that was reused in
+    // between is not the one that gets the ranges (the descriptor names the original process).
     // SAFETY: pidfd_open takes a pid and flags; the fd is closed below.
     let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) } as i32;
     if fd < 0 {
         return 0;
     }
+    // A process that vanished since: no ranges, and the descriptor is still closed below.
+    let r = std::fs::read_to_string(proc.join(pid.to_string()).join("maps"))
+        .map(|maps| split(&ranges(&maps)))
+        .unwrap_or_default();
     let mut done = 0;
     for chunk in r.chunks(IOVECS) {
         if stop.load(Ordering::Relaxed) {
@@ -133,26 +113,15 @@ mod tests {
     }
 
     #[test]
-    fn picks_anonymous_and_shared_memory_ranges() {
+    fn the_ranges_are_the_ones_the_shared_filter_picks() {
         let maps = "\
 55d0a0000000-55d0a0100000 r-xp 00000000 08:01 1234 /opt/code/code
-55d0a1000000-55d0a2000000 rw-p 00000000 00:00 0 [heap]
 7f0000000000-7f0000400000 rw-p 00000000 00:00 0
-7f0000400000-7f0000500000 r--p 00000000 00:00 0
 7f1000000000-7f1000200000 rw-s 00000000 00:01 77 /memfd:shared_mem (deleted)
-7f2000000000-7f2000001000 rw-p 00000000 00:00 0 [anon:v8]
-7ffc00000000-7ffc00021000 rw-p 00000000 00:00 0 [stack]
-7ffc10000000-7ffc10002000 r--p 00000000 00:00 0 [vvar]
 ";
         assert_eq!(
             ranges(maps),
-            vec![
-                (0x55d0a1000000, 0x1000000),
-                (0x7f0000000000, 0x400000),
-                (0x7f1000000000, 0x200000),
-                (0x7f2000000000, 0x1000),
-                (0x7ffc00000000, 0x21000),
-            ]
+            [(0x7f0000000000, 0x400000), (0x7f1000000000, 0x200000)]
         );
         assert!(ranges("garbage\n").is_empty());
     }

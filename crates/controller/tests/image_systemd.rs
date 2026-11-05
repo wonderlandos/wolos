@@ -1157,6 +1157,11 @@ const LIVE_SAFE: [(&str, &str, &str); 21] = [
         "power policy for the adapter and battery, live too",
     ),
     (
+        "wolos-mm.service",
+        "",
+        "fault-around and the KSM account rule for the live session's apps too",
+    ),
+    (
         "NetworkManager.service",
         "",
         "the installer's online step and Try WolOS need the network",

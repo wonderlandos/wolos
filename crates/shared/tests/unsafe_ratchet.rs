@@ -105,6 +105,8 @@ use std::path::{Path, PathBuf};
 /// core 13 -> 14 (MEMSAVER-X, 2026-11-04): `memsaver/budget.rs` `evict`, one `posix_fadvise(DONTNEED)`
 /// on an open descriptor so a budgeted app starts with its own files out of the page cache; std has
 /// no fadvise, no new dependency was wanted for one call.
+/// controller 56 -> 58 (JS-RUNTIME-X, ADR 0061, `src/bin/wolos-mm.rs`): `prctl(PR_SET_MEMORY_MERGE)`
+/// before an exec and `pidfd_open` + `process_madvise` for the page-out; std wraps none of them.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 482),
@@ -112,7 +114,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("wopkg", 103),
     ("realtime", 42),
     ("xguard", 65),
-    ("controller", 56),
+    ("controller", 58),
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),

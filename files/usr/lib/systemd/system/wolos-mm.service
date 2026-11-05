@@ -1,0 +1,33 @@
+[Unit]
+Description=WolOS memory tuning for JavaScript engines: file fault-around and KSM (wolos-mm apply, ADR 0061)
+Wants=sys-kernel-debug.mount
+After=sys-kernel-debug.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/wolos-mm apply
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): writes /sys/kernel/debug and /sys/kernel/mm/ksm and reads /etc/passwd (ProtectSystem leaves /sys writable; uid 0 owns the files, so no capability is needed). It logs whether KSM runs: only a machine with one human account turns it on.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
