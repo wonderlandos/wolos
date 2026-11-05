@@ -695,7 +695,7 @@ pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
 /// writes, so a caller that must tell the person about a failure (a full disk: QA-LIVE-19) runs
 /// it before it says "changed", and [`push`] afterwards.
 pub fn write_files(id: &str, config_home: &Path) -> Result<ResolvedTheme, String> {
-    let data = data_home(|k| std::env::var(k).ok());
+    let data = data_home(env_var);
     let t = super::ThemeCatalog::installed(config_home, data.as_deref())
         .resolve(id)
         .map_err(|e| format!("{e:?}"))?;
@@ -706,11 +706,16 @@ pub fn write_files(id: &str, config_home: &Path) -> Result<ResolvedTheme, String
     Ok(t)
 }
 
+/// The process environment, for the readers in this file that take their variables as a function.
+fn env_var(k: &str) -> Option<String> {
+    std::env::var(k).ok()
+}
+
 /// The slow half of [`apply`]: gsettings, the strip and foot (each failure ignored).
 pub fn push(t: &ResolvedTheme, config_home: &Path) {
     let foot = foot_is_ours(&user_dir(config_home), config_home)
         .then(|| terminal_argv(t, shared::sys::euid()));
-    let bus = session_bus(|k| std::env::var(k).ok(), |p| p.exists());
+    let bus = session_bus(env_var, |p| p.exists());
     for a in gsettings_argv(t)
         .into_iter()
         .chain(strip_argv(t))

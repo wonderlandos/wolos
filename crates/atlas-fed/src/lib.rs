@@ -29,6 +29,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
+/// A write to a connection that found the queue full may take this long before it is dropped.
+const REFUSE_WRITE_WAIT: Duration = Duration::from_secs(2);
+/// The idle watcher looks at the clock at least this often.
+const IDLE_TICK_MAX: Duration = Duration::from_secs(1);
+
 /// The protocol word that starts every request and reply line.
 pub const PROTOCOL: &str = "FED/1";
 /// Longest URL a request carries (the crate caps a path at 2048 bytes; a query rides along).
@@ -255,7 +260,7 @@ pub fn handle(mut stream: UnixStream, handler: &Handler) {
 /// Answers a connection that found the queue full, on the accepting thread (a short write with a
 /// short timeout, so an overload cannot stall the accept loop for long).
 fn refuse(mut stream: UnixStream) {
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(REFUSE_WRITE_WAIT));
     let _ = write_reply(&mut stream, &busy_reply());
     let _ = stream.shutdown(std::net::Shutdown::Both);
 }
@@ -320,7 +325,7 @@ pub fn run(listener: UnixListener, handler: Handler, limits: Limits) -> io::Resu
         thread::Builder::new()
             .name("atlas-fed-idle".into())
             .spawn(move || {
-                let tick = idle.min(Duration::from_secs(1));
+                let tick = idle.min(IDLE_TICK_MAX);
                 loop {
                     thread::sleep(tick);
                     if shared.open.load(Ordering::SeqCst) == 0 && shared.idle_for() >= idle {

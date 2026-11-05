@@ -232,9 +232,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-049", "api", 7),
     ("RR-049", "controller", 1),
     ("RR-049", "core", 1),
-    // +8 (INT-2, 0.13 integration): tests that wait for a real process, a Broadway frame or a
-    //   timer: dock_keep, gate_transition, lock_submit, render_lane, row_names and kit/render.rs.
-    ("RR-049", "shell", 19),
+    // +9 (INT-2, 0.13 integration): tests that wait for a real process, a Broadway frame or a
+    //   timer: dock_keep, gate_transition, lock_submit, render_lane, row_names and kit/render.rs;
+    //   the Store spinner test, whose Env::read sleeps on purpose to be slow (QA-STORE-81).
+    ("RR-049", "shell", 20),
     ("RR-049", "wol-abi", 6),
     // +6 (INT-2, 0.13 integration): tests of a daemon and its socket wait for it to be ready.
     ("RR-049", "wolkeyring", 6),

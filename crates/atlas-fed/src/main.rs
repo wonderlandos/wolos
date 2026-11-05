@@ -23,6 +23,9 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// How long `--get-socket` waits for the helper's reply (a load of a block over the network).
+const GET_WAIT: Duration = Duration::from_secs(120);
+
 const USAGE: &str = "usage: atlas-fed [--socket PATH] [--idle-exit SECONDS] [--overlay DIR]\n       \
 atlas-fed --get URL [--subresource] [--overlay DIR]\n       atlas-fed --get-socket URL [--socket PATH]";
 
@@ -134,7 +137,7 @@ fn main() -> ExitCode {
     };
     if let Some(url) = &a.get_socket {
         let asked = UnixStream::connect(&path).and_then(|mut s| {
-            s.set_read_timeout(Some(Duration::from_secs(120)))?;
+            s.set_read_timeout(Some(GET_WAIT))?;
             s.write_all(atlas_fed::request_line(url, kind).as_bytes())?;
             atlas_fed::read_reply(&mut s, federate::source::MAX_BLOCK)
         });

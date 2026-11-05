@@ -153,6 +153,10 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/atlas-fed/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "crates/wolcrypt/**",
       "spdx": "BSD-2-Clause"
     },
