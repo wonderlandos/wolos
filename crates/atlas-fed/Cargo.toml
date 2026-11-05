@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# atlas-fed (ADR 0052, "Atlas"): the browser's Federate helper. A small process beside the Atlas
+# browser binary that answers fed:// loads over a Unix socket with `federate::serve_load` (the one
+# verifier), so no Rust is compiled into the browser (ADR 0043 D4). Protocol: src/lib.rs.
+[package]
+name = "atlas-fed"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+
+[lib]
+name = "atlas_fed"
+
+[[bin]]
+name = "atlas-fed"
+path = "src/main.rs"
+
+[dependencies]
+federate = { path = "../federate" }

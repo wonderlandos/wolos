@@ -66,6 +66,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The Federate client (ADR 0052) uses wolcrypt (a BSD-2-Clause leaf, no workspace
                 // dependency) for the hybrid TLS group and to seal its local state.
                 "federate" => dep == "wolcrypt",
+                // The browser's Federate helper (ADR 0052 "Atlas"): a process beside the browser that
+                // answers fed:// loads with the one verifier; it links nothing else of the workspace.
+                "atlas-fed" => dep == "federate",
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",

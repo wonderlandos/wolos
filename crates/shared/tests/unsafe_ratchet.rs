@@ -75,6 +75,7 @@ use std::path::{Path, PathBuf};
 /// library's buffers and the body hand-off. `tests/engine_scheme.rs` (+8) and
 /// `tests/shim_loader_12.rs` (+7): the stand-in host and the stand-in library's hooks called through
 /// the C ABI. Each has a SAFETY line. `federate` 0 and `wolcrypt` 0 (copied from wave3/trust-core): no unsafe, `#![forbid(unsafe_code)]`.
+/// `atlas-fed` 0 (FED-ATLAS, 2026-11-05, ADR 0052 "Atlas"): the browser's Federate helper, std only, `#![forbid(unsafe_code)]`.
 /// realtime 69 -> 79 (DT-2, compositor animations, counted at the wave-3 merge): `src/ffi.rs`
 /// `wol_anim_curve_name` and `wol_anim_curve` for the wol-hypr plugin (two `unsafe(no_mangle)`, one
 /// `unsafe extern`, the name read and the four-float out-write, each with a SAFETY line) and five
@@ -119,6 +120,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("webengine", 173),
     ("federate", 0),
     ("wolcrypt", 0),
+    ("atlas-fed", 0),
 ];
 
 fn crates_dir() -> PathBuf {
