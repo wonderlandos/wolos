@@ -37,6 +37,8 @@ const IDLE_TICK_MAX: Duration = Duration::from_secs(1);
 const WAKE_PEEK: Duration = Duration::from_millis(100);
 /// How long a starting helper waits for the lock of one that is leaving (see `bind_wait`).
 pub const LOCK_WAIT: Duration = Duration::from_millis(1500);
+/// How often a new helper looks again while an old one still holds the lock (`bind_wait`); bounded by [`LOCK_WAIT`].
+const LOCK_POLL: Duration = Duration::from_millis(20);
 
 /// The protocol word that starts every request and reply line.
 pub const PROTOCOL: &str = "FED/1";
@@ -466,7 +468,7 @@ pub fn bind_wait(path: &Path, wait: Duration) -> io::Result<Bound> {
         match lock.try_lock() {
             Ok(()) => break,
             Err(fs::TryLockError::WouldBlock) if started.elapsed() < wait => {
-                thread::sleep(Duration::from_millis(20));
+                thread::sleep(LOCK_POLL);
             }
             Err(fs::TryLockError::WouldBlock) => {
                 return Err(io::Error::new(
