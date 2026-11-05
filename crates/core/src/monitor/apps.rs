@@ -8,6 +8,7 @@
 use super::Root;
 use shared::memsaver::{AppState, Status};
 
+/// The cgroup folder of the user slices; an app's scope lives under `user-<uid>.slice`.
 pub const USER_SLICE: &str = "/sys/fs/cgroup/user.slice";
 
 /// Deepest a scope sits below the user slice (`user-1000.slice/user@1000.service/app.slice/
@@ -225,6 +226,7 @@ pub fn saver_state(status: Option<&Status>, app: &str) -> Option<AppState> {
     status?.apps.iter().find(|a| a.app == id).map(|a| a.state)
 }
 
+/// What an app's Memory Saver state means for its row: resting, paused, or neither.
 pub fn rest(state: Option<AppState>, frozen: bool) -> Rest {
     match state {
         _ if frozen => Rest::Frozen,

@@ -1,6 +1,6 @@
 # atlas: the bridge between Atlas and WolOS (ADR 0043 D4)
 
-`atlas-bridge` lets the Atlas browser Share a file, Open With another app and Move to Trash the way every WolOS app does: the desktop shows the share sheet, the app chooser or moves the item, and the browser only learns what the person did.
+The program `atlas-bridge` lets the Atlas browser Share a file, Open With another app and Move to Trash the way every WolOS app does: the desktop shows the share sheet, the app chooser or moves the item, and the browser only learns what the person did.
 
 **Concept.** Atlas runs no WolOS code. Its host component (`atlas_host`, in the browser) is a thin client of the **Atlas Host Protocol**, a versioned line-delimited JSON wire spoken over `$XDG_RUNTIME_DIR/atlas/bridge.sock`. On the other end is `atlas-bridge` (`crates/atlas`, GPL-2.0-or-later), the one program of the Atlas stack that asks wold for anything. It checks that the peer really is the browser, then hands each verb to wold as the portal call libwol 1.15 makes (`share.file`, `open.with`, `file.trash`). The wire types live in `crates/shared/src/atlas.rs` (BSD-2-Clause) and the fixtures in `crates/shared/tests/fixtures/atlas/`, shared byte for byte with the browser's `components/atlas_host/testdata/`.
 

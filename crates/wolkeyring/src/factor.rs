@@ -444,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn strong_rules() {
+    fn a_rule_is_strong_only_with_a_secret_the_person_knows() {
         let mut fp = tpm(3);
         fp.kind = Kind::Fingerprint;
         let f = vec![typed(1, Kind::Password), tpm(2), fp];

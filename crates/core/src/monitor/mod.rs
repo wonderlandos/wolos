@@ -34,6 +34,7 @@ impl Root {
         Root(dir.into())
     }
 
+    /// True when this is the real system root, not a fixture folder.
     pub fn is_system(&self) -> bool {
         self.0 == Path::new("/")
     }
@@ -61,6 +62,7 @@ impl Root {
         Some(v)
     }
 
+    /// Whether `rel` exists under this root.
     pub fn exists(&self, rel: &str) -> bool {
         self.path(rel).exists()
     }

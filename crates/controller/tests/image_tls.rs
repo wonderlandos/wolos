@@ -283,7 +283,7 @@ fn no_browser_flag_weakens_tls() {
         }
     }
     assert!(
-        files.iter().any(|p| p.ends_with("helium-flags.conf")),
+        files.iter().any(|p| p.ends_with("atlas-flags.conf")),
         "found the flag files"
     );
     for f in files {

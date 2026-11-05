@@ -11,7 +11,7 @@
 use crate::isolation::Isolator;
 use crate::socks::{self, Host, Reply, SocksError, Target};
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
@@ -197,17 +197,21 @@ impl Relay {
     }
 }
 
+/// Bytes one direction of a relayed connection may carry before the relay closes it (1 TiB: a
+/// ceiling named so that a stream from outside never runs without one, not a limit a download meets).
+const MAX_RELAYED: u64 = 1 << 40;
+
 /// Copies both ways until either side closes, then closes both.
 fn splice(c: TcpStream, tor: UnixStream) -> io::Result<()> {
-    let (mut c_read, mut tor_write) = (c.try_clone()?, tor.try_clone()?);
+    let (c_read, mut tor_write) = (c.try_clone()?, tor.try_clone()?);
     let up = thread::Builder::new()
         .name("wol-tor-up".into())
         .spawn(move || {
-            let _ = io::copy(&mut c_read, &mut tor_write);
+            let _ = io::copy(&mut c_read.take(MAX_RELAYED), &mut tor_write);
             let _ = tor_write.shutdown(Shutdown::Write);
         })?;
-    let (mut tor_read, mut c_write) = (tor, c);
-    let _ = io::copy(&mut tor_read, &mut c_write);
+    let (tor_read, mut c_write) = (tor, c);
+    let _ = io::copy(&mut tor_read.take(MAX_RELAYED), &mut c_write);
     let _ = c_write.shutdown(Shutdown::Write);
     let _ = up.join();
     Ok(())

@@ -4,6 +4,7 @@
 use super::Root;
 pub use crate::system::stats::Temperature;
 
+/// The temperature sensors under `root`.
 pub fn read(root: &Root) -> Vec<Temperature> {
     Temperature::read(root)
         .into_iter()
@@ -12,6 +13,7 @@ pub fn read(root: &Root) -> Vec<Temperature> {
         .collect()
 }
 
+/// The hottest sensor, if there is any.
 pub fn hottest(t: &[Temperature]) -> Option<&Temperature> {
     t.iter().max_by(|a, b| a.celsius.total_cmp(&b.celsius))
 }

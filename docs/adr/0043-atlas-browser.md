@@ -1,4 +1,4 @@
-# ADR 0043: Atlas, the WolOS browser: a patch series on an org fork, Rust side components over a stable boundary
+# 0043 - Atlas, the WolOS browser: a patch series on an org fork, Rust side components over a stable boundary
 
 Status: proposed (lead order 2026-11-03). Decisions D1 to D9 are the architect's proposal; the open calls are listed at the end under "Decisions needed from the lead". D4 describes the bridge as built.
 Wonderland Doctrine: this text never names the upstream fork, its authors, the engine's vendor or another browser; attribution lives in `docs/THIRD-PARTY.md` and the licence files shipped in the package. Where this text says "the fork" it means our org fork of the browser WolOS repackages today; "the engine" is the open-source browser engine it builds on.

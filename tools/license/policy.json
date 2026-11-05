@@ -77,6 +77,18 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/wolkit-render/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/wolkit-web/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "design/tools/dom-stub.mjs",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "crates/webengine/**",
       "spdx": "BSD-2-Clause"
     },

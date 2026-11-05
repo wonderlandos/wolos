@@ -60,6 +60,7 @@ pub struct BrowserPaths {
     pub cache_dir: &'static str,
 }
 
+/// The package contract of the browser WolOS ships.
 pub const ATLAS: BrowserPaths = BrowserPaths {
     package: "atlas-browser",
     bin: "/usr/bin/atlas",
@@ -97,6 +98,7 @@ pub struct Legacy {
     pub pin: &'static str,
 }
 
+/// The names the browser had before Atlas.
 pub const LEGACY: Legacy = Legacy {
     config: "net.imput.helium",
     cache: "net.imput.helium",
@@ -449,6 +451,7 @@ mod tests {
                         "{k}: {n} not in {ints:?}"
                     );
                 }
+                "string" => assert!(v.is_string(), "{k}: {v} is not a string"),
                 t => panic!("{k}: unknown type {t} in the fixture"),
             }
             assert!(managed || *recommendable, "{k}: cannot be recommended");

@@ -581,6 +581,7 @@ impl Manifest {
             .collect()
     }
 
+    /// How many entries of kind `k` the manifest declares.
     pub fn count(&self, k: Kind) -> usize {
         match k {
             Kind::Menubar => self.menubar.len(),
@@ -675,6 +676,7 @@ impl Manifest {
         v
     }
 
+    /// Whether the manifest asks for permission `p`.
     pub fn has(&self, p: Permission) -> bool {
         self.permissions.contains(&p)
     }

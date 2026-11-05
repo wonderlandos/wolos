@@ -53,7 +53,12 @@ const CENSUS: &[(&str, &str)] = &[
     ("tools", "sh"),
 ];
 /// RB-031: Python scripts per top folder may only fall (new tooling is sh or Ruby).
-const B_PYTHON: &[(&str, usize)] = &[("tools", 2)];
+/// tools 2 -> 11 (INT-2, the 0.13 integration; none of them is shipped): the Memory Saver and the
+/// JavaScript-runtime benchmark harnesses drive Electron, WebKit and /proc from the forge
+/// (`tools/bench/discord/*.py`, six; `tools/bench/js-runtime-x/*.py`, two: DevTools websocket and
+/// smaps readers), and `tools/theme/atlas-gtk3-sample.py` draws a GTK 3 sample through python-gi
+/// (ATLAS-THEME), a binding Ruby does not have here.
+const B_PYTHON: &[(&str, usize)] = &[("tools", 11)];
 /// Scanner fixtures (wrong on purpose; never part of the scope).
 const FIXTURES: &str = "crates/controller/tests/fixtures/ruby/";
 /// The folders whose Ruby is checked.

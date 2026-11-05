@@ -13,6 +13,7 @@ pub struct Counters {
     pub written: u64,
 }
 
+/// Read and write rates of one disk since the last sample.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Io {
     pub name: String,

@@ -82,6 +82,7 @@ pub struct RootProcs {
 }
 
 impl RootProcs {
+    /// A process table that reads `/proc` under `root`.
     pub fn new(root: Root) -> Self {
         RootProcs {
             root,
@@ -92,6 +93,7 @@ impl RootProcs {
         }
     }
 
+    /// Reads the next samples from `root` instead.
     pub fn set_root(&mut self, root: Root) {
         self.root = root;
         self.passwd = None;

@@ -2,6 +2,7 @@
 //! Printers for Settings: CUPS queues (lpstat), discovery (lpinfo) and lpadmin argv for wol-admind.
 use crate::system::Host;
 
+/// One printer as CUPS lists it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Printer {
     pub name: String,
@@ -88,6 +89,7 @@ pub fn parse_lpstat_o(text: &str, queue: &str) -> usize {
 /// CUPS's own test page, printed on `name` (QA-DEV-5). Any user may print; no admin.
 pub const TEST_PAGE: &str = "/usr/share/cups/data/testprint";
 
+/// The command that prints CUPS's test page on `name`; none when the name is not a printer name.
 pub fn test_page_argv(name: &str) -> Option<Vec<String>> {
     is_valid_name(name).then(|| argv(&["lp", "-d", name, "--", TEST_PAGE]))
 }
@@ -180,10 +182,12 @@ pub fn add_argv(name: &str, uri: &str) -> Option<Vec<String>> {
         .then(|| argv(&["lpadmin", "-p", name, "-E", "-v", uri, "-m", "everywhere"]))
 }
 
+/// The command that removes the printer `name`; none when the name is not a printer name.
 pub fn remove_argv(name: &str) -> Option<Vec<String>> {
     is_valid_name(name).then(|| argv(&["lpadmin", "-x", name]))
 }
 
+/// The command that makes `name` the default printer; none when the name is not a printer name.
 pub fn default_argv(name: &str) -> Option<Vec<String>> {
     is_valid_name(name).then(|| argv(&["lpadmin", "-d", name]))
 }

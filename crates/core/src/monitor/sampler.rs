@@ -49,6 +49,7 @@ pub struct Sample {
     pub saver_on: bool,
 }
 
+/// Reads the machine's figures and keeps the previous reading to turn counters into rates.
 pub struct Sampler {
     root: Root,
     uid: Option<u32>,
@@ -86,6 +87,7 @@ impl Sampler {
         self.root = root;
     }
 
+    /// One reading at time `at` (seconds): only the parts in `want`, rates from the previous reading.
     pub fn sample(&mut self, at: f64, want: Want) -> Sample {
         let dt = self.prev_at.map_or(0.0, |p| at - p);
         self.prev_at = Some(at);

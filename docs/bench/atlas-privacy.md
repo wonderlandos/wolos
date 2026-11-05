@@ -33,32 +33,32 @@ What the numbers say:
 
 ## Built-in list manifest (AT-16)
 
-Pinned from `third_party/ublock/assets` of the prepared tree (engine 156.0.8078.79, blocker 1.66.4, GPL-3.0), listed with `python3 -I tools/bench/atlas/privacy/blocklist.py manifest ASSETS`. The remote list URLs are stripped from `assets.json`, so only the bundled files are used and nothing is downloaded (list downloads are off: the `services.ublock_assets` pref reads `false` in Atlas).
+Pinned from the `ublock/assets` folder of the engine's prepared tree (its `third_party` directory) (engine 156.0.8078.79, blocker 1.66.4, GPL-3.0), listed with `python3 -I tools/bench/atlas/privacy/blocklist.py manifest ASSETS`. The remote list URLs are stripped from `assets.json`, so only the bundled files are used and nothing is downloaded (list downloads are off: the `services.ublock_assets` pref reads `false` in Atlas).
 
-| List | On by default | File | Size | Rules | Version or date | Licence |
+| List | On by default | File (in the bundle's assets folder) | Size | Rules | Version or date | Licence |
 |---|---|---|---|---|---|---|
-| asset index | yes | `assets/assets.json` | 33 KiB | n/a | none in the header | GPL-3.0 (blocker) |
-| Public Suffix List | yes | `assets/thirdparties/publicsuffix.org/list/effective_tld_names.dat` | 326 KiB | n/a | 2026-09-15_10-18-26_UTC | MPL-2.0 |
-| uBlock bad-lists index | yes | `assets/ublock/badlists.txt` | 5 KiB | n/a | none in the header | GPL-3.0 (uAssets) |
-| inherited list (annoyances.txt) | yes | `assets/helium/annoyances.txt` | 0 KiB | 1 | %timestamp% | see the list header |
-| inherited list (unbreak.txt) | yes | `assets/helium/unbreak.txt` | 1 KiB | 3 | %timestamp% | see the list header |
-| uBlock filters: Ads | yes | `assets/ublock/filters.min.txt` | 1848 KiB | 23320 | Thu, 17 Sep 2026 14:41:39 +0000 | GPL-3.0 (uAssets) |
-| uBlock filters: Badware risks | yes | `assets/ublock/badware.min.txt` | 144 KiB | 4220 | Thu, 17 Sep 2026 10:56:03 +0000 | GPL-3.0 (uAssets) |
-| uBlock filters: Privacy | yes | `assets/ublock/privacy.min.txt` | 136 KiB | 1832 | Thu, 17 Sep 2026 05:14:48 +0000 | GPL-3.0 (uAssets) |
-| uBlock filters: Unbreak | yes | `assets/ublock/unbreak.min.txt` | 173 KiB | 2550 | Thu, 17 Sep 2026 16:19:33 +0000 | GPL-3.0 (uAssets) |
-| uBlock filters: Quick fixes | yes | `assets/ublock/quick-fixes.min.txt` | 70 KiB | 352 | Thu, 17 Sep 2026 11:24:11 +0000 | GPL-3.0 (uAssets) |
+| asset index | yes | `assets.json` | 33 KiB | n/a | none in the header | GPL-3.0 (blocker) |
+| Public Suffix List | yes | `thirdparties/publicsuffix.org/list/effective_tld_names.dat` | 326 KiB | n/a | 2026-09-15_10-18-26_UTC | MPL-2.0 |
+| uBlock bad-lists index | yes | `ublock/badlists.txt` | 5 KiB | n/a | none in the header | GPL-3.0 (uAssets) |
+| inherited list (annoyances.txt) | yes | `helium/annoyances.txt` | 0 KiB | 1 | %timestamp% | see the list header |
+| inherited list (unbreak.txt) | yes | `helium/unbreak.txt` | 1 KiB | 3 | %timestamp% | see the list header |
+| uBlock filters: Ads | yes | `ublock/filters.min.txt` | 1848 KiB | 23320 | Thu, 17 Sep 2026 14:41:39 +0000 | GPL-3.0 (uAssets) |
+| uBlock filters: Badware risks | yes | `ublock/badware.min.txt` | 144 KiB | 4220 | Thu, 17 Sep 2026 10:56:03 +0000 | GPL-3.0 (uAssets) |
+| uBlock filters: Privacy | yes | `ublock/privacy.min.txt` | 136 KiB | 1832 | Thu, 17 Sep 2026 05:14:48 +0000 | GPL-3.0 (uAssets) |
+| uBlock filters: Unbreak | yes | `ublock/unbreak.min.txt` | 173 KiB | 2550 | Thu, 17 Sep 2026 16:19:33 +0000 | GPL-3.0 (uAssets) |
+| uBlock filters: Quick fixes | yes | `ublock/quick-fixes.min.txt` | 70 KiB | 352 | Thu, 17 Sep 2026 11:24:11 +0000 | GPL-3.0 (uAssets) |
 | AdGuard – Ads | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
-| EasyList | yes | `assets/thirdparties/easylist/easylist.txt` | 2098 KiB | 67825 | Thu, 17 Sep 2026 12:07:02 +0000 | GPL-3.0-or-later or CC BY-SA 3.0 (dual) |
+| EasyList | yes | `thirdparties/easylist/easylist.txt` | 2098 KiB | 67825 | Thu, 17 Sep 2026 12:07:02 +0000 | GPL-3.0-or-later or CC BY-SA 3.0 (dual) |
 | AdGuard/uBO – URL Tracking Protection | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
-| EasyPrivacy | yes | `assets/thirdparties/easylist/easyprivacy.txt` | 1457 KiB | 56074 | Thu, 17 Sep 2026 05:25:58 +0000 | GPL-3.0-or-later or CC BY-SA 3.0 (dual) |
-| Online Malicious URL Blocklist | yes | `assets/thirdparties/urlhaus-filter/urlhaus-filter-online.txt` | 810 KiB | 9318 | 2026-09-17T00:06:42Z | CC0-1.0 (LICENSE.md in the bundle) |
+| EasyPrivacy | yes | `thirdparties/easylist/easyprivacy.txt` | 1457 KiB | 56074 | Thu, 17 Sep 2026 05:25:58 +0000 | GPL-3.0-or-later or CC BY-SA 3.0 (dual) |
+| Online Malicious URL Blocklist | yes | `thirdparties/urlhaus-filter/urlhaus-filter-online.txt` | 810 KiB | 9318 | 2026-09-17T00:06:42Z | CC0-1.0 (LICENSE.md in the bundle) |
 | AdGuard – Cookie Notices | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
 | EasyList – Cookie Notices | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
 | uBlock filters – Cookie Notices | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
 | EasyList – Newsletter Notices | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
 | EasyList – Notifications | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
 | uBlock filters – Annoyances | yes | not bundled | 0 | 0 | | selected by default but not bundled: empty offline (downloads are off) |
-| Peter Lowe's ad and tracking server list | yes | `assets/thirdparties/pgl.yoyo.org/as/serverlist` | 93 KiB | 3560 | none in the header | McRae GPL 4.r53: list owner asks for non-commercial use (README.md in the bundle) |
+| Peter Lowe's ad and tracking server list | yes | `thirdparties/pgl.yoyo.org/as/serverlist` | 93 KiB | 3560 | none in the header | McRae GPL 4.r53: list owner asks for non-commercial use (README.md in the bundle) |
 
 11 filter lists on by default and bundled, 169055 rules, 6.7 MiB; 8 selected by default with nothing bundled
 

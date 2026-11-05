@@ -5,14 +5,19 @@
 # int with its item values, features.can_be_recommended. AT-1 replaces it with the dump of every
 # policy, same columns; a key WolOS writes that is missing here fails
 # browser::tests::every_policy_is_one_the_engine_defines.
+AdditionalDnsQueryTypesEnabled	bool		
 BackgroundModeEnabled	bool		recommendable
 BrowserNetworkTimeQueriesEnabled	bool		
 BrowserSignin	int	0,1,2	
 BrowserThemeColor	string		
+BuiltInDnsClientEnabled	bool		
 DefaultBrowserSettingEnabled	bool		
+DnsOverHttpsMode	string		
 EnableMediaRouter	bool		
+EncryptedClientHelloEnabled	bool		
 FeedbackSurveysEnabled	bool		
 GenAiDefaultSettings	int	0,1,2	
+HttpsUpgradesEnabled	bool		
 IntensiveWakeUpThrottlingEnabled	bool		
 MemorySaverModeSavings	int	0,1,2	
 MetricsReportingEnabled	bool		recommendable

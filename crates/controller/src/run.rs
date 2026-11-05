@@ -2085,11 +2085,10 @@ impl Env for FakeEnv {
         };
         // The fake's scripted output for this line; none scripted is an empty one (a fake has no
         // failure to give a reason for).
-        let out = match self.capture(argv) {
-            Some(o) => o,
-            None => String::new(),
-        };
-        Some((code, out, err))
+        match self.capture(argv) {
+            Some(out) => Some((code, out, err)),
+            None => Some((code, String::new(), err)),
+        }
     }
     fn stdin_line(&mut self) -> Option<String> {
         (!self.stdin.is_empty()).then(|| self.stdin.remove(0))

@@ -1,7 +1,7 @@
 # Keyring benchmark (ADR 0054 section 5)
 
 Measured 2026-11-04 on the forge box: Intel Xeon Platinum 8488C, 32 cpus, kernel 7.0.0-1014-aws, ext4 on
-NVMe (EBS), release build of `wol-keyring-bench` (`crates/wolkeyring/src/bin/wol-keyring-bench.rs`).
+NVMe (EBS), release build of the `wol-keyring-bench` example (`crates/wolkeyring/examples/wol_keyring_bench.rs`, built with `cargo build --release -p wolkeyring --example wol-keyring-bench`).
 One run per row, not repeated; the disk's `fsync` tail varies, so read p99 of any row that syncs as an
 order of magnitude, not a promise. Items are 64-byte secrets with three attributes (`application`, `site`,
 `user`). Times are microseconds as seen by the caller (a request and its reply, or the call).

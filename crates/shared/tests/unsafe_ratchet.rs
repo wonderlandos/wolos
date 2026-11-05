@@ -113,29 +113,41 @@ use std::path::{Path, PathBuf};
 /// pub unsafe extern`, plus the checked out-pointer writes (`wol_media_publish`, `wol_color_pick`,
 /// `wol_print_file`), the handle borrows (`string::borrow` in `media::change`/`set_handler`),
 /// `retain`/`release` and the one callback call (`media::pressed`), each with a SAFETY line.
+/// INT-2 (the 0.13 integration, reviewed one site at a time): controller 58 -> 61 (tests only:
+/// `tests/approval_socket.rs` one `poll`, `tests/patience_file.rs` one `set_var` and one `mkfifo`);
+/// realtime 42 -> 49 (the seven `#[unsafe(no_mangle)]` of the snap exports `wol_snap_*` for the
+/// wol-hypr plugin, tiling: their out-pointers are `Option<&mut T>`, so no `unsafe` block); shared
+/// 17 -> 19 (the tests of `Patience::read_owned`: `getuid`, `mkfifo`); shell 9 -> 20 (tests that
+/// set `XDG_*`/`GSETTINGS_BACKEND` before any thread starts, `set_var` is unsafe in edition 2024:
+/// dock_keep, gate_transition, lock_submit, row_names, timeouts, larger_text and the Settings
+/// golden cases); wopkg 103 -> 104 (`context.rs`: `geteuid`, no std call, SAFETY line); wolkeyring
+/// 0 -> 1 (ADR 0054, `src/bin/wol-keyringd.rs`: `prctl(PR_SET_DUMPABLE, 0)` and `setrlimit(RLIMIT_CORE,
+/// 0)` so no core file can hold the keys, SAFETY line; the library has `#![forbid(unsafe_code)]`).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 513),
     ("wolkit", 314),
-    ("wopkg", 103),
-    ("realtime", 42),
+    ("wopkg", 104),
+    ("realtime", 49),
     ("xguard", 65),
-    ("controller", 58),
+    ("controller", 61),
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
     ("core", 14),
     ("proxy", 3),
-    ("shared", 17),
+    ("shared", 19),
     // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY
     // before gtk::init for the Broadway tests (Rust 2024), which replaced three copies.
-    ("shell", 9),
+    ("shell", 20),
     ("wol-lua", 3),
     ("xguard-clam", 13),
     // +5 webengine for the host's present call (we-web), on top of federate's 173.
     ("webengine", 178),
     ("federate", 0),
     ("wolcrypt", 0),
+    // ADR 0054: the library forbids unsafe code; the one site is the daemon binary (see the history).
+    ("wolkeyring", 1),
     // Search by meaning: pread, no mmap, so no unsafe (docs/modules/search.md).
     ("wolsem", 0),
     // ADR 0053 (2026-11-04): Atlas Tor groups; std and safe APIs only, `forbid(unsafe_code)`.

@@ -5,6 +5,7 @@
 //! Static, masked, generated and alias units are not a choice a person makes, so they are not
 //! listed; services the system ships can be seen but only the person's own can be switched.
 
+/// A service or timer that starts with the session.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Unit {
     /// `syncthing.service`.

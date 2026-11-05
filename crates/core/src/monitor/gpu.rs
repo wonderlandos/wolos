@@ -4,6 +4,7 @@
 //! nouveau have neither, and the page says so instead of drawing zero.
 use super::Root;
 
+/// One graphics card as the kernel reports it.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Gpu {
     /// `card0`.
@@ -29,6 +30,7 @@ fn card(name: &str) -> bool {
         .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
 }
 
+/// The graphics cards under `/sys/class/drm`, with their busy figure where the driver gives one.
 pub fn read(root: &Root) -> Vec<Gpu> {
     root.names("/sys/class/drm")
         .into_iter()

@@ -23,20 +23,22 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-004", "api", 21),
     ("RR-004", "audio", 4),
     ("RR-004", "controller", 3),
-    ("RR-004", "shell", 55),
+    ("RR-004", "shell", 54),
     // +1 (audit C7-2): guard.rs is the wol-xguard daemon body; it says on stderr (the journal)
     // when the download-folder thread cannot start, like its six other daemon diagnostics.
     ("RR-004", "xguard", 7),
     ("RR-004", "xguard-clam", 5),
     ("RR-008", "controller", 4),
-    ("RR-008", "realtime", 4),
     ("RR-008", "shell", 9),
     ("RR-008", "wol-abi", 7),
     ("RR-008", "wopkg", 5),
     ("RR-009", "controller", 2),
     ("RR-009", "wol-abi", 2),
     ("RR-009", "wopkg", 1),
-    ("RR-010", "controller", 1),
+    // +2 (INT-2, 0.13 integration): image_home_quota.rs and image_overlay_assets.rs take the byte-
+    //   identical siblings.rs helper (three repos carry the same copy and `siblings_copy.rs` checks
+    //   it) and call part of it.
+    ("RR-010", "controller", 3),
     ("RR-010", "shell", 1),
     ("RR-010", "wol-abi", 5),
     ("RR-011", "api", 1),
@@ -62,20 +64,41 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-015", "api", 2),
     ("RR-015", "controller", 1),
     ("RR-015", "core", 7),
-    ("RR-015", "shell", 3),
+    // +2 (INT-2, 0.13 integration): kit/gate.rs expects on values the function built just before
+    //   (the pixel buffers it sized, the shipped parameter set).
+    ("RR-015", "shell", 5),
     ("RR-015", "xguard", 14),
+    // +1 (INT-2, 0.13 integration): FakeEnv::capture, the test double of Env, panics on purpose
+    //   when a test scripts a crash.
+    ("RR-016", "controller", 1),
+    // +1 (INT-2, 0.13 integration): theme::gtk_atlas::want is documented to stop with the token's
+    //   name for a theme that passed the contract (try_want is the fallible form).
+    ("RR-016", "core", 1),
     ("RR-017", "api", 10),
     ("RR-017", "audio", 1),
     ("RR-017", "aurlaws", 74),
     ("RR-017", "controller", 3),
-    ("RR-017", "core", 65),
+    // +2 (INT-2, 0.13 integration): consent.rs: a u64 byte cap as usize; monitor/sampler.rs: a
+    //   time in seconds to microseconds.
+    ("RR-017", "core", 67),
     ("RR-017", "proxy", 1),
-    ("RR-017", "realtime", 10),
+    // +6 (INT-2, 0.13 integration): snap.rs: zone and key codes cross the C ABI as i32 and pixel
+    //   offsets are rounded; ffi.rs: C ints.
+    ("RR-017", "realtime", 16),
     // +1 (INT-1, brand-ui): theme::accent_ink rounds an f64 channel in 0..=255 to u8, as Color::over does.
     ("RR-017", "shared", 40),
-    ("RR-017", "shell", 133),
+    // +29 (INT-2, 0.13 integration): kit/gate.rs 24: the Moon Gate's pixel math (u8/u32 to f32 and
+    //   back, bounded by MAX_WORK, WALL-SHELL); first_login.rs 2: the keyboard dropdown index u32
+    //   <-> usize; quicklook.rs and monitor/demo.rs: preview and demo sizes.
+    ("RR-017", "shell", 162),
     ("RR-017", "wol-abi", 21),
     ("RR-017", "wol-lua", 12),
+    // +7 (INT-2, 0.13 integration): u32 length prefixes of the wire formats and table lookups (`&
+    //   31`, a base32 digit): every operand is bounded by the format (ADR 0054).
+    ("RR-017", "wolkeyring", 7),
+    // +1 (INT-2, 0.13 integration): text/area.rs: the visible line count `floor(view_h / line_h)`
+    //   as usize, at least 1 (E2E-WKTEXT).
+    ("RR-017", "wolkit", 1),
     ("RR-017", "wopkg", 39),
     ("RR-017", "xguard", 65),
     ("RR-017", "xguard-clam", 1),
@@ -86,16 +109,28 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-020", "aurlaws", 7),
     // +2 (memsaver/budget.rs, MEMSAVER-X): `launch_sh` builds the `sh -c 'exec systemd-run ...'` argv
     // of a launcher that cannot know its pid, and its test runs it.
-    ("RR-020", "core", 2),
-    ("RR-021", "controller", 4),
+    // +1 (INT-2, 0.13 integration): update/layers.rs: the private-namespace wrapper runs the mount
+    //   steps as one `sh -c` script (WD-STORE, RH-192); memsaver/budget.rs (MEMSAVER-X).
+    ("RR-020", "core", 3),
+    // +3 (INT-2, 0.13 integration): not commands: quicklook.rs lists `sh` and `bash` among the
+    //   text file kinds; monitor/demo.rs has a demo process named bash.
+    ("RR-020", "shell", 3),
+    ("RR-021", "controller", 3),
     ("RR-021", "core", 4),
     ("RR-021", "realtime", 1),
     ("RR-021", "shell", 3),
+    // +1 (INT-2, 0.13 integration): bin/wol-keyring.rs reads the daemon's length-prefixed reply.
+    ("RR-021", "wolkeyring", 1),
     ("RR-021", "wopkg", 3),
     ("RR-021", "xguard", 3),
-    ("RR-022", "shell", 5),
+    // +3 (INT-2, 0.13 integration): quicklook.rs polls a child it must stop at a deadline (std has
+    //   no timed wait for a child); tray.rs retries a registration after a pause; monitor/feed.rs
+    //   paces its sampler thread.
+    ("RR-022", "shell", 8),
     ("RR-023", "core", 3),
-    ("RR-024", "shared", 36),
+    // +1 (INT-2, 0.13 integration): shared/src/shell.rs: the Doctor step words (WE-SET) name every
+    //   step in one match.
+    ("RR-024", "shared", 37),
     ("RR-026", "api", 1),
     ("RR-026", "aurlaws", 1),
     ("RR-026", "controller", 2),
@@ -105,19 +140,29 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-027", "controller", 1),
     ("RR-027", "core", 10),
     ("RR-027", "realtime", 1),
-    ("RR-027", "shell", 55),
+    // +4 (INT-2, 0.13 integration): kit/mod.rs: the budgeted launch reads HOME and
+    //   WOL_SNAPSHOT_DELAY_MS; monitor/mod.rs: WOL_MONITOR_DEMO, the golden demo switch.
+    ("RR-027", "shell", 59),
     ("RR-027", "wol-abi", 5),
+    ("RR-027", "wol-lua", 1),
+    // +9 (INT-2, 0.13 integration): io.rs is the one file of the crate that reads HOME and XDG_*
+    //   (the store, socket and key paths).
+    ("RR-027", "wolkeyring", 9),
     // wolkit 1 (ADR 0039): `ffi/engine.rs` reads $WOL_KIT_SOCKET and $XDG_RUNTIME_DIR once, at
     // `wolkit_engine_create`, and hands the engine the path; the library proper takes it as a value.
     ("RR-027", "wolkit", 1),
-    ("RR-027", "wol-lua", 1),
     ("RR-027", "wopkg", 1),
     ("RR-027", "xguard-clam", 2),
     ("RR-028", "controller", 1),
-    ("RR-029", "shell", 4),
+    // +3 (INT-2, 0.13 integration): fence.rs, monitor/mod.rs and ui/quicklook.rs read their own
+    //   program's first argument (a page to open, a standalone flag).
+    ("RR-029", "shell", 7),
     ("RR-030", "shell", 3),
     ("RR-031", "shell", 3),
     ("RR-033", "aurlaws", 1),
+    // +1 (INT-2, 0.13 integration): the LAN move listens on all interfaces for the short code's
+    //   lifetime (ADR 0054, pairing).
+    ("RR-033", "wolkeyring", 1),
     ("RR-034", "core", 1),
     ("RR-034", "shared", 3),
     ("RR-034", "wol-lua", 2),
@@ -129,17 +174,25 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-037", "core", 4),
     ("RR-037", "proxy", 1),
     ("RR-037", "realtime", 1),
-    ("RR-037", "shell", 30),
+    // +3 (INT-2, 0.13 integration): quicklook.rs: the reader of a bounded child; tray.rs and
+    //   lock.rs: one-shot helper threads that end with their job.
+    ("RR-037", "shell", 33),
     ("RR-037", "wol-abi", 1),
+    // +4 (INT-2, 0.13 integration): wol-keyringd.rs and daemon.rs: connection and tick threads of
+    //   the daemon.
+    ("RR-037", "wolkeyring", 4),
     ("RR-037", "wopkg", 2),
     ("RR-037", "xguard", 2),
     ("RR-037", "xguard-clam", 1),
-    ("RR-038", "shell", 2),
+    // +3 (INT-2, 0.13 integration): apps.rs leaks the &'static strings of the Dock's entries (once
+    //   per entry, for the process); quicklook.rs holds the application alive while the previewer
+    //   waits.
+    ("RR-038", "shell", 5),
     ("RR-038", "xguard", 1),
     ("RR-041", "api", 4),
     ("RR-041", "audio", 1),
     ("RR-041", "controller", 5),
-    ("RR-041", "core", 6),
+    ("RR-041", "core", 2),
     ("RR-041", "wopkg", 2),
     ("RR-041", "xguard", 4),
     ("RR-042", "api", 3),
@@ -150,7 +203,12 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-045", "controller", 3),
     ("RR-045", "core", 7),
     ("RR-045", "proxy", 1),
-    ("RR-045", "shell", 44),
+    // +1 (INT-2, 0.13 integration): snap.rs: `use Zone::*` and `use Step::*` write the snap tables
+    //   as variants.
+    ("RR-045", "realtime", 1),
+    // +4 (INT-2, 0.13 integration): net3's pages (dns_over_tls, ip_settings, network_vpn, proxy)
+    //   import the Settings helpers with `use super::*`.
+    ("RR-045", "shell", 48),
     ("RR-047", "api", 5),
     ("RR-047", "aurlaws", 1),
     ("RR-047", "controller", 12),
@@ -174,48 +232,95 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-049", "api", 7),
     ("RR-049", "controller", 1),
     ("RR-049", "core", 1),
-    ("RR-049", "shell", 11),
+    // +8 (INT-2, 0.13 integration): tests that wait for a real process, a Broadway frame or a
+    //   timer: dock_keep, gate_transition, lock_submit, render_lane, row_names and kit/render.rs.
+    ("RR-049", "shell", 19),
     ("RR-049", "wol-abi", 6),
+    // +6 (INT-2, 0.13 integration): tests of a daemon and its socket wait for it to be ready.
+    ("RR-049", "wolkeyring", 6),
+    // +3 (INT-2, 0.13 integration): tests/text_area.rs lets the caret blink timer pass.
+    ("RR-049", "wolkit", 3),
     ("RR-049", "xguard", 12),
     ("RR-052", "core", 2),
-    ("RR-052", "shell", 9),
-    ("RR-054", "core", 189),
-    ("RR-054", "shared", 97),
-    ("RR-055", "core", 205),
-    ("RR-055", "shared", 131),
+    ("RR-052", "shell", 8),
+    ("RR-054", "core", 187),
+    ("RR-054", "shared", 96),
+    ("RR-055", "core", 201),
+    ("RR-055", "shared", 129),
+    // +1 (INT-2, 0.13 integration): api/src/portal.rs is 2005 lines with the libwol 1.16 verbs
+    //   (E2E-LIB-1).
+    ("RR-056", "api", 1),
     ("RR-056", "aurlaws", 1),
+    // +4 (INT-2, 0.13 integration): cli.rs 2008, install.rs 2105, run.rs 2206 and
+    //   tests/image_install.rs 2133 lines with the merged branches' verbs and tests.
+    ("RR-056", "controller", 4),
+    // +1 (INT-2, 0.13 integration): shared/src/plugins.rs is 2042 lines with the plugin hub fields
+    //   (WD-PLUG).
+    ("RR-056", "shared", 1),
+    // +3 (INT-2, 0.13 integration): kit/widgets.rs 2059, tests/golden.rs 2256 and
+    //   tests/rules_ui.rs 2087 lines with the merged branches' parts and rules.
+    ("RR-056", "shell", 3),
     ("RR-057", "api", 1),
     ("RR-057", "audio", 1),
     ("RR-057", "aurlaws", 1),
-    ("RR-057", "controller", 1),
+    // +1 (INT-2, 0.13 integration): webapp.rs: a function the Doctor verbs of the merged branches
+    //   took past 150 lines.
+    ("RR-057", "controller", 2),
     ("RR-057", "core", 3),
     ("RR-057", "shared", 4),
-    ("RR-057", "shell", 14),
+    // +1 (INT-2, 0.13 integration): settings/printers.rs: the page builder took the Option and
+    //   removal rows past 150 lines.
+    ("RR-057", "shell", 15),
+    // +1 (INT-2, 0.13 integration): wol-webhost.rs: the host's setup took a function past 150
+    //   lines.
+    ("RR-057", "webengine", 1),
     ("RR-057", "wol-lua", 1),
+    // +1 (INT-2, 0.13 integration): bin/wol-keyring.rs: the command table is one function.
+    ("RR-057", "wolkeyring", 1),
     ("RR-058", "api", 1),
     ("RR-058", "aurlaws", 20),
-    ("RR-058", "controller", 14),
-    ("RR-058", "core", 41),
-    ("RR-058", "realtime", 1),
-    ("RR-058", "shared", 6),
-    ("RR-058", "shell", 10),
+    // +6 (INT-2, 0.13 integration): long literals (sentences, table rows) in cli.rs, doctor.rs,
+    //   doctor/tls.rs, tests/first_login_session.rs and tests/image_install.rs.
+    ("RR-058", "controller", 20),
+    // +3 (INT-2, 0.13 integration): long literals (sentences, table rows) in net.rs, printers.rs
+    //   and install/disk.rs.
+    ("RR-058", "core", 44),
+    // +1 (INT-2, 0.13 integration): tests/hypr_conf.rs: a config line quoted whole.
+    ("RR-058", "realtime", 2),
+    // +1 (INT-2, 0.13 integration): shared/src/plugins/tests.rs: a manifest literal.
+    ("RR-058", "shared", 7),
+    // +3 (INT-2, 0.13 integration): long literals in kit/gate.rs, tests/golden_cases/quicklook.rs
+    //   and tests/supervise.rs.
+    ("RR-058", "shell", 13),
     ("RR-058", "wol-abi", 1),
     ("RR-058", "wol-lua", 15),
+    // +5 (INT-2, 0.13 integration): long literals (known-answer vectors, command lines) in io.rs,
+    //   tests/daemon.rs and tests/kat.rs.
+    ("RR-058", "wolkeyring", 5),
     ("RR-058", "wopkg", 8),
     ("RR-058", "xguard", 1),
     ("RR-060", "core", 13),
     ("RR-064", "aurlaws", 11),
-    ("RR-064", "core", 102),
+    // +4 (INT-2, 0.13 integration): consent.rs and install/disk.rs read files that WolOS's own
+    //   writers produced; a field a newer writer adds is ignored.
+    ("RR-064", "core", 106),
     ("RR-064", "realtime", 4),
     ("RR-064", "shared", 57),
     ("RR-064", "shell", 5),
+    // +4 (INT-2, 0.13 integration): the audit, factor, item and proto records, read from the
+    //   store's own files and socket.
+    ("RR-064", "wolkeyring", 4),
     ("RR-064", "wopkg", 25),
     ("RR-064", "xguard", 7),
     // +2 (memsaver/budget.rs, MEMSAVER-X): the `posix_fadvise(DONTNEED)` call of `evict`.
     ("RR-065", "core", 23),
     // +3 (memsaver/budget.rs, MEMSAVER-X): `evict` walks and opens the app's own files.
-    ("RR-066", "core", 131),
-    ("RR-067", "core", 4),
+    // +15 (INT-2, 0.13 integration): monitor/{mod,procs,startup}.rs read /proc and /sys under a
+    //   `Root` (the fixture folder in tests); consent.rs, storage.rs, net.rs and admin.rs read the
+    //   files they own.
+    ("RR-066", "core", 146),
+    // +1 (INT-2, 0.13 integration): monitor/mod.rs reads the clock for the monitor's time axis.
+    ("RR-067", "core", 5),
     ("RR-068", "api", 15),
     // +4 (MANUAL 0.12.0, RR-114 justification): controller/src/secret.rs turns terminal echo off
     // for the administrator password; std has no termios and controller depends on no listed crate.
@@ -229,6 +334,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-068", "wol-lua", 3),
     ("RR-071", "xguard-clam", 1),
     ("RR-073", "xguard-clam", 1),
+    // +1 (INT-2, 0.13 integration): bin/wol-keyringd.rs: prctl(PR_SET_DUMPABLE) and
+    //   setrlimit(RLIMIT_CORE) so no core file can hold the keys (see unsafe_ratchet.rs).
+    ("RR-068", "wolkeyring", 1),
     ("RR-074", "audio", 1),
     ("RR-074", "aurlaws", 2),
     ("RR-078", "realtime", 1),
@@ -243,6 +351,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-080", "audio", 1),
     ("RR-080", "aurlaws", 1),
     ("RR-080", "controller", 2),
+    // +1 (INT-2, 0.13 integration): monitor/demo.rs: a demo process's home folder in the golden
+    //   figures.
+    ("RR-080", "shell", 1),
     ("RR-080", "xguard", 1),
     ("RR-081", "api", 1),
     ("RR-081", "aurlaws", 1),

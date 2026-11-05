@@ -73,6 +73,7 @@ const fn row(engine: &'static str, selector: &'static str, read: Read, want: Wan
 /// Accent alpha of a selected row or a text selection (design palette `selection`: 22 % in light,
 /// 30 % in dark). The accent follows the preset; the alpha is the design's.
 pub const SELECTION_LIGHT: f64 = 0.22;
+/// [`SELECTION_LIGHT`] for the dark theme.
 pub const SELECTION_DARK: f64 = 0.30;
 
 /// The class the engine puts on every node of a sample. An engine identifier: it cannot be renamed

@@ -11,6 +11,7 @@ pub struct Counters {
     pub tx: u64,
 }
 
+/// What an interface is: wired, wireless or virtual.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 pub enum Kind {
     Wired,
@@ -19,6 +20,7 @@ pub enum Kind {
     Virtual,
 }
 
+/// One network interface with its rates since the last sample.
 #[derive(Clone, Debug, PartialEq, serde::Serialize)]
 pub struct Interface {
     pub name: String,
@@ -51,6 +53,7 @@ pub fn parse_net_dev(text: &str) -> Vec<Counters> {
         .collect()
 }
 
+/// The kind of the interface `name` from its sysfs files.
 pub fn kind(root: &Root, name: &str) -> Kind {
     let base = format!("/sys/class/net/{name}");
     if root.exists(&format!("{base}/wireless")) || root.exists(&format!("{base}/phy80211")) {

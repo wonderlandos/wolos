@@ -487,13 +487,13 @@ const NAMES: [(&str, &str, &str, Group); 105] = [
     (
         "exec",
         "hyprctl dispatch movewindow mon:l",
-        "Move window to the display on the left",
+        "Move window to the left display",
         G::Windows,
     ),
     (
         "exec",
         "hyprctl dispatch movewindow mon:r",
-        "Move window to the display on the right",
+        "Move window to the right display",
         G::Windows,
     ),
     ("exec", "wol shell show switcher", "Switch apps", G::Windows),
@@ -518,13 +518,13 @@ const NAMES: [(&str, &str, &str, Group); 105] = [
     (
         "exec",
         "hyprctl wolsnap up",
-        "Snap window up (top quarter, then fill the screen)",
+        "Snap window up or zoom",
         G::Windows,
     ),
     (
         "exec",
         "hyprctl wolsnap down",
-        "Snap window down (bottom quarter, back to size, then minimise)",
+        "Snap window down or restore",
         G::Windows,
     ),
     ("exec", "wol-app quit", "Quit app", G::Windows),
@@ -1347,7 +1347,7 @@ mod tests {
         );
         assert_eq!(
             name("hyprctl dispatch movewindow mon:r"),
-            "Move window to the display on the right"
+            "Move window to the right display"
         );
         let combo = |args: &str| {
             d.iter()

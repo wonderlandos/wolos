@@ -20,6 +20,7 @@ pub const INCLUDE: &str = "hypr/wolos/settings.lua";
 pub const SNAP_KEY: &str = "plugin:wol:edge_snap";
 /// Named rules in the shipped hyprland.lua: everything floats; listed apps keep floating while tiling.
 pub const FLOAT_RULE: &str = "wol-float";
+/// The rule that keeps the listed apps floating while the rest tile.
 pub const FLOAT_APPS_RULE: &str = "wol-float-apps";
 /// Cursor theme the shipped session exports (`env = XCURSOR_THEME`).
 pub const CURSOR_THEME: &str = "Adwaita";
@@ -27,6 +28,7 @@ pub const CURSOR_THEME: &str = "Adwaita";
 /// Lines a mouse wheel notch scrolls: what Settings offers (1 to 10) and the shipped value, where
 /// the compositor's `input:scroll_factor` is 1.0.
 pub const SCROLL_LINES: std::ops::RangeInclusive<u32> = 1..=10;
+/// The shipped number of lines a wheel notch scrolls.
 pub const SCROLL_LINES_DEFAULT: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

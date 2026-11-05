@@ -18,8 +18,8 @@ PBKDF2-HMAC-SHA512 600 000 read and writable; a header below the floor or above 
 refused), `item` (metadata and access lists), `audit` (hash chain, ML-DSA-signed checkpoints),
 `bundle` (signed, encrypted export to a recipient key or a passphrase), `pairing` (the LAN move with an
 8-digit code), `proto` + `daemon` (the fast path), `secret_service` (D-Bus subset), `io` (every file,
-process and socket access). Binaries: `wol-keyringd` (session daemon), `wol-keyring` (`wol keyring`),
-`wol-keyring-bench` (numbers in `docs/bench/keyring.md`).
+process and socket access). Binaries: `wol-keyringd` (session daemon), `wol-keyring` (`wol keyring`);
+the benchmark is the `wol-keyring-bench` example (numbers in `docs/bench/keyring.md`).
 
 ## Commands (`wol keyring VERB`, or `wol-keyring [--name NAME] VERB`)
 

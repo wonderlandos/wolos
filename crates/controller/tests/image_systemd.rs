@@ -1433,7 +1433,10 @@ fn the_keyring_daemon_unit_is_sandboxed_and_not_wanted_by_the_session() {
         "RestrictAddressFamilies=AF_UNIX",
         "LimitCORE=0",
     ] {
-        assert!(unit.lines().any(|l| l.trim() == want), "wolos-keyringd.service lacks {want}");
+        assert!(
+            unit.lines().any(|l| l.trim() == want),
+            "wolos-keyringd.service lacks {want}"
+        );
     }
     // Its writable paths are the account's own folders, named by specifiers (RS-046).
     assert!(unit.contains("ReadWritePaths=-%h/.local/share/wolos -%t/wolos"));
