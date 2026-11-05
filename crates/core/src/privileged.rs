@@ -26,7 +26,7 @@ pub fn privileged_command(program: &str) -> Command {
 }
 
 /// The most of a failed command's stderr kept (the end of it: the error is last).
-const STDERR_TAIL: usize = 2048;
+pub(crate) const STDERR_TAIL: usize = 2048;
 /// The longest a failed command's stderr is waited for after it ended.
 const STDERR_WAIT: Duration = Duration::from_millis(300);
 
@@ -40,6 +40,13 @@ thread_local! {
 /// a root child used to go to /dev/null).
 pub fn take_last_stderr() -> String {
     LAST_STDERR.with(|s| std::mem::take(&mut *s.borrow_mut()))
+}
+
+/// Leaves `output` (the end of a run that was read by someone else, `progress::run_tracked_cmd`)
+/// for [`take_last_stderr`] as a failed [`capture`] would; an empty `output` clears it.
+pub(crate) fn keep_stderr(output: &[u8]) {
+    let said = tail_of(output);
+    LAST_STDERR.with(|s| *s.borrow_mut() = said);
 }
 
 /// The last [`STDERR_TAIL`] bytes of `bytes`, from a whole line, as text.
