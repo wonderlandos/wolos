@@ -17,7 +17,7 @@ pub const AREA: &str = "tls";
 
 const OPENSSL_CNF: &str = "/etc/ssl/openssl.cnf";
 const GNUTLS_CONFIG: &str = "/etc/gnutls/config";
-const BROWSER_POLICY: &str = "/etc/chromium/policies/managed/wolos.json";
+const BROWSER_POLICY: &str = "/etc/atlas/policies/managed/wolos.json";
 
 /// The area the file checks join: they reach nothing outside the computer, so plain `wol doctor`
 /// and the Doctor app show a system whose TLS went classical (`tls-policy` left a file alone).
@@ -166,7 +166,7 @@ fn browser(env: &mut dyn Env) -> Check {
     let title = "Atlas browser";
     let text = env.read_file(Path::new(BROWSER_POLICY)).unwrap_or_default();
     let p: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
-    let rows = wol_core::theme::helium::tls_policies();
+    let rows = wol_core::browser::tls_policies();
     let missing: Vec<&String> = rows
         .iter()
         .filter(|(k, v)| p.get(k.as_str()) != Some(v))
@@ -298,7 +298,7 @@ mod tests {
             ),
         ));
         env.files
-            .push((BROWSER_POLICY.into(), wol_core::theme::helium::policies()));
+            .push((BROWSER_POLICY.into(), wol_core::browser::policies()));
         let c = checks(&mut env);
         assert_eq!(
             by_id(&c, "tls.gnutls").status,

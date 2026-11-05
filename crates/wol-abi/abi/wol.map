@@ -198,3 +198,18 @@ WOL_1.15 {
     wol_open_with;
     wol_share_file;
 } WOL_1.14;
+
+WOL_1.16 {
+  global:
+    wol_color_pick;
+    wol_media_publish;
+    wol_media_release;
+    wol_media_retain;
+    wol_media_set_art;
+    wol_media_set_capabilities;
+    wol_media_set_handler;
+    wol_media_set_state;
+    wol_media_set_track;
+    wol_print_file;
+    wol_recent_add;
+} WOL_1.15;

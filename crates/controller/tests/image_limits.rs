@@ -121,3 +121,48 @@ fn tmpfs_cannot_take_most_of_ram() {
         &["enable wolos-shm-limit.service"],
     );
 }
+
+/// QA-A7-12: oomd ranks every descendant of user@.service, so the bus, the sound server, the
+/// idle lock and the helper the session leans on must say they are not to be picked. A kill of
+/// the user bus took the session down (QA-LIVE-28), a kill of hypridle left no lock on idle.
+/// The portals can come back at once, so they are only picked last.
+#[test]
+fn the_bus_sound_and_idle_lock_are_never_the_oom_pick() {
+    const USER: &str = "files/usr/lib/systemd/user";
+    for unit in [
+        "dbus-broker.service",
+        "dbus.service",
+        "pipewire.service",
+        "pipewire-pulse.service",
+        "wireplumber.service",
+    ] {
+        has(
+            &format!("{USER}/{unit}.d/70-wolos-oom.conf"),
+            &["[Service]", "ManagedOOMPreference=omit"],
+        );
+    }
+    for unit in [
+        "xdg-desktop-portal.service",
+        "xdg-desktop-portal-gtk.service",
+        "xdg-desktop-portal-hyprland.service",
+    ] {
+        has(
+            &format!("{USER}/{unit}.d/70-wolos-oom.conf"),
+            &["[Service]", "ManagedOOMPreference=avoid"],
+        );
+    }
+    // The key counts only under [Service] (anywhere else systemd ignores it).
+    for unit in ["wolos-hypridle.service", "wolos-realtime.service"] {
+        let text = read(&format!("{USER}/{unit}"));
+        let mut section = "";
+        let mut found = None;
+        for l in text.lines().map(str::trim) {
+            if l.starts_with('[') {
+                section = l;
+            } else if l == "ManagedOOMPreference=omit" {
+                found = Some(section);
+            }
+        }
+        assert_eq!(found, Some("[Service]"), "{unit}");
+    }
+}

@@ -107,9 +107,15 @@ use std::path::{Path, PathBuf};
 /// no fadvise, no new dependency was wanted for one call.
 /// controller 56 -> 58 (JS-RUNTIME-X, ADR 0061, `src/bin/wolos-mm.rs`): `prctl(PR_SET_MEMORY_MERGE)`
 /// before an exec and `pidfd_open` + `process_madvise` for the page-out; std wraps none of them.
+/// wol-abi 482 -> 513 (libwol 1.16, E2E-LIB-1): eleven C exports (`wol_media_publish`,
+/// `_set_handler`, `_set_track`, `_set_art`, `_set_state`, `_set_capabilities`, `_retain`,
+/// `_release`, `wol_recent_add`, `wol_color_pick`, `wol_print_file`), each `#[unsafe(no_mangle)]
+/// pub unsafe extern`, plus the checked out-pointer writes (`wol_media_publish`, `wol_color_pick`,
+/// `wol_print_file`), the handle borrows (`string::borrow` in `media::change`/`set_handler`),
+/// `retain`/`release` and the one callback call (`media::pressed`), each with a SAFETY line.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
-    ("wol-abi", 482),
+    ("wol-abi", 513),
     ("wolkit", 314),
     ("wopkg", 103),
     ("realtime", 42),
@@ -134,6 +140,15 @@ const BASELINE: &[(&str, usize)] = &[
     ("wolsem", 0),
     // ADR 0053 (2026-11-04): Atlas Tor groups; std and safe APIs only, `forbid(unsafe_code)`.
     ("wol-tor", 0),
+    // ADR 0060: the render targets and the browser module have no `unsafe` (the wasm-bindgen glue
+    // is macro-expanded, not in the source).
+    ("wolkit-render", 0),
+    ("wolkit-web", 0),
+    // `atlas` (ADR 0043, ATLAS-BRIDGE, 2026-11-04): 1, `UnixListener::from_raw_fd(3)` in
+    // `src/activation.rs` for the socket systemd passes (LISTEN_PID and LISTEN_FDS checked, as
+    // xguard-clam does); std has no safe way to adopt an inherited descriptor. Everything else in the
+    // crate is safe Rust (`#![deny(unsafe_code)]`).
+    ("atlas", 1),
 ];
 
 fn crates_dir() -> PathBuf {

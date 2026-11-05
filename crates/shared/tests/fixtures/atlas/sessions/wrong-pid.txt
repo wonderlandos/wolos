@@ -1,0 +1,4 @@
+# A hello that names a pid other than the one the kernel reports: refused, and the connection closes.
+> {"op":"hello","version":1,"pid":1}
+< {"reply":"error","id":0,"code":"not-browser","text":"Only Atlas can use this service."}
+closed

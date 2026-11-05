@@ -32,7 +32,7 @@ SET_PROP 6 grow 1.0
 INSERT 1 6 append
 CREATE 7 box
 SET_PROP 7 flex-direction column
-SET_PROP 7 width px:220.0
+SET_PROP 7 width px:240.0
 SET_PROP 7 background token1
 SET_PROP 7 padding 8.0
 SET_PROP 7 gap 4.0

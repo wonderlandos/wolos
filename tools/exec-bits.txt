@@ -12,6 +12,7 @@ crates/shell/tests/golden-env/run.sh
 crates/shell/tests/golden-env/starve.sh
 crates/webengine/engine/link.sh
 crates/wol-abi/link.sh
+crates/wolkit-web/build-site.sh
 crates/wolkit/link.sh
 crates/wolkit/shaders/build.sh
 crates/wopkg/link.sh
@@ -110,3 +111,4 @@ tools/install-webapps.sh
 tools/license/relicense.py
 tools/ruby/lint.sh
 tools/site-shots.sh
+tools/theme/atlas-gtk3-sample.py

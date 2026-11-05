@@ -59,8 +59,9 @@ impl Controls {
 
     /// Saves `c` on `iface`'s profile and brings it up again. A Manual address then gets
     /// [`netconf::IP_TRIAL_SECS`]: when the link is not back on the network by then, or reaches
-    /// less than before (full internet before, none after), the profile goes back to Automatic
-    /// (DHCP) and the answer is [`IpApplied::RolledBack`]. `wait` sleeps between the checks.
+    /// less than before (full internet before, none after), the profile goes back to what it was
+    /// (its earlier Manual address, else Automatic/DHCP) and the answer is
+    /// [`IpApplied::RolledBack`]. `wait` sleeps between the checks.
     pub fn set_ipv4_with(
         &self,
         iface: &str,
@@ -71,6 +72,7 @@ impl Controls {
             return Err(ControlError::Invalid);
         }
         let uuid = self.link_uuid(iface).ok_or(ControlError::Unavailable)?;
+        let previous = self.ipv4(iface).unwrap_or_default();
         let before = netconf::reach(
             self.host
                 .run(&netinfo::CONNECTIVITY_ARGV)
@@ -97,14 +99,13 @@ impl Controls {
                 }
             }
         }
-        // Back to Automatic: the address that was typed cut this computer off.
-        self.exec(
-            &netconf::ipv4_modify_argv(&uuid, &Ipv4Config::default()),
-            "",
-        )
-        .and_then(|_| self.exec(&netconf::up_uuid_argv(&uuid), ""))
-        .map(|_| IpApplied::RolledBack)
-        .map_err(|_| ControlError::Failed)
+        // Back to what it was: the address that was typed cut this computer off. A link that
+        // had a working Manual address (a network with no DHCP server) gets that one back, not
+        // Automatic, which would leave it offline (QA-A7-6).
+        self.exec(&netconf::ipv4_modify_argv(&uuid, &previous), "")
+            .and_then(|_| self.exec(&netconf::up_uuid_argv(&uuid), ""))
+            .map(|_| IpApplied::RolledBack)
+            .map_err(|_| ControlError::Failed)
     }
 
     /// `iface` is connected and reaches at least as far as `before` ([`netconf::reach`]).
@@ -505,6 +506,33 @@ mod tests {
         assert_eq!(log.len(), 4, "{log:?}");
         assert!(log[2].contains("ipv4.method auto"), "{log:?}");
         assert_eq!(log[3], format!("nmcli connection up uuid {U}"));
+    }
+
+    /// QA-A7-6: a link that already had a working Manual address (no DHCP server on that
+    /// network) goes back to THAT address when the edited one cuts it off, not to Automatic.
+    #[test]
+    fn static_ip_rolls_back_to_the_earlier_manual_address() {
+        let h = Arc::new(FakeHost::linux());
+        link(&h);
+        h.command(
+            &format!("nmcli -t -f ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns connection show uuid {U}"),
+            "ipv4.method:manual\nipv4.addresses:192.168.1.20/24\nipv4.gateway:192.168.1.1\nipv4.dns:192.168.1.1\n",
+        )
+        .command(
+            "nmcli -g GENERAL.STATE device show enp0s1",
+            "100 (connected)\n",
+        )
+        .command("nmcli networking connectivity check", "limited\n");
+        let (c, log) = ctl(h, vec![]);
+        let r = c.set_ipv4_with("enp0s1", &manual(), &|_| ());
+        assert_eq!(r, Ok(IpApplied::RolledBack));
+        let log = log.lock().unwrap();
+        assert!(
+            log[2].contains(
+                "ipv4.method manual ipv4.addresses 192.168.1.20/24 ipv4.gateway 192.168.1.1 ipv4.dns 192.168.1.1"
+            ),
+            "{log:?}"
+        );
     }
 
     /// The profile does not come up with the new address: undone at once.

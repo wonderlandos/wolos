@@ -70,11 +70,11 @@ Standard keys are read first (`MimeType`, `Actions`, `x-scheme-handler/*`); a Wo
 - Spell check (S14): `enchant` is the engine of the text libraries the stock apps use; `hunspell` and one dictionary package per language of `wol_core::region::LANGUAGES` that has a word list (Japanese and Chinese have none). Portuguese is not in the distribution's repository: `wolos-spell-pt` packs the Brazilian and Portuguese lists of the LibreOffice dictionaries project (LGPL-3.0-only or MPL-2.0).
 - The PDF tools (`pdftocairo`, `pdftotext`, `pdftoppm`) come with the `poppler` package the document viewer already needs; no second PDF library is added.
 - Screen reader (S18): `orca`, `speech-dispatcher` and `espeak-ng`.
-- Photos is Gallery: the Dock pin, and the default for PNG and JPEG (`mimeapps.list`); the image viewer stays for the types Gallery does not open.
+- Photos is Gallery: the Dock pin, and the default for PNG and JPEG (`mimeapps.list`); the image viewer (`org.gnome.eog.desktop`) stays on the image and opens the types Gallery does not (GIF, WebP and SVG), with the browser (`atlas.desktop`) as the second choice (`mimeapps.list`).
 
-## Image budget
+## Image size
 
-The image has 21 MiB of room under the release asset limit. Sizes below are compressed package sizes, the dependency closure of the whole image list against the closure with the addition, on the 2026-11-02 package archive (mem 866 sets the room).
+The image has no size limit: no app leaves it for a size budget the lead did not set (ISO-GATE, lead 2026-11-04). `build.sh` prints the ISO's size and never fails on it. An ISO of 2 GiB or more cannot be a GitHub release asset, so it is published on the CDN (`https://cdn.wolos.org/v<version>/<iso>`, the `image` of `release.json`) and the GitHub release links it. Sizes below are compressed package sizes, the dependency closure of the whole image list against the closure with the addition, on the 2026-11-02 package archive; they are information, not a cap.
 
 | Addition | Compressed | Installed |
 |---|---|---|
@@ -85,12 +85,8 @@ The image has 21 MiB of room under the release asset limit. Sizes below are comp
 | wolos-app-gallery with libwolkit and libwol | about 6 MiB | about 20 MiB |
 | poppler tools, enchant, libspelling | 0 (already in the image) | 0 |
 | **Added** | **about 37 MiB** | **about 190 MiB** |
-| glmark2, vkmark, assimp (dropped; mesa-utils stays) | -10.8 MiB | -25 MiB |
-| shotwell (dropped; it is in the Store, Gallery is Photos) | -3.3 MiB | -15 MiB |
-| eog (dropped; it is in the Store; GIF, WebP and SVG open in the browser until Gallery decodes them) | -3.5 MiB | -10 MiB |
-| **Net with the three drops** | **about +19.4 MiB, about 1.6 MiB under the room** | |
 | gnote (when Notes ships) | -7.6 MiB | -40 MiB |
 
-Camera and phone import needs Shotwell from the Store until Gallery has it. The ISO size gate in `build.sh` stays at 2047 MiB, one MiB under GitHub's 2 GiB limit for one release asset.
+glmark2, vkmark (with assimp), eog and Shotwell stay where they were: the two benchmarks (the GPU proof script), the image viewer (the fallback viewer, and the default for GIF, WebP and SVG) and, until Gallery has camera and phone import, Shotwell in the Store. Shotwell is not on the image: Gallery is the Photos app.
 
 Not added, and why: `mupdf-tools` pulls a second PDF library and a text-recognition engine (39 MiB compressed) for tools `poppler` already has.

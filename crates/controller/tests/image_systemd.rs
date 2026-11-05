@@ -1110,7 +1110,7 @@ const LIVE_MARK: &str = "ConditionPathExists=!/etc/wolos-live";
 
 /// Units 50-wolos.preset enables that may run on the live medium: (unit, the condition in the
 /// unit that keeps it off there, or "" when running there is right, reason).
-const LIVE_SAFE: [(&str, &str, &str); 21] = [
+const LIVE_SAFE: [(&str, &str, &str); 22] = [
     (
         "wold.service",
         "",

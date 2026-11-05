@@ -108,6 +108,8 @@ pub fn parse_playerctl(text: &str) -> Option<Media> {
         player: get(6)
             .split(".instance")
             .next()
+            // A player an app published through libwol is `wol.<program>`: its icon is the program's.
+            .map(|p| p.strip_prefix("wol.").unwrap_or(p))
             .filter(|p| !p.is_empty())
             .map(String::from),
     })
@@ -441,6 +443,8 @@ mod tests {
         for (tail, want) in [
             ("\tspotify", Some("spotify")),
             ("\tchromium.instance4321", Some("chromium")),
+            ("\twol.toy.instance77", Some("toy")),
+            ("\twol.", None),
             ("\t", None),
             ("", None),
         ] {

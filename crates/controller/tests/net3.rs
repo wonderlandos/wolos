@@ -207,3 +207,28 @@ fn shipped_resolved_dropin_leaves_dns_over_tls_to_settings() {
         "an /etc drop-in"
     );
 }
+
+/// QA-A7-13: the folder the airplane list lives in is made by tmpfiles.d, open to every account,
+/// and is the one the code names.
+#[test]
+fn the_airplane_list_folder_is_made_for_every_account() {
+    let t = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../files/usr/lib/tmpfiles.d/wolos.conf"),
+    )
+    .unwrap();
+    let want = [
+        "d",
+        wol_core::netconf::AIRPLANE_SHARED_DIR,
+        "0777",
+        "root",
+        "root",
+        "-",
+    ];
+    assert!(
+        t.lines()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>() == want),
+        "tmpfiles.d/wolos.conf lacks `{}`",
+        want.join(" ")
+    );
+}

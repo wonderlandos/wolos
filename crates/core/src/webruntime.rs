@@ -3,7 +3,7 @@
 //! are the flag rows of the per-app policy in `webpolicy`, docs/modules/webapps.md). One
 //! profile per user, Balanced (default), Light or Full, decides the switches the session writes for
 //! each role: pacman desktop apps on the shared engine (`electron-flags.conf`), the code editor
-//! (`code-flags.conf`) and the browser (`helium-flags.conf` plus its system policy file).
+//! (`code-flags.conf`) and the browser (`atlas-flags.conf` plus its system policy file).
 //!
 //! Invariant: a switch or policy reaches a file only from a row in [`ROWS`] whose status is
 //! [`Status::Baseline`] or [`Status::Measured`]; every [`Status::Candidate`] row stays in the table,
@@ -66,7 +66,7 @@ impl Role {
         match self {
             Role::App => "electron-flags.conf",
             Role::Editor => "code-flags.conf",
-            Role::Browser => "helium-flags.conf",
+            Role::Browser => "atlas-flags.conf",
         }
     }
 }

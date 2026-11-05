@@ -250,12 +250,6 @@ describe "the virtual table and tree" do
 end
 
 describe "the form controls' helpers" do
-  it "breaks a line at the caret, replacing the selection" do
-    Wolkit::Kit::TextArea.newline("ab", 1, 1).should eq "a\nb"
-    Wolkit::Kit::TextArea.newline("abcd", 3, 1).should eq "a\nd"
-    Wolkit::Kit::TextArea.newline("ab", 9, 9).should eq "ab\n"
-  end
-
   it "suggests prefix matches first" do
     options = ["Oslo", "Lisbon", "Bologna", "Osaka", "oslo"]
     Wolkit::Kit::Combo.matches(options, "os", 8).should eq ["Oslo", "Osaka", "oslo"]

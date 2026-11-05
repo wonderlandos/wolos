@@ -81,7 +81,7 @@ that subnet, DNS servers that are IP addresses.
 
 A Manual address then gets a 15-second trial: once a second the link must be connected (device state
 100) and reach at least as far as before (`nmcli networking connectivity check`: full before and none
-after is lost). When it does not, the profile goes back to Automatic (DHCP) by itself and Settings says
+after is lost). When it does not, the profile goes back to what it was (its earlier Manual address, else Automatic) by itself and Settings says
 so; `wol network ip` exits non-zero. Only IPv4 is typed in; IPv6 stays automatic.
 
 ## VPN
@@ -128,7 +128,8 @@ through resolved (see "Names and the firewall" below), the setting applies to ev
 
 Control Center's Airplane Mode tile (first in the grid on a computer with a radio), Settings > Network >
 Airplane Mode and `wol airplane on|off`: on remembers which radio types were on
-(`$XDG_STATE_HOME/wolos/airplane`, one rfkill type per line; kept when it was on already) and runs
+(`/var/lib/wolos/airplane/radios`, the computer's list that every account shares, one rfkill type per
+line; kept when it was on already; without that folder, `$XDG_STATE_HOME/wolos/airplane`) and runs
 `rfkill block all` (Wi-Fi, Bluetooth, mobile broadband); off unblocks only those types (every type
 without the list) and removes the list. Airplane mode reads as on while the list exists and a radio is
 still blocked, so `rfkill unblock all` in a terminal ends it. The menu bar shows the plane

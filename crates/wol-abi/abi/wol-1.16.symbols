@@ -1,0 +1,12 @@
+# libwol 1.16 exports (WOL_1.16). Never edit a shipped line.
+wol_color_pick@WOL_1.16
+wol_media_publish@WOL_1.16
+wol_media_release@WOL_1.16
+wol_media_retain@WOL_1.16
+wol_media_set_art@WOL_1.16
+wol_media_set_capabilities@WOL_1.16
+wol_media_set_handler@WOL_1.16
+wol_media_set_state@WOL_1.16
+wol_media_set_track@WOL_1.16
+wol_print_file@WOL_1.16
+wol_recent_add@WOL_1.16

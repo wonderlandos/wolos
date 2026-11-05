@@ -160,4 +160,25 @@ LibWol.wol_string_release(text)
 ok LibWol.wol_open_with(ctx, pic, pic.bytesize, pointerof(text), pointerof(err))
 puts "open with: #{str(text)}"
 LibWol.wol_string_release(text)
+player = Pointer(LibWol::Media).null
+song = "Song"
+band = "Band"
+ok LibWol.wol_media_publish(ctx, pointerof(player), pointerof(err))
+ok LibWol.wol_media_set_handler(player, ->(_m : LibWol::Media*, _k : LibWol::MediaKey, _s : Float64, _d : Void*) { }, nil, pointerof(err))
+ok LibWol.wol_media_set_track(player, song, song.bytesize, band, band.bytesize, "", 0, 215.5, pointerof(err))
+ok LibWol.wol_media_set_art(player, pic, pic.bytesize, pointerof(err))
+ok LibWol.wol_media_set_capabilities(player, LibWol::WOL_MEDIA_CAN_NEXT | LibWol::WOL_MEDIA_CAN_SEEK, pointerof(err))
+ok LibWol.wol_media_set_state(player, LibWol::WOL_MEDIA_PLAYING, 12.5, pointerof(err))
+LibWol.wol_media_release(LibWol.wol_media_retain(player))
+LibWol.wol_media_release(player)
+puts "player: published"
+ok LibWol.wol_recent_add(ctx, pic, pic.bytesize, pointerof(err))
+puts "recent: added"
+rgb = 0_u32
+picked = 0
+ok LibWol.wol_color_pick(ctx, pointerof(rgb), pointerof(picked), pointerof(err))
+puts "color: #{rgb} #{picked}"
+ok LibWol.wol_print_file(ctx, pic, pic.bytesize, pointerof(text), pointerof(err))
+puts "print: #{str(text)}"
+LibWol.wol_string_release(text)
 LibWol.wol_context_release(ctx)

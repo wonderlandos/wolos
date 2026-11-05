@@ -9,7 +9,7 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Dock / role | Package | App-id (compositor window class, `apps::PINS` id) |
 |---|---|---|
 | Files, Trash (`nautilus trash:///`) | nautilus | `org.gnome.Nautilus` |
-| Browser | helium-browser (`wol_core::theme::helium::HELIUM.bin`) | `helium` |
+| Browser | atlas-browser (`wol_core::browser::ATLAS.bin`) | `atlas` |
 | Mail | geary | `org.gnome.Geary` |
 | Music | amberol | `io.bassi.Amberol` |
 | Photos | wolos-app-gallery (Gallery; Shotwell is in the Store) | `org.wolos.gallery` |
@@ -19,7 +19,7 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | App Store, System Settings | wolos-shell | `org.wolos.store`, `org.wolos.settings` |
 
 Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor, Image Viewer (eog) from their `.desktop` files; a pinned app appears once, under its WolOS name.
-Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins); the web opens in Helium (`helium.desktop`).
+Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins); the web opens in Atlas (`atlas.desktop`). Pictures: PNG and JPEG open in Gallery; GIF, WebP and SVG in the image viewer (`eog`, on the image), then the browser. The image has no size limit, so no app is dropped for room (ISO-GATE).
 
 ## System
 

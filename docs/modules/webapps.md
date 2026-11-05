@@ -28,7 +28,7 @@ while the whole file has the `sha256` it was written for and the bytes at `offse
 anything else is refused and the file stays as packaged.
 
 Shipped role policies: `electron.json` (desktop apps from pacman on the shared engine), `code.json`
-(the code editor), `helium.json` (the browser). None ships a patch yet: a patch needs the hash of
+(the code editor), `atlas.json` (the browser). None ships a patch yet: a patch needs the hash of
 the exact packaged file and a measured gain.
 
 ### How track 1 applies it
@@ -66,8 +66,8 @@ start. Full adds no caps and no throttling; Light never rasterises on the GPU.
   `WOL_REGEN=1 cargo test -p core --lib -- webruntime:: webpolicy::`.
 - Rows: platform hint (Baseline); heap caps per role and profile; wakeup throttling and timer
   alignment; browser policies for background-tab throttling and tab discard (machine-wide, one
-  value for every profile; only the rows `helium.json` allows are merged into the browser's
-  managed policy file by `theme::helium`);
+  value for every profile; only the rows `atlas.json` allows are merged into the browser's
+  managed policy file by `browser::policies`);
   GPU rasterisation and zero-copy upload (GPU tier only).
 - File rules, tested: the engine keeps only the last occurrence of a switch, so list switches are
   merged; launchers read the files line by line or word-split, so every line is one word; the
@@ -77,7 +77,7 @@ start. Full adds no caps and no throttling; Light never rasterises on the GPU.
 - Linking: wol-session picks the GPU tier (a render node, not a VM adapter the compositor
   rejects, and `wol hw compute` naming a backend other than `cpu`) and runs
   `/usr/share/wolos/webruntime/link.sh`, which links each of `electron-flags.conf`,
-  `code-flags.conf` and `helium-flags.conf` in the config home that is missing or already a link
+  `code-flags.conf` and `atlas-flags.conf` in the config home that is missing or already a link
   into `/usr/share/wolos`. A file of your own is never touched.
 
 ## Memory Saver
@@ -115,6 +115,16 @@ Checks: `cargo test -p webengine --test webapps` validates every manifest and pe
 mock's catalog copy, the fixtures, the tokens and the strings tables; with
 `CHROME=<headless browser>` it also runs `webapps/hello` in development mode and saves light and
 dark screenshots to `WOLKIT_SHOTS`.
+
+The kit's elements are tested without a browser: `webapps/kit/test/elements.test.mjs` runs the
+eleven elements of `wolkit.js` (what each builds, what its attributes, keys and clicks do, what it
+announces) on `design/tools/dom-stub.mjs`, a DOM made for this (no dependency): elements, text,
+attributes, selectors, bubbling events, the custom-element lifecycle, focus, `<dialog>`, hash
+navigation, `dom.key`, `dom.type` and `dom.click` with the default actions that matter. It has no
+layout, no style cascade and no shadow DOM; `dom-stub.test.mjs` holds it to the browser behaviour the
+kit tests lean on. Run them with `node --test webapps/kit/test/*.test.mjs` (a directory argument
+fails on Node 22, so name the files or use the glob); `cargo test -p webengine --test kit_js` runs
+every `webapps/<app>/test/*.test.mjs` the same way.
 
 ## Not verified
 

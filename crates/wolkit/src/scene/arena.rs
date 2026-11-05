@@ -3,6 +3,7 @@
 //! is a column here; nothing is boxed per node. Applying a patch (`apply.rs`) is the only way an
 //! app changes it; the pipeline stages write back only what they computed ([`SceneWrite`]).
 
+use super::editview::MAX_EDIT_VIEWS;
 use super::ids::{Idx, MAX_NODES, NIL, NodeId};
 use super::kind::{Kind, dirty, state};
 use super::patch::{MAX_CLASSES, PropValue};
@@ -64,6 +65,8 @@ pub struct Scene {
     pub(crate) version: u64,
     pub(crate) anims: Vec<AnimReq>,
     pub(crate) last_seq: u32,
+    /// The text fields paint draws a caret, selection or scroll for (see `editview`).
+    pub(crate) edit: Vec<super::editview::EditView>,
 }
 
 impl Default for Scene {
@@ -113,6 +116,7 @@ impl Scene {
             version: 0,
             anims: Vec::new(),
             last_seq: 0,
+            edit: Vec::new(),
         };
         s.ensure(0);
         s.live[0] = true;
@@ -170,6 +174,56 @@ impl Scene {
     /// Sequence number of the last patch applied (echoed in events).
     pub fn last_seq(&self) -> u32 {
         self.last_seq
+    }
+
+    /// Sets what paint draws for a text field (the input layer calls this after every edit, move,
+    /// scroll or focus change) and, when it differs from what was there, bumps the scene version
+    /// so a cached chunk is redrawn. Returns whether it changed. A few fields keep a view (the
+    /// focused one and recently scrolled ones); the oldest view that is not active is dropped
+    /// past [`MAX_EDIT_VIEWS`].
+    pub fn set_edit_view(&mut self, v: super::editview::EditView) -> bool {
+        let node = v.node;
+        // A view of a node that is gone, or of a slot reused since, means nothing.
+        if !self.is_live(node) || self.id(node) != v.id {
+            return false;
+        }
+        // Views of other nodes that are gone or reused are dropped.
+        let live: Vec<bool> = self
+            .edit
+            .iter()
+            .map(|e| self.is_live(e.node) && NodeId::new(e.node, self.gen_[e.node.ix()]) == e.id)
+            .collect();
+        let mut i = 0;
+        self.edit.retain(|_| {
+            i += 1;
+            live[i - 1]
+        });
+        match self.edit.iter().position(|e| e.node == node) {
+            Some(at) if self.edit[at] == v => return false,
+            Some(at) => self.edit[at] = v,
+            None => {
+                if self.edit.len() >= MAX_EDIT_VIEWS
+                    && let Some(old) = self.edit.iter().position(|e| !e.active)
+                {
+                    self.edit.remove(old);
+                }
+                self.edit.push(v);
+            }
+        }
+        self.mark(node, dirty::PAINT);
+        self.version += 1;
+        true
+    }
+
+    /// Forgets the view of the field `id` (it lost its focus and has no scroll worth keeping). A
+    /// view of another node in the same slot is left alone.
+    pub fn clear_edit_view(&mut self, id: NodeId) {
+        let node = id.slot();
+        if let Some(at) = self.edit.iter().position(|e| e.node == node && e.id == id) {
+            self.edit.remove(at);
+            self.mark(node, dirty::PAINT);
+            self.version += 1;
+        }
     }
 
     /// Release spare memory (Memory Saver): compact text, shrink columns past the live slots.
@@ -635,6 +689,10 @@ impl SceneRead for Scene {
     }
     fn string(&self, id: u32) -> &str {
         self.strings.get(id)
+    }
+    fn edit_view(&self, i: Idx) -> Option<&super::editview::EditView> {
+        let id = self.id(i);
+        self.edit.iter().find(|e| e.node == i && e.id == id)
     }
 }
 

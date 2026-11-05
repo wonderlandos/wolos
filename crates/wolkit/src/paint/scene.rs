@@ -10,12 +10,13 @@ use crate::num::sat_u8;
 use crate::paint::geom::Rect;
 use crate::paint::list::{DisplayList, Fill, Radii, Shadow};
 use crate::paint::palette::Palette;
-use crate::paint::text::push_layout;
+use crate::paint::text::{push_layout, push_selection};
 use crate::scene::prop::id;
 use crate::scene::{Idx, Kind, MAX_DEPTH, NIL, SceneRead, state};
 use crate::style::Styles;
 use crate::style::tokens::Token;
-use crate::style::value::{ColorRef, Display, Overflow, Paint, Props, Visibility};
+use crate::style::value::{ColorRef, Display, Overflow, Paint, Props, Visibility, WhiteSpace};
+use crate::text::area::caret_pos;
 use crate::text::measure::TextCache;
 use crate::text::system::TextSystem;
 
@@ -434,10 +435,37 @@ fn text<S: SceneRead + ?Sized>(
     st: &Props,
     r: Rect,
 ) {
-    let Some((s, color)) = label(cx.scene, n, kind, st) else {
-        return;
+    // A text field the input layer has a view of: while it is being edited it draws the text with
+    // the input method's preedit in it, the selection and the caret; scrolled, it draws shifted.
+    let view = (kind == Kind::TextInput)
+        .then(|| cx.scene.edit_view(n))
+        .flatten();
+    // A view whose text the app has since replaced is stale: the node's own text wins.
+    let active = view.filter(|v| v.active && v.base == cx.scene.text(n));
+    let (mut s, mut color) = match label(cx.scene, n, kind, st) {
+        Some(l) => l,
+        None if active.is_some() => ("".into(), st.text.color),
+        None => return,
     };
-    if s.is_empty() {
+    let secure =
+        kind == Kind::TextInput && cx.scene.prop(n, id::SECURE).is_some_and(|v| v.w[0] == 1);
+    // What byte offsets of the view mean in the string that is drawn (a secure field draws one
+    // bullet, three bytes, per character).
+    let mut map: Box<dyn Fn(usize) -> usize> = Box::new(|i| i);
+    if let Some(v) = active
+        && !v.text.is_empty()
+    {
+        color = st.text.color;
+        if secure {
+            let t = v.text.clone();
+            s = "\u{2022}".repeat(t.chars().count()).into();
+            map = Box::new(move |i| t[..i.min(t.len())].chars().count() * 3);
+        } else {
+            s = v.text.as_str().into();
+        }
+    }
+    let editing_empty = active.is_some_and(|v| v.text.is_empty());
+    if s.is_empty() && !editing_empty {
         return;
     }
     let bw = st.layout.border_width;
@@ -449,31 +477,72 @@ fn text<S: SceneRead + ?Sized>(
         (r.h - pt - pb - 2.0 * bw).max(0.0),
     );
     // Half a pixel of slack: the measure rounded the width up, rounding must not rewrap.
-    let one_line = kind == Kind::TextInput;
+    // A text field is one line unless its white space is `pre-wrap`: then it is a text area.
+    let area = kind == Kind::TextInput && st.text.white_space == WhiteSpace::PreWrap;
+    let one_line = kind == Kind::TextInput && !area;
     let max_w = (!one_line).then_some(content.w + 0.5);
     let layout = cx.cache.layout(cx.text, &s, &st.text, max_w);
     // Controls centre their label; text sits at the top of its box.
-    let centred = matches!(kind, Kind::Button | Kind::TextInput);
+    let centred = matches!(kind, Kind::Button) || one_line;
     let dy = if centred {
         ((content.h - layout.height) / 2.0).max(0.0)
     } else {
         0.0
     };
+    // The scroll of a view made for other text means nothing now (the app replaced the text, as a
+    // chat box does after Send), and a scroll past the end of this layout is brought back to it.
+    let scroll = view
+        .filter(|v| v.base == cx.scene.text(n))
+        .map_or((0.0, 0.0), |v| {
+            crate::text::area::clamp_scroll(
+                v.scroll,
+                (layout.width + 1.0, layout.height),
+                (content.w, content.h),
+            )
+        });
+    let (ox, oy) = (content.x - scroll.0, content.y + dy - scroll.1);
     let overflows = layout.width > content.w + 0.5 || layout.height > content.h + 0.5;
-    if overflows || one_line {
+    let clipped = overflows || kind == Kind::TextInput;
+    if clipped {
         list.push_clip(content, 0.0);
     }
-    push_layout(
-        list,
-        &layout,
-        content.x,
-        content.y + dy,
-        cx.palette.resolve(color),
-    );
-    if overflows || one_line {
+    if let Some(v) = active {
+        let sel = map(v.selection.start)..map(v.selection.end);
+        let accent = cx
+            .palette
+            .token(Token::Accent)
+            .with_opacity(SELECTION_ALPHA);
+        push_selection(list, &layout.selection_rects(sel), ox, oy, accent);
+    }
+    push_layout(list, &layout, ox, oy, cx.palette.resolve(color));
+    if let Some(v) = active {
+        let ink = cx.palette.resolve(st.text.color);
+        // The preedit is underlined: it is not text yet.
+        if let Some(p) = &v.preedit {
+            for u in layout.selection_rects(map(p.start)..map(p.end)) {
+                list.solid(
+                    Rect::new(u.x, u.y + u.h - 1.0, u.w, 1.0).translate(ox, oy),
+                    ink,
+                );
+            }
+        }
+        if v.selection.is_empty() {
+            let c = caret_pos(&layout, &s, map(v.caret));
+            list.solid(
+                Rect::new(c.x.round(), c.top, CARET_WIDTH, c.height).translate(ox, oy),
+                ink,
+            );
+        }
+    }
+    if clipped {
         list.pop_clip();
     }
 }
+
+/// The selection is the accent colour at this opacity (of 255).
+pub const SELECTION_ALPHA: u8 = 96;
+/// The caret is a bar this wide, in logical pixels.
+pub const CARET_WIDTH: f32 = 1.0;
 
 /// The focus ring (`outline`) of a node that has keyboard focus, outside its border box.
 fn focus_ring<S: SceneRead + ?Sized>(

@@ -402,7 +402,7 @@ fn theme_set_writes_every_toolkit() {
             .any(|a| a.len() == 5 && a[3] == "gtk-theme" && a[4] == "WolOS-retro-82-gtk3"),
         "a new GTK 3 theme name per WolOS theme: running GTK 3 apps reload"
     );
-    // Helium (Chromium GTK mode) reads exactly these: GTK 3 theme, portal accent and scheme.
+    // Atlas (GTK mode) reads exactly these: GTK 3 theme, portal accent and scheme.
     for (k, v) in [
         ("accent-color", "orange"),
         ("color-scheme", "prefer-dark"),

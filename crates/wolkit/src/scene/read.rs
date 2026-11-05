@@ -97,6 +97,11 @@ pub trait SceneRead {
     fn node_count(&self) -> usize;
     /// The text behind a string id (a `Str` property holds one).
     fn string(&self, id: u32) -> &str;
+    /// How paint draws the text field `i` (caret, selection, preedit, scroll), if the input layer
+    /// has a view of it. Scenes without an editor have none.
+    fn edit_view(&self, _i: Idx) -> Option<&super::editview::EditView> {
+        None
+    }
 }
 
 /// What a stage may change.

@@ -992,6 +992,16 @@ fn undo(env: &mut dyn Env, id: Option<&str>, json: bool, yes: bool) -> i32 {
     if r.hyprland {
         let _ = env.capture(&["hyprctl", "reload"]);
     }
+    if let Some(on) = r.larger_text {
+        // The text scale is a gsettings value; the journal restored its record file (QA-A7-11).
+        let _ = env.capture(&[
+            "gsettings",
+            "set",
+            "org.gnome.desktop.interface",
+            "text-scaling-factor",
+            if on { "1.25" } else { "1.0" },
+        ]);
+    }
     let v = json!({"undid": e.undoes, "what": e.what, "change": e.id});
     if json {
         emit_json(env, &v);

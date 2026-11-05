@@ -42,6 +42,7 @@ module Wolkit
 
   module Services
     @@context : Wol::Context? = nil
+    @@keys : Fiber? = nil
 
     # The app's libwol context, opened on first use. Opening needs no running service.
     def self.context : Wol::Context
@@ -52,6 +53,7 @@ module Wolkit
     def self.close : Nil
       @@context.try &.close
       @@context = nil
+      @@keys = nil
     end
 
     # Show a notification. Returns nil, or the sentence to show when it was refused.
@@ -94,6 +96,67 @@ module Wolkit
       spawn(name: "wolkit-share") do
         outcome = begin
           Outcome(String).new(value: Wol.background(app_id) { |ctx| Wol::Share.text(ctx, title, text) })
+        rescue ex : Wol::Error
+          Outcome(String).new(notice: ex.message)
+        end
+        finish(block, outcome)
+      end
+    end
+
+    # Publish a player for the media keys, Control Center and `playerctl` (grant: media). The block
+    # gets each remote control on the UI context. Returns the player to describe what plays
+    # (`track`, `state`, `can=`; see `Wol::Player`), or the sentence to show when it was refused.
+    #
+    # ```
+    # outcome = Wolkit::Services.publish_media do |player, key, by|
+    #   queue.press(key, by)
+    #   player.state(queue.playing? ? :playing : :paused, queue.position)
+    # end
+    # outcome.value.try &.track("Song", artist: "Band")
+    # ```
+    def self.publish_media(&block : Wol::Player, Wol::Player::Key, Time::Span ->) : Outcome(Wol::Player)
+      ctx = context
+      player = Wol::Media.publish(ctx) do |p, key, by|
+        Wolkit.batch { Wolkit.guard { block.call(p, key, by) } }
+        Frame.request
+      end
+      # The keys arrive inside dispatch of this context: run it in its own fiber, once.
+      @@keys ||= spawn(name: "wolkit-media-keys") { Wol::Loop.run(ctx) }
+      Outcome(Wol::Player).new(value: player)
+    rescue ex : Wol::Error
+      Outcome(Wol::Player).new(notice: ex.message)
+    end
+
+    # Add the file at `path` (a full path) to the person's recent files, as this app (grant:
+    # recents). Returns nil, or the sentence to show when it was refused.
+    def self.recent(path : String) : String?
+      Wol::Recents.add(context, path)
+      nil
+    rescue ex : Wol::Error
+      ex.message
+    end
+
+    # Let the person click a colour on the screen (grant: color-picker). The block gets it as
+    # 0xRRGGBB, or no value and no notice when they cancelled.
+    def self.pick_color(&block : Outcome(UInt32) ->) : Nil
+      app_id = Wolkit.default_app_id
+      spawn(name: "wolkit-color") do
+        outcome = begin
+          Outcome(UInt32).new(value: Wol.background(app_id) { |ctx| Wol::Colors.pick(ctx) })
+        rescue ex : Wol::Error
+          Outcome(UInt32).new(notice: ex.message)
+        end
+        finish(block, outcome)
+      end
+    end
+
+    # Open the print dialog for the file at `path` (grant: print); the block gets "printed" or
+    # "cancelled".
+    def self.print_file(path : String, &block : Outcome(String) ->) : Nil
+      app_id = Wolkit.default_app_id
+      spawn(name: "wolkit-print") do
+        outcome = begin
+          Outcome(String).new(value: Wol.background(app_id) { |ctx| Wol::Print.file(ctx, path) })
         rescue ex : Wol::Error
           Outcome(String).new(notice: ex.message)
         end

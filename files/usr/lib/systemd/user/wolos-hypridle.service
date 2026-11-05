@@ -10,6 +10,8 @@ StartLimitIntervalSec=0
 ConditionPathExists=!/etc/wolos-live
 
 [Service]
+# oomd ranks every descendant of user@.service: the session cannot lose this one (QA-A7-12).
+ManagedOOMPreference=omit
 ExecStart=/usr/lib/wolos/hypridle-run
 Restart=on-failure
 RestartSec=2

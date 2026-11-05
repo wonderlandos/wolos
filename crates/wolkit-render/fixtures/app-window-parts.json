@@ -1,0 +1,38 @@
+{
+  "type": "stack",
+  "spacing": 16,
+  "children": [
+    {
+      "type": "row",
+      "spacing": 12,
+      "children": [
+        { "type": "image", "source": "weather-clear-symbolic", "size": 32 },
+        {
+          "type": "stack",
+          "spacing": 0,
+          "children": [
+            { "type": "label", "text": "Sunny", "role": "title" },
+            { "type": "label", "text": "Lisbon, 21°", "role": "secondary" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "list",
+      "children": [
+        { "type": "text-field", "id": 1, "text": "Ada", "placeholder": "Name" },
+        { "type": "toggle", "id": 2, "on": true, "label": "Wi-Fi" },
+        { "type": "slider", "id": 3, "value": 50.0, "min": 0.0, "max": 100.0 }
+      ]
+    },
+    {
+      "type": "row",
+      "spacing": 8,
+      "children": [
+        { "type": "spacer" },
+        { "type": "button", "id": 4, "label": "Cancel" },
+        { "type": "button", "id": 5, "label": "Save" }
+      ]
+    }
+  ]
+}

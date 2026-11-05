@@ -518,6 +518,12 @@ pub const TREE: &[Cmd] = &[
         "Installer: language, keyboard and time zone of the new system (root)",
     ),
     cmd(
+        &["install", "locales"],
+        "install.locales",
+        &[opt("root")],
+        "Installer: generate every language of the new system, no plan needed (root)",
+    ),
+    cmd(
         &["install", "account"],
         "install.account",
         &[opt("plan"), opt("root"), opt("passfile")],

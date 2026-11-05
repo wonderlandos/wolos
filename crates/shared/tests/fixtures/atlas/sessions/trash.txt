@@ -1,0 +1,18 @@
+# Move to Trash: a file, a folder (another drive's Trash took it), then the desktop refuses.
+file report.pdf
+dir photos
+file home-like
+wold file.trash {"ok":true,"data":{"name":"report.pdf"}}
+wold file.trash {"ok":true,"data":{}}
+wold file.trash {"ok":false,"code":"invalid-argument","message":"The home folder cannot go to the Trash."}
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"hello","version":1}
+> {"op":"trash","id":1,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":1,"outcome":"trashed"}
+> {"op":"trash","id":2,"path":"@DIR/photos"}
+< {"reply":"ok","id":2,"outcome":"trashed"}
+> {"op":"trash","id":3,"path":"@DIR/home-like"}
+< {"reply":"error","id":3,"code":"failed","text":"This item cannot be moved to the Trash."}
+asked {"call":"file.trash","path":"@DIR/report.pdf"}
+asked {"call":"file.trash","path":"@DIR/photos"}
+asked {"call":"file.trash","path":"@DIR/home-like"}

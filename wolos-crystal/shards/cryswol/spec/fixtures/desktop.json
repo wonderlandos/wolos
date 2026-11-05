@@ -1,0 +1,17 @@
+{
+  "app": "org.example.docs",
+  "answers": {
+    "recent.add": [{"ok": true}, {"ok": false, "code": "unavailable", "message": "That file cannot be added to the recent files."}],
+    "color.pick": [
+      {"ok": true, "data": {"color": "#0a1b2c"}},
+      {"ok": true, "data": {"cancelled": true}},
+      {"ok": false, "code": "unavailable", "message": "Picking a color is not available on this computer."}
+    ],
+    "print.file": [
+      {"ok": true, "data": {"done": "printed"}},
+      {"ok": true, "data": {"done": "cancelled"}},
+      {"ok": false, "code": "permission-denied", "message": "Docs is not allowed to print files. Allow it in System Settings > Privacy & Security."}
+    ]
+  },
+  "events": []
+}

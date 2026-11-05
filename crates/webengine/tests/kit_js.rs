@@ -4,6 +4,10 @@
 //! `cargo test -p webengine` that tests its Rust end. Without node the test says so and passes
 //! unless `WOL_NODE_REQUIRED` is set (CI and the forge set it). The browser test of an app
 //! (`webapps/doctor/test/doctor.test.mjs`) needs `CHROME` and is run by hand.
+//!
+//! The files are named one by one: Node 22 reads a directory argument (`node --test webapps/kit/test`)
+//! as a module to run and fails, only a file or a glob works (`node --test webapps/kit/test/*.test.mjs`,
+//! GAP-TABLE M10). The kit's DOM for these tests is `design/tools/dom-stub.mjs` (DS-WEB-1).
 use std::path::Path;
 use std::process::Command;
 
@@ -50,5 +54,24 @@ fn the_kit_javascript_tests_pass_under_node() {
         "{}\n{}",
         String::from_utf8_lossy(&o.stdout),
         String::from_utf8_lossy(&o.stderr)
+    );
+}
+
+/// The runner names files, never a directory (Node 22 fails on a directory), and the element tests
+/// and the DOM stub's own tests are among them, so they cannot be left out by a rename.
+#[test]
+fn the_runner_names_the_element_tests_and_never_a_directory() {
+    let files = kit_tests();
+    for want in ["elements.test.mjs", "dom-stub.test.mjs", "bridge.test.mjs"] {
+        assert!(
+            files
+                .iter()
+                .any(|f| f.ends_with(&format!("webapps/kit/test/{want}"))),
+            "{want} not run: {files:?}"
+        );
+    }
+    assert!(
+        files.iter().all(|f| f.ends_with(".test.mjs")),
+        "a runner argument that is not a test file: {files:?}"
     );
 }

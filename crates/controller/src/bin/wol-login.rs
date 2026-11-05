@@ -745,6 +745,7 @@ fn run_session(
     spawned: impl FnOnce(),
 ) -> Option<(Option<i32>, Option<i32>)> {
     make_runtime_dir(user);
+    record_layout(user);
     let cmd = session_command(user, locked)?;
     println!("wol-login: session {} ({})", user.name, user.uid);
     // `su -l` builds the login environment of the account itself.
@@ -756,6 +757,8 @@ fn run_session(
             c.wait()
         });
     println!("wol-login: session {} ended {st:?}", user.name);
+    // A layout changed in Settings during the session is the login window's next one.
+    record_layout(user);
     if std::path::Path::new(KEYRING_DAEMON).exists() {
         stop_keyring(user);
     }
@@ -764,6 +767,14 @@ fn run_session(
         use std::os::unix::process::ExitStatusExt;
         (s.code(), s.signal())
     })
+}
+
+/// The login window types on the layout of the account that last used the computer (QA-A7-16).
+fn record_layout(user: &LoginUser) {
+    let out = std::path::Path::new(wol_core::hyprprefs::LAST_LAYOUT);
+    if let Err(e) = controller::login::record_last_layout(std::path::Path::new(&user.home), out) {
+        eprintln!("wol-login: {}: {e}", out.display());
+    }
 }
 
 /// "Encrypt my files" (wol_core::home_crypt): state of the home's dataset; None for a plain folder.

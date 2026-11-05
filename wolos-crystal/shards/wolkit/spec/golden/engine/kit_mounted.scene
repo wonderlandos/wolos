@@ -6,7 +6,7 @@ scene nodes=30
       4 button flex-direction=row "More"
       5 spacer display=none
     6 box flex-direction=row grow=1
-      7 box flex-direction=column width=220px background=sidebar padding=8 gap=4
+      7 box flex-direction=column width=240px background=sidebar padding=8 gap=4
         8 box flex-direction=column gap=4
           9 text font-size=secondary color=dim "Folders"
           10 box classes=3 flex-direction=column

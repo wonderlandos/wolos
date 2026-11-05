@@ -11,6 +11,8 @@ members = [
     "crates/shell",
     "crates/wol-abi",
     "crates/wolkit",
+    "crates/wolkit-render",
+    "crates/wolkit-web",
     "crates/wol-lua",
     "crates/wopkg",
     "crates/xguard",
@@ -22,6 +24,7 @@ members = [
     "crates/wolcrypt",
     "crates/wol-tor",
     "crates/wolkeyring",
+    "crates/atlas",
 ]
 # The engine library's source (ADR 0042): built in the engine's own workspace by webengine-wolos.
 exclude = ["crates/webengine/engine"]
@@ -67,6 +70,17 @@ blocking = { path = "third_party/blocking" }
 lto = "thin"
 codegen-units = 8
 strip = "debuginfo"
+
+# The wolkit web module (crates/wolkit-web, site /kit/): small over fast, one unit, no unwinding.
+[profile.wasm]
+inherits = "release"
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+# wasm-bindgen strips the names itself and needs the target_features section kept.
+strip = false
+debug = false
 
 # Dev: our crates stay fast to rebuild, dependencies (image, crypto, gtk bindings) are optimised once
 # and cached; line tables are enough for backtraces.

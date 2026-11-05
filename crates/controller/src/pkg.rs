@@ -210,10 +210,19 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     }
     // Queried in the chroot's namespace: it shows the layer's database even under /usr (CORE-2).
     let after = env.read_file(Path::new(&layers::after_path(n)));
+    // A query that failed in the namespace leaves nothing to compare: an empty answer read as
+    // "everything was removed" wrote a record that emptied the next slot's database (QA-A7-4).
+    if !layers::readable(&before, after.as_deref()) {
+        env.err("wol pkg: the new layer could not be read back, so it was thrown away.\n");
+        for a in layers::abort(n) {
+            let _ = env.exec(&a);
+        }
+        return Outcome::Unchanged;
+    }
     let rec = layers::delta(&before, after.as_deref().unwrap_or_default());
     // A change that changed nothing (`-S --needed` of a present package) leaves no layer: an
     // empty one was merged as one more overlay until the next update (QA-STORE-71).
-    if after.is_some() && rec.installed.is_empty() && rec.removed.is_empty() {
+    if rec.installed.is_empty() && rec.removed.is_empty() {
         for a in layers::abort(n) {
             let _ = env.exec(&a);
         }

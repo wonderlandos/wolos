@@ -1175,6 +1175,8 @@ rule!(
                     // The web-app runtime's engine boundary (ADR 0042): its C shim and the
                     // run-time loaded side, counted by its unsafe_ratchet row.
                     | "webengine"
+                    // The Atlas bridge (ADR 0043 D4): the one from_raw_fd(3) for socket activation.
+                    | "atlas"
             )
             && !s.rel.ends_with("api/src/os.rs")
     },

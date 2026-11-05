@@ -76,6 +76,11 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The local keyring (ADR 0054, BSD-2-Clause) seals its items with wolcrypt too and
                 // keeps to the shared types; it does not use core.
                 "wolkeyring" => dep == "wolcrypt" || dep == "shared",
+                // The render targets (wgpu, Vulkan, CPU) and the browser module (ADR 0060,
+                // "wolkit on WebGPU and WASM"): BSD-2-Clause like wolkit; they build for
+                // wasm32, where `core` does not, so they take `shared` and `wolkit` only.
+                "wolkit-render" => ["shared", "wolkit"].contains(&dep.as_str()),
+                "wolkit-web" => ["shared", "wolkit", "wolkit-render"].contains(&dep.as_str()),
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",
@@ -164,6 +169,17 @@ fn violations_table() {
         (&[("controller", &["api"])], &["controller -> api"]),
         (&[("webengine", &["wolkit", "core", "shared"])], &[]),
         (&[("webengine", &["api"])], &["webengine -> api"]),
+        (&[("wolkit-render", &["wolkit", "shared"])], &[]),
+        (&[("wolkit-render", &["core"])], &["wolkit-render -> core"]),
+        (
+            &[("wolkit-web", &["wolkit-render", "wolkit", "shared"])],
+            &[],
+        ),
+        (&[("wolkit-web", &["api"])], &["wolkit-web -> api"]),
+        (
+            &[("shell", &["wolkit-render"])],
+            &["shell -> wolkit-render"],
+        ),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

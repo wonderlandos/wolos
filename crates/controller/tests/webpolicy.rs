@@ -280,8 +280,8 @@ fn the_hook_runs_the_shipped_helper() {
         "code.plan",
         "electron.json",
         "electron.plan",
-        "helium.json",
-        "helium.plan",
+        "atlas.json",
+        "atlas.plan",
     ] {
         let p = repo("files/usr/share/wolos/webpolicy").join(f);
         assert!(Path::new(&p).is_file(), "{f}");

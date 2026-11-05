@@ -85,6 +85,14 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "webapps/kit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "webapps/hello/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "wolos-crystal/examples/**",
       "spdx": "BSD-2-Clause"
     },
