@@ -391,6 +391,7 @@ fn a_classical_system_shows_in_plain_doctor_and_probes_only_when_asked() {
         .map(|c| c["id"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(ids, ["tls.openssl", "tls.gnutls", "tls.wolos"]);
+}
 
 /// `memory.saver` (ADR 0061): fault-around, the sharing rule and why, and the page-out state of
 /// the apps with a budget, in plain words; a second account with sharing still on is worth a look.
