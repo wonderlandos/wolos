@@ -9,10 +9,12 @@
 //! - [`apply`]: atomic application with a journal
 //! - [`read`]: [`SceneRead`] and [`SceneWrite`], the stage interface
 //! - [`arena`]: the [`Scene`]
+//! - [`editview`]: the focused field as paint draws it (caret, selection, scroll)
 //! - [`strings`]: interned text
 
 pub mod apply;
 pub mod arena;
+pub mod editview;
 pub mod ids;
 pub mod kind;
 pub mod patch;
@@ -22,6 +24,7 @@ pub mod strings;
 
 pub use apply::{Applied, Journal};
 pub use arena::{AnimReq, Scene};
+pub use editview::EditView;
 pub use ids::{Idx, MAX_DEPTH, MAX_NODES, NIL, NodeId};
 pub use kind::{Kind, dirty, state};
 pub use patch::{Op, Patch, PropValue, Writer};

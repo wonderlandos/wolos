@@ -120,6 +120,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "wolkit_text"
+path = "fuzz_targets/wolkit_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "wolkit_wolcss"
 path = "fuzz_targets/wolkit_wolcss.rs"
 test = false
