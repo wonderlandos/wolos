@@ -7,6 +7,7 @@ use super::{Sys, procs};
 use shared::memsaver::{AppState, AppStatus, Snapshot, Status};
 use std::collections::{BTreeMap, HashMap};
 use wol_core::memsaver::app::{self, Action, Config, Facts, Phase};
+use wol_core::memsaver::budget::{self, Budget, Cycle, Gate, Place};
 
 /// Ask systemd again after this long if the scope did not show up.
 const ADOPT_RETRY_MS: u64 = 10_000;
@@ -25,6 +26,12 @@ struct App {
     last_busy: u64,
     storm: Storm,
     oom: OomLoop,
+    /// A per-app budget (`budget::TABLE`), its last memory.high and its background duty cycle.
+    budget: Option<&'static Budget>,
+    high: Option<u64>,
+    cycle: Cycle,
+    /// When its window was first seen (the budget waits `start_ms` from here).
+    shown: Option<u64>,
 }
 
 struct Session {
@@ -41,6 +48,8 @@ pub struct Engine<S: Sys> {
     /// pid -> (asked at, scope cgroup, app id)
     asked: HashMap<i32, (u64, String, String)>,
     slice_storm: Storm,
+    /// The budget table (`budget::TABLE`; a test swaps it).
+    table: &'static [Budget],
 }
 
 fn pct(prev: Option<(u64, u64)>, now_ms: u64, usec: u64) -> f32 {
@@ -62,6 +71,7 @@ impl<S: Sys> Engine<S> {
             apps: BTreeMap::new(),
             asked: HashMap::new(),
             slice_storm: Storm::default(),
+            table: budget::TABLE,
         }
     }
 
@@ -149,6 +159,7 @@ impl<S: Sys> Engine<S> {
             .retain(|_, (t, _, _)| now.saturating_sub(*t) < 6 * ADOPT_RETRY_MS);
         let home = format!("/user.slice/user-{uid}.slice/");
         let sys = &self.sys;
+        let table = self.table;
         let ours = |c: &str| {
             c.split('/')
                 .any(|part| part.starts_with("app-wol-") && part.ends_with(".scope"))
@@ -159,11 +170,19 @@ impl<S: Sys> Engine<S> {
                 && sys.owner_and_parent(pid).map(|o| o.0) == Some(uid)
                 && !procs::NEVER.contains(&sys.comm(pid).as_str())
         };
+        // A budgeted app started in its own scope (`budget::launch_argv`) stays there: its pages
+        // are charged to it from the first one, which no later move can do.
+        let budgeted = |w: &shared::memsaver::Window| {
+            budget::of_in(table, &shared::memsaver::app_id(&w.app)).is_some_and(|b| {
+                sys.cgroup(w.pid)
+                    .is_some_and(|c| c.split('/').any(|p| is_unit_of(b, p)))
+            })
+        };
         let want: Vec<(i32, String)> = self
             .snap
             .windows
             .iter()
-            .filter(|w| movable(w.pid))
+            .filter(|w| movable(w.pid) && !budgeted(w))
             .map(|w| (w.pid, w.app.clone()))
             .collect();
         if want.is_empty() {
@@ -207,6 +226,7 @@ impl<S: Sys> Engine<S> {
                 found.push((cg.clone(), id.clone(), false));
             }
         }
+        let table = self.table;
         for (scope, id, windowed) in found {
             let app = self.apps.entry(scope.clone()).or_insert_with(|| {
                 // Left over from an earlier wold: not frozen.
@@ -221,11 +241,20 @@ impl<S: Sys> Engine<S> {
                     last_busy: 0,
                     storm: Storm::default(),
                     oom: OomLoop::default(),
+                    budget: None,
+                    high: None,
+                    cycle: Cycle::Off,
+                    shown: None,
                 }
             });
             if windowed && !app.windowed {
                 app.windowed = true;
                 app.id = shared::memsaver::app_id(&id);
+                // Only an app born in its budget scope (`budget::launch_argv`) gets the budget: on
+                // an adopted one (`app-wol-<id>-<pid>.scope`) the pages were charged elsewhere
+                // before the move, a limit cannot reach them (docs/bench/memsaver-discord.md).
+                app.budget = budget::of_in(table, &app.id)
+                    .filter(|b| scope.rsplit('/').next().is_some_and(|c| is_unit_of(b, c)));
             }
         }
     }
@@ -253,6 +282,9 @@ impl<S: Sys> Engine<S> {
             let facts = self.facts(&mut app, &pids, now);
             let (phase, action) = app.phase.step(&facts, now, &self.cfg);
             app.phase = phase;
+            if let Some(b) = app.budget {
+                self.run_budget(scope, &mut app, b, &facts, now);
+            }
             self.apply(scope, &mut app, action, pids);
         }
         self.apps.insert(scope.to_owned(), app);
@@ -280,6 +312,49 @@ impl<S: Sys> Engine<S> {
             // No signal from the runtime yet (ADR 0042): the saver reclaims as before.
             runtime_discarded: false,
         }
+    }
+
+    /// A budgeted app (`budget::TABLE`): from `start_ms` after its window first showed, its
+    /// scope's memory.high is the front limit, and the background one once the saver's delay has
+    /// passed; behind it runs the freeze duty cycle. Saver off, excluded or a game: no limit and
+    /// never frozen by the cycle. Playing (a call): never frozen, the limit stays.
+    fn run_budget(&mut self, scope: &str, app: &mut App, b: &'static Budget, f: &Facts, now: u64) {
+        let shown = *app.shown.get_or_insert(now);
+        let on = f.enabled && !f.excluded && !f.game;
+        let behind = matches!(app.phase, Phase::Saving { .. } | Phase::Napping { .. });
+        let at = if !on || now.saturating_sub(shown) < b.start_ms {
+            Place::Free
+        } else if behind {
+            Place::Back
+        } else {
+            Place::Front
+        };
+        let want = b.high(at);
+        if want != app.high && self.sys.set_high(scope, want) {
+            app.high = want;
+        }
+        let cycling = on && !f.playing && matches!(app.phase, Phase::Saving { .. });
+        if let Some(d) = &b.duty {
+            let (c, gate) = app.cycle.step(cycling, now, d);
+            app.cycle = c;
+            match gate {
+                Gate::Keep => {}
+                Gate::Freeze => {
+                    self.sys.freeze(scope, true);
+                }
+                Gate::Thaw => {
+                    self.sys.freeze(scope, false);
+                }
+            }
+        }
+    }
+
+    /// When the next duty-cycle step of any app is due (monotonic ms): the ticker wakes for it.
+    pub fn due(&self) -> Option<u64> {
+        self.apps
+            .values()
+            .filter_map(|a| a.budget?.duty.as_ref().and_then(|d| a.cycle.due(d)))
+            .min()
     }
 
     fn apply(&mut self, scope: &str, app: &mut App, action: Action, pids: Vec<i32>) {
@@ -347,6 +422,16 @@ impl<S: Sys> Engine<S> {
         }
         st
     }
+}
+
+/// `part` (one cgroup path component) is the scope `budget::launch_argv` starts the app in:
+/// `app-<engine name>-<digits>.scope`.
+fn is_unit_of(b: &Budget, part: &str) -> bool {
+    part.strip_prefix("app-")
+        .and_then(|r| r.strip_prefix(b.engine_name))
+        .and_then(|r| r.strip_prefix('-'))
+        .and_then(|r| r.strip_suffix(".scope"))
+        .is_some_and(|n| !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()))
 }
 
 pub use app::Config as AppConfig;

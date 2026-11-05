@@ -25,6 +25,9 @@ struct C {
     killed: bool,
     oom_kills: u64,
     tasks: u64,
+    /// memory.high written by a budget (None: `max`), and every freeze/thaw in order.
+    high: Option<u64>,
+    freezes: Vec<bool>,
 }
 
 #[derive(Default)]
@@ -116,7 +119,10 @@ impl Sys for Model {
         self.cg(cg).cpu
     }
     fn freeze(&self, cg: &str, frozen: bool) -> bool {
-        self.set(cg, |c| c.frozen = frozen);
+        self.set(cg, |c| {
+            c.frozen = frozen;
+            c.freezes.push(frozen);
+        });
         true
     }
     fn refused(&self, cg: &str) -> u64 {
@@ -157,6 +163,10 @@ impl Sys for Model {
     fn swapped(&self, pids: &[i32]) -> u64 {
         let m = self.0.borrow();
         pids.iter().filter_map(|p| m.swapped.get(p)).sum()
+    }
+    fn set_high(&self, cg: &str, bytes: Option<u64>) -> bool {
+        self.set(cg, |c| c.high = bytes);
+        true
     }
 }
 
@@ -597,4 +607,198 @@ fn a_scope_that_is_gone_has_its_give_back_cancelled() {
     let st = e.tick(33_000);
     assert!(st.apps.is_empty());
     assert_eq!(e.sys.0.borrow().cancelled, [SCOPE]);
+}
+
+// ---- per-app budgets (wol_core::memsaver::budget, ADR 0027 amendment) ----
+
+/// Discord as `budget::launch_argv` starts it: main 30 (renderer 31, gpu 32) in
+/// `app-discord-30.scope` of the user's manager,
+const DISCORD: &str =
+    "/user.slice/user-1000.slice/user@1000.service/app.slice/app-discord-30.scope";
+
+fn discord() -> Engine<Model> {
+    let e = session();
+    for (pid, ppid) in [(30, 10), (31, 30), (32, 30)] {
+        e.sys.add(pid, ppid, "Discord");
+        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = DISCORD.into();
+    }
+    e.sys.set(DISCORD, |_| {});
+    e
+}
+
+/// Discord's row with the freeze cycle on: the engine holds the cycle for a row that earns it.
+static DUTY_TABLE: [Budget; 1] = [Budget {
+    duty: Some(budget::Duty {
+        stop_ms: 4_000,
+        run_ms: 1_000,
+    }),
+    ..budget::TABLE[0]
+}];
+
+fn discord_duty() -> Engine<Model> {
+    let mut e = discord();
+    e.table = &DUTY_TABLE;
+    e
+}
+
+fn dsnap(front: i32, visible: bool) -> Snapshot {
+    Snapshot {
+        enabled: true,
+        front,
+        windows: vec![Window {
+            pid: 30,
+            app: "discord".into(),
+            visible,
+        }],
+        ..Snapshot::default()
+    }
+}
+
+#[test]
+fn a_budgeted_app_started_in_its_own_scope_stays_there() {
+    let mut e = discord();
+    e.snapshot(dsnap(30, true));
+    for t in [0, 1, 20_000] {
+        e.tick(t);
+    }
+    assert!(
+        e.sys.0.borrow().adopted.is_empty(),
+        "nothing asked of systemd"
+    );
+    for pid in 30..=32 {
+        assert_eq!(e.sys.where_is(pid), DISCORD, "pid {pid}");
+    }
+    // Started the usual way (in the session), Discord is adopted like any app.
+    let mut e = discord();
+    for pid in 30..=32 {
+        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = SESSION.into();
+    }
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    assert_eq!(e.sys.0.borrow().adopted.len(), 1);
+}
+
+#[test]
+fn the_budget_waits_for_the_start_then_limits_front_and_back() {
+    let b = budget::of("discord").unwrap();
+    let mut e = discord();
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    assert_eq!(e.sys.cg(DISCORD).high, None, "no limit while it starts");
+    e.tick(b.start_ms - 1);
+    assert_eq!(e.sys.cg(DISCORD).high, None);
+    e.tick(b.start_ms);
+    assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Front));
+    // Behind: the front limit through the saver's delay, then the background one.
+    e.snapshot(dsnap(99, false));
+    let away = b.start_ms + 1_000;
+    e.tick(away);
+    assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Front));
+    e.tick(away + Config::default().delay_ms);
+    assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Back));
+    // Back in front: the front limit again.
+    e.focus(30);
+    e.tick(away + Config::default().delay_ms + 10);
+    assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Front));
+    // Memory Saver off: no limit at all.
+    let mut s = dsnap(30, true);
+    s.enabled = false;
+    e.snapshot(s);
+    e.tick(away + Config::default().delay_ms + 2_000);
+    assert_eq!(e.sys.cg(DISCORD).high, None);
+}
+
+#[test]
+fn behind_a_budgeted_app_runs_the_freeze_duty_cycle_and_is_thawed_when_used() {
+    let d = DUTY_TABLE[0].duty.unwrap();
+    let mut e = discord_duty();
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.sys.set(DISCORD, |c| c.freezes.clear());
+    e.snapshot(dsnap(99, false));
+    let away = 1_000;
+    e.tick(away);
+    let saving = away + Config::default().delay_ms;
+    e.tick(saving);
+    assert_eq!(
+        e.sys.cg(DISCORD).freezes,
+        [true],
+        "frozen once Saving starts"
+    );
+    assert_eq!(e.due(), Some(saving + d.stop_ms));
+    e.tick(saving + d.stop_ms);
+    e.tick(saving + d.stop_ms + d.run_ms);
+    assert_eq!(e.sys.cg(DISCORD).freezes, [true, false, true]);
+    assert!(e.sys.cg(DISCORD).frozen);
+    // Not started long enough for a limit (start_ms): frozen all the same.
+    assert_eq!(e.sys.cg(DISCORD).high, None);
+    // Used again: thawed at once, no cycle due.
+    e.focus(30);
+    e.tick(saving + d.stop_ms + d.run_ms + 10);
+    assert!(!e.sys.cg(DISCORD).frozen);
+    assert_eq!(e.due(), None);
+}
+
+#[test]
+fn a_budgeted_app_in_a_call_is_never_frozen() {
+    let mut e = discord_duty();
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.sys.set(DISCORD, |c| c.freezes.clear());
+    let mut s = dsnap(99, false);
+    s.playing = vec![31];
+    e.snapshot(s);
+    for t in [1_000, 40_000, 45_000, 50_000, 120_000] {
+        e.tick(t);
+    }
+    assert!(
+        e.sys.cg(DISCORD).freezes.is_empty(),
+        "{:?}",
+        e.sys.cg(DISCORD).freezes
+    );
+    assert_eq!(e.due(), None);
+}
+
+const ADOPTED: &str =
+    "/user.slice/user-1000.slice/user@1000.service/app.slice/app-wol-discord-30.scope";
+
+/// Discord adopted into a Memory Saver scope (started the usual way) gets no budget: its pages
+/// were charged elsewhere before the move, a limit would only pin `memory.current` and stall it.
+/// It is a plain Memory Saver app: no `memory.high`, no freeze cycle (even in a table that has one).
+#[test]
+fn an_adopted_discord_gets_no_limit_and_no_freeze() {
+    let mut e = discord_duty();
+    for pid in 30..=32 {
+        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = ADOPTED.into();
+    }
+    e.sys.set(ADOPTED, |_| {});
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.snapshot(dsnap(99, false));
+    let away = 70_000;
+    e.tick(away);
+    for t in [away + 30_000, away + 40_000, away + 50_000, away + 90_000] {
+        e.tick(t);
+    }
+    let c = e.sys.cg(ADOPTED);
+    assert_eq!(c.high, None, "no memory.high on an adopted scope");
+    assert!(!c.freezes.contains(&true), "no freeze: {:?}", c.freezes);
+    assert_eq!(e.due(), None);
+}
+
+/// The table's own Discord row has no freeze cycle: behind, the scope is limited and never frozen.
+#[test]
+fn behind_discord_is_limited_and_not_frozen_by_default() {
+    let b = budget::of("discord").unwrap();
+    let mut e = discord();
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.snapshot(dsnap(99, false));
+    let away = b.start_ms + 1_000;
+    e.tick(away);
+    e.tick(away + Config::default().delay_ms);
+    e.tick(away + Config::default().delay_ms + 20_000);
+    assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Back));
+    assert!(!e.sys.cg(DISCORD).freezes.contains(&true));
+    assert_eq!(e.due(), None);
 }

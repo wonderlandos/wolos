@@ -167,13 +167,17 @@ fn entry_faults(
 ) -> Vec<String> {
     let mut bad = Vec::new();
     let Some(v) = entry_key(text, "X-WolOS-Surfaces") else {
-        bad.push(format!("{name}: no X-WolOS-Surfaces= line (write it empty if the entry is a launcher)"));
+        bad.push(format!(
+            "{name}: no X-WolOS-Surfaces= line (write it empty if the entry is a launcher)"
+        ));
         return bad;
     };
     let claimed = ids(v);
     for id in &claimed {
         if !table_ids.contains(id) {
-            bad.push(format!("{name}: claims {id}, which is not a surface of {PAGE}"));
+            bad.push(format!(
+                "{name}: claims {id}, which is not a surface of {PAGE}"
+            ));
         }
     }
     match provides {
@@ -253,13 +257,17 @@ fn every_journey_of_the_table_is_a_file_or_listed_as_not_written_yet() {
             (false, false) => bad.push(format!(
                 "{j}: no tests/wolvm/journeys/{j}.yaml and not in JOURNEYS_NOT_YET"
             )),
-            (true, true) => bad.push(format!("{j}: the file exists, remove it from JOURNEYS_NOT_YET")),
+            (true, true) => bad.push(format!(
+                "{j}: the file exists, remove it from JOURNEYS_NOT_YET"
+            )),
             _ => {}
         }
     }
     for (j, owner) in JOURNEYS_NOT_YET {
         if !named.contains(j) {
-            bad.push(format!("JOURNEYS_NOT_YET lists {j} ({owner}), which no row names"));
+            bad.push(format!(
+                "JOURNEYS_NOT_YET lists {j} ({owner}), which no row names"
+            ));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
@@ -271,13 +279,19 @@ fn every_shipped_entry_declares_what_it_provides_and_the_app_table_agrees() {
     let table_ids: BTreeSet<String> = surfaces(&page).into_iter().map(|s| s.id).collect();
     let rows = app_table(&page);
     let found = entries();
-    assert!(found.len() >= 5, "found only {} launcher entries", found.len());
+    assert!(
+        found.len() >= 5,
+        "found only {} launcher entries",
+        found.len()
+    );
     let mut bad = Vec::new();
     for (name, text) in &found {
         let has_key = entry_key(text, "X-WolOS-Surfaces").is_some();
         if ENTRIES_NOT_YET.contains(&name.as_str()) {
             if has_key {
-                bad.push(format!("{name}: has the key, remove it from ENTRIES_NOT_YET"));
+                bad.push(format!(
+                    "{name}: has the key, remove it from ENTRIES_NOT_YET"
+                ));
             }
             continue;
         }
@@ -286,7 +300,9 @@ fn every_shipped_entry_declares_what_it_provides_and_the_app_table_agrees() {
     }
     for (name, _) in &rows {
         if !found.iter().any(|(n, _)| n == name) {
-            bad.push(format!("the app table lists {name}, which is no shipped entry"));
+            bad.push(format!(
+                "the app table lists {name}, which is no shipped entry"
+            ));
         }
     }
     assert!(bad.is_empty(), "{}", bad.join("\n"));
@@ -310,7 +326,10 @@ fn the_checks_fail_on_the_faults_they_name() {
     let entry = "[Desktop Entry]\nName=A\nX-WolOS-Surfaces=S04;S99\nX-WolOS-Colour=red\n";
     let bad = entry_faults("a.desktop", entry, &ids28, Some(&row));
     assert!(bad.iter().any(|b| b.contains("claims S99")), "{bad:?}");
-    assert!(bad.iter().any(|b| b.contains("the app table says")), "{bad:?}");
+    assert!(
+        bad.iter().any(|b| b.contains("the app table says")),
+        "{bad:?}"
+    );
     assert!(bad.iter().any(|b| b.contains("X-WolOS-Colour")), "{bad:?}");
 
     let bare = "[Desktop Entry]\nName=A\n";
