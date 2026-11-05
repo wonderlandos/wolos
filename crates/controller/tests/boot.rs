@@ -701,3 +701,44 @@ fn a_start_from_the_fallback_writes_the_slot_entry_again() {
     assert!(wrote(&e, "wolos-b.conf").is_none(), "{:?}", e.written);
     assert!(e.execs.is_empty(), "{:?}", e.execs);
 }
+
+/// FIX-BOOT-TWIN: `wol boot bless` runs before systemd-bless-boot. On a counted start (boot-rearm's
+/// one try: `wolos-a+1.conf` started as `wolos-a+0-1.conf`) the running slot's fallback is written
+/// blessed, as its entry is about to be, never `+0-1` beside a blessed entry (fb13-a VM showed
+/// `wolos-b-fallback+0-1.conf` next to `wolos-b.conf` until the next shutdown). The new name is on
+/// the disk before the old one goes. The other slot's counter is still copied as it is.
+#[test]
+fn a_counted_start_leaves_its_fallback_blessed() {
+    let a = "title WolOS 1.1\nsort-key wolos\nversion 7-2026.11.02\nuki /EFI/wolos/wolos-a.efi\n";
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    e.files
+        .retain(|(p, _)| !p.ends_with("wolos-a.conf") && !p.ends_with("wolos-a-fallback.conf"));
+    e.files.push((
+        PathBuf::from("/efi/loader/entries/wolos-a+0-1.conf"),
+        a.into(),
+    ));
+    e.files.push((
+        PathBuf::from("/efi/loader/entries/wolos-a-fallback+1.conf"),
+        "title WolOS 1.1 (fallback entry)\nsort-key wolos.fallback\nversion 7-2026.11.02\nuki /EFI/wolos/wolos-a.efi\n".into(),
+    ));
+    e.captures[0].1 =
+        "wolos-a+0-1.conf\nwolos-a-fallback+1.conf\nwolos-b+3.conf\nwolos-b-fallback+3.conf\n"
+            .into();
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    assert!(
+        wrote(&e, "wolos-a-fallback.conf").is_some(),
+        "{:?}",
+        e.written
+    );
+    assert!(
+        wrote(&e, "wolos-a-fallback+0-1.conf").is_none(),
+        "{:?}",
+        e.written
+    );
+    assert_eq!(
+        e.removed,
+        [PathBuf::from("/efi/loader/entries/wolos-a-fallback+1.conf")]
+    );
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["sync -f /efi", "sync -f /efi"], "{}", e.err);
+}

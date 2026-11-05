@@ -93,7 +93,9 @@ Decision (option (a) of FIX-DRYRUN-2, #plan 10610): each slot's entry has a twin
 - **Same boot-count state.** It carries its slot entry's try counter as WolOS last wrote either: esp-sync writes it
   with the counter it gives the slot entry, boot-rearm counts it with the slot entry at shutdown, `wol boot bless`
   aligns it with its slot entry at every good start (including the other slot's tries given back, and a slot out of
-  tries: its fallback is out of tries too). systemd-boot counts only the entry it starts; an entry with no tries left
+  tries: its fallback is out of tries too). The running slot's own fallback is written blessed: this start is good and
+  systemd-bless-boot, which runs after `wol boot bless`, blesses the entry that started; a copied `+0-1` (boot-rearm's one
+  try) would leave an out-of-tries fallback beside a blessed entry until the next shutdown (FIX-BOOT-TWIN). systemd-boot counts only the entry it starts; an entry with no tries left
   sorts last (after the fallbacks), so a fallback never outranks a good entry, and a slot already marked bad is not
   started from its fallback while another slot can start. Where no slot has tries left, systemd-boot starts the first
   of them, as it did before; the fallback's own counter still ends it, so there is no loop.
