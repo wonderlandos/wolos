@@ -180,6 +180,29 @@ fn stamp_only_on_success() {
     assert!(!d.join("out/base.error").exists());
 }
 
+/// Dry run 0.13.0 (QA-STORE-32 class): package lists refused for their signature are not
+/// "offline?". pacman's own line goes to the journal and to wol-admind's reply (its last stderr
+/// line), and the exit is 1 (nothing to retry later), not 75; a real offline refresh stays 75.
+#[test]
+fn signature_refusal_is_not_offline() {
+    let d = scratch("pgp");
+    let pgp = "case \"$*\" in *-Sy*) echo \"error: wolos: key 8A774E5C is unknown\" >&2; \
+        echo \"error: database 'wolos' is not valid (PGP signature)\" >&2; exit 1 ;; esac";
+    let (code, err) = check(&d, &check_script(), pgp, CURL_OK, 1 << 20);
+    assert_eq!(code, Some(1), "{err}");
+    let last = err.lines().last().unwrap_or_default();
+    assert!(last.starts_with("update-check: "), "{err}");
+    assert!(last.contains("signature"), "{err}");
+    assert!(last.contains("(PGP signature)"), "{err}");
+    assert!(!last.contains("offline"), "{err}");
+    assert!(!d.join("out/checked").exists());
+    let d = scratch("offline");
+    let offline = "case \"$*\" in *-Sy*) echo 'error: failed retrieving file' >&2; exit 1 ;; esac";
+    let (code, err) = check(&d, &check_script(), offline, CURL_OK, 1 << 20);
+    assert_eq!(code, Some(75), "{err}");
+    assert!(err.contains("offline?"), "{err}");
+}
+
 /// QA-UPG-1: the daily check never depends on `checkupdates`. The 0.12.0 check (wolos-system
 /// 0.12.0-2, the script of tag v0.12.0) ran it first; it needs fakeroot, which the image does not
 /// ship, so it said "Cannot find the fakeroot binary", exited 1, and the script left at once with

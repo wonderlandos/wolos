@@ -66,8 +66,14 @@ tmp=$(mktemp -d "${TMPDIR:-/var/tmp}/wolos-check-db.XXXXXX") || fail 1 "no tempo
 trap 'rm -rf "${tmp:?}"' EXIT
 { chmod 755 "$tmp" && ln -s "$db/local" "$tmp/local"; } || fail 1 "no temporary database"
 if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || fail 1 "could not copy the package lists"; fi
-# Offline (the refresh fails) leaves no stamp: the next hour tries.
-pacman --dbpath "$tmp" -Sy --noprogressbar >/dev/null 2>&1 || fail 75 "could not refresh the package lists (offline?)"
+# Offline (the refresh fails) leaves no stamp: the next hour tries. Lists refused for their
+# signature are not "offline?" (dry run 0.13.0, QA-STORE-32 class): pacman's own line is the last
+# one (wol-admind's reply carries it) and the exit is 1, nothing a later try mends.
+if ! pacman --dbpath "$tmp" -Sy --noprogressbar >/dev/null 2>"$tmp/sy"; then
+	sig=$(grep -iE 'pgp signature|signature from|unknown trust|is unknown|invalid or corrupted database' "$tmp/sy" | tail -n 1)
+	[ -z "$sig" ] || fail 1 "the package lists did not pass their signature check: $sig"
+	fail 75 "could not refresh the package lists (offline?)"
+fi
 # -Qu: 0 = updates listed, 1 = none (or an error, which says so on stderr).
 now_basis=$(basis)
 pacman --dbpath "$tmp" -Qu >"$D/pkg.new" 2>"$tmp/err"

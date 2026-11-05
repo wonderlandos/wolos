@@ -755,6 +755,32 @@ fn check_on_a_full_disk_names_the_disk() {
     assert!(env.err.contains("online"), "{}", env.err);
 }
 
+/// Dry run 0.13.0 (QA-STORE-32 class): a refresh refused for its signature names the signature,
+/// not "are you online?" (wol-admind's reply carries update-check's own last line).
+#[test]
+fn check_refused_for_its_signature_names_the_signature() {
+    let refused = |reply: &str| FakeEnv {
+        replies: vec![reply.into()],
+        captures: vec![(
+            "df -B1 --output=avail /var".into(),
+            format!("Avail\n{}\n", 40u64 << 30),
+        )],
+        ..Default::default()
+    };
+    let mut env = refused(
+        "failed The change failed: update-check: the package lists did not pass their \
+         signature check: error: database 'wolos' is not valid (PGP signature)\n",
+    );
+    assert_ne!(run("update check --json", &mut env), 0);
+    assert!(!env.err.contains("online"), "{}", env.err);
+    assert!(env.err.contains("signature"), "{}", env.err);
+    let mut env = refused(
+        "failed The change failed: update-check: could not refresh the package lists (offline?)\n",
+    );
+    assert_ne!(run("update check --json", &mut env), 0);
+    assert!(env.err.contains("are you online?"), "{}", env.err);
+}
+
 /// QA-STORE-15 / QA-STORE-13: the text a person reads is a sentence, and an update built in the
 /// other slot says it needs the restart.
 #[test]

@@ -187,15 +187,32 @@ command_not_found_handler() {
 # speaks for itself. preexec clears and sets the line, so an empty line stays quiet.
 _wolos_hint_line=
 _wolos_hint_preexec() { _wolos_hint_line=$1 }
-_wolos_hint_precmd() {
-  local s=$? line=$_wolos_hint_line w
-  _wolos_hint_line=
-  (( s != 0 && s != 127 && s <= 128 )) && [[ -n $line ]] || return $s
+# _wolos_hint_after STATUS LINE: the hint for LINE that ended with STATUS, if the table has one.
+_wolos_hint_after() {
+  local s=$1 line=$2 w
+  (( s != 0 && s != 127 && s <= 128 )) && [[ -n $line ]] || return 0
   w=${${(z)line}[1]}
   w=${w:t}
   [[ -n $w && $w != su && -n ${_wolos_hint_cmds[$w]} ]] && wol hint "$line" $s
+  return 0
+}
+_wolos_hint_precmd() {
+  local s=$? line=$_wolos_hint_line
+  _wolos_hint_line=
+  _wolos_hint_after $s "$line"
   return $s
 }
 precmd_functions=(_wolos_hint_precmd $precmd_functions)
 preexec_functions+=(_wolos_hint_preexec)
+# `zsh -ic 'line'` runs no precmd (QA-FILES-4, dry run 0.13.0): the hint comes when the shell
+# leaves, for a line of one command only (the status is the last command's). An EXIT trap, not
+# zshexit_functions: zsh execs the last command of -c in place of itself unless a trap is set.
+if [[ -n ${ZSH_EXECUTION_STRING:-} ]]; then
+  _wolos_hint_exit() {
+    local s=$? line=$ZSH_EXECUTION_STRING
+    [[ $line != *[\;\&\|$'\n']* ]] && _wolos_hint_after $s "$line"
+    return $s
+  }
+  trap '_wolos_hint_exit' EXIT
+fi
 unset _wolos_share _wolos_colors _wolos_cache

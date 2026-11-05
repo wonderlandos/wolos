@@ -1766,13 +1766,13 @@ pub fn help(prefix: &[String]) -> String {
     for c in &shown {
         // One command asked about: its choices in full, one list per line under it.
         let full = shown.len() == 1;
-        out.push_str(&format!("  {:<44} {}\n", usage_line(c, false), c.help));
+        out.push_str(&crate::help_wrap::row(&usage_line(c, false), c.help));
         for a in c
             .args
             .iter()
             .filter(|a| full && a.choices.join("|").len() > USAGE_CHOICES_MAX)
         {
-            out.push_str(&format!("    <{}>: {}\n", a.name, a.choices.join(", ")));
+            out.push_str(&crate::help_wrap::choices(a.name, &a.choices.join(", ")));
         }
     }
     out
@@ -1927,8 +1927,11 @@ mod tests {
         );
         let one = help(&["shell".into(), "toggle".into()]);
         assert!(one.contains("shell toggle <panel>"), "{one}");
+        // Folded at 120 columns (QA-PWR-6): every panel, in order, under the command.
+        let flat = one.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(one.contains("\n    <panel>: "), "{one}");
         assert!(
-            one.contains(&format!("    <panel>: {}", PANELS.join(", "))),
+            flat.contains(&format!("<panel>: {}", PANELS.join(", "))),
             "{one}"
         );
         assert!(help(&[]).contains("theme toggle"), "short lists stay");

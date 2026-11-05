@@ -187,6 +187,66 @@ fn system_zshrc_loads_plugins_theme_colours_and_keys() {
     assert!(home.join(".cache/zsh").is_dir());
 }
 
+/// QA-FILES-4 (dry run 0.13.0, console-shells): `zsh -ic "pacman -S cowsay"` runs no precmd, so
+/// the after-command hint never came; the shell's exit gives it for a one-command line, and an
+/// interactive prompt still gives it once (precmd), never twice.
+#[test]
+fn zsh_command_line_gets_the_after_command_hint() {
+    let Some(zsh) = zsh() else {
+        eprintln!("zsh not on this host: zshrc run skipped");
+        return;
+    };
+    let d = sandbox(
+        "zsh-c-hint",
+        &[
+            (
+                "pacman",
+                "#!/bin/sh\necho 'error: you cannot perform this operation unless you are root.' >&2\nexit 1\n",
+            ),
+            ("wol", "#!/bin/sh\necho \"HINT $*\"\n"),
+        ],
+    );
+    let (home, dot) = (d.join("home"), d.join("dot"));
+    fs::create_dir_all(&home).unwrap();
+    fs::create_dir_all(&dot).unwrap();
+    let rc = repo("desktop/overlay/usr/share/wolos/zsh/zshrc");
+    fs::write(dot.join(".zshrc"), format!("source {}\n", rc.display())).unwrap();
+    let run = |line: &str| {
+        let o = Command::new(zsh)
+            .args(["-i", "-c", line])
+            .env_clear()
+            .env("HOME", &home)
+            .env("ZDOTDIR", &dot)
+            .env("TERM", "foot")
+            .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+            .env("WOLOS_ZSH_PLUGINS", d.join("none"))
+            .env(
+                "WOLOS_HINTS",
+                repo("desktop/overlay/usr/share/wolos/console/hints.tsv"),
+            )
+            .output()
+            .unwrap();
+        (
+            o.status.code(),
+            String::from_utf8_lossy(&o.stdout).into_owned(),
+        )
+    };
+    let (code, out) = run("pacman -S cowsay");
+    assert_eq!(code, Some(1), "the command's status stays: {out}");
+    assert_eq!(
+        out.matches("HINT hint pacman -S cowsay 1").count(),
+        1,
+        "{out}"
+    );
+    // A line of several commands: the status is the last one's, so no guess.
+    let (_, out) = run("true; pacman -S cowsay");
+    assert!(!out.contains("HINT"), "{out}");
+    let (code, out) = run("echo fine");
+    assert_eq!(code, Some(0));
+    assert!(!out.contains("HINT"), "{out}");
+    let _ = fs::remove_dir_all(&d);
+}
+
 #[test]
 fn session_creates_user_folders_and_finishes_the_keyring() {
     let d = sandbox(

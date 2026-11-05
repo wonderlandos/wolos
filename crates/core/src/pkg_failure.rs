@@ -58,6 +58,12 @@ pub fn cause(output: &str) -> Option<Cause> {
     }
 }
 
+/// `wol update check` when wol-admind's refresh was refused for the package lists' signature
+/// (pacman's "(PGP signature)"): the cause, not "are you online?" (QA-STORE-32 class).
+pub const LISTS_REFUSED: &str = "could not check for updates: the package lists did not pass \
+     their signature check (PGP signature), so they were not used. Nothing was changed; try again \
+     later, and if it keeps happening the update server or this computer's WolOS key is out of date";
+
 /// The sentence for `cause`; `installing` picks "installed" or "removed". No app name: the
 /// sentence travels in wol-admind's `failed <message>` line, 200 bytes at most.
 pub fn sentence(cause: Cause, installing: bool) -> String {

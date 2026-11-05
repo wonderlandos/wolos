@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod cli;
 pub mod doctor;
 pub mod games;
+mod help_wrap;
 pub mod helpfind;
 pub mod hint;
 pub mod hw;

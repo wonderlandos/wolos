@@ -1098,7 +1098,8 @@ fn shell_ask(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
 
 /// Run the update check now through wol-admind (no password: the person at the computer) so
 /// "up to date" is never read from a stale catalogue.
-fn refresh_catalogue(env: &mut dyn Env) -> bool {
+/// Err: wol-admind's sentence for the failure, when it gave one.
+fn refresh_catalogue(env: &mut dyn Env) -> Result<(), Option<String>> {
     let sock = env
         .var("WOL_ADMIN_SOCKET")
         .map_or_else(|| wire::SOCKET.into(), PathBuf::from);
@@ -1113,7 +1114,11 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
         &wire::encode(&req, b""),
         wol_core::admin::reply_secs(&req),
     )
-    .is_ok_and(|r| AdminReply::parse(&r) == AdminReply::Ok)
+    .map_err(|_| None)
+    .and_then(|r| match AdminReply::parse(&r) {
+        AdminReply::Ok => Ok(()),
+        _ => Err(shared::admin::failure_message(&r)),
+    })
 }
 
 /// How long `pacman -Qu` may take before `wol update check` stops waiting for it.
@@ -1152,9 +1157,9 @@ pub(crate) fn update_line(pending: &[String]) -> String {
 /// means it could not refresh (offline).
 fn update_check(env: &mut dyn Env, json: bool) -> i32 {
     let asked = env.now_secs();
-    let refreshed = refresh_catalogue(env);
+    let refresh = refresh_catalogue(env);
     let found = update_snapshot(env);
-    let refreshed = refreshed && found.as_ref().is_some_and(|u| u.checked >= asked);
+    let refreshed = refresh.is_ok() && found.as_ref().is_some_and(|u| u.checked >= asked);
     let mut pending = found
         .as_ref()
         .map(|u| u.packages.clone())
@@ -1171,6 +1176,15 @@ fn update_check(env: &mut dyn Env, json: bool) -> i32 {
                 env,
                 ErrorCode::Unavailable,
                 "there is no room left on the system disk (/var) to check for updates; free some space in Settings > Storage",
+            );
+        }
+        // Lists refused for their signature are not "are you online?" (QA-STORE-32 class).
+        let said = refresh.err().flatten().unwrap_or_default();
+        if wol_core::pkg_failure::cause(&said) == Some(wol_core::pkg_failure::Cause::Damaged) {
+            return fail(
+                env,
+                ErrorCode::Unavailable,
+                wol_core::pkg_failure::LISTS_REFUSED,
             );
         }
         return fail(

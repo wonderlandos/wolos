@@ -21,6 +21,10 @@ if [ -e "$D/try" ]; then
   size=$(stty -F "$tty" size 2>/dev/null) || size='24 80'
   rows=${size% *} cols=${size#* }
   printf '\033[2J\033[0;37;40m\033[%d;%dH%s\033[30;40m' $((rows / 2)) $(((cols - ${#msg}) / 2 + 1)) "$msg" > "$tty" 2>/dev/null || true
+  # A serial console (VM, headless; the last of the kernel's active consoles) gets the word too,
+  # where wol-login's boot marks go (dry run 0.13.0, p1-live-try).
+  active=$(cat /sys/class/tty/console/active 2>/dev/null) || active=
+  case ${active##* } in ttyS* | ttyAMA* | hvc* | ttyUSB*) printf '%s\r\n' "$msg" > /dev/console 2>/dev/null || true ;; esac
   mkdir -p /run/wolos && : > /run/wolos/try
   systemctl start --no-block wold.service
 fi
