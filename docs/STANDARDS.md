@@ -308,7 +308,7 @@ brackets; `cargo test` runs in the `test` job).
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
   `BASELINE` row (that table is the record and its comment gives the reason for every raise;
   the rows: wol-abi 513, wolkit 314, wopkg 104, realtime 49, xguard 65, controller 68, api 32,
-  core 16, xguard-clam 13, shared 19, shell 20, proxy 3, wol-lua 3, webengine 178, atlas 1, federate 0, wolcrypt 0, wolkeyring 1, audio 0, aurlaws 0, wolsem 0, wol-tor 0, wolkit-render 0, wolkit-web 0, atlas-fed 0).
+  core 16, xguard-clam 13, shared 19, shell 20, proxy 3, wol-lua 3, webengine 178, atlas 1, federate 0, wolcrypt 0, wolkeyring 1, audio 0, aurlaws 0, wolsem 0, wol-tor 0, wolkit-render 0, wolkit-web 0, atlas-fed 0, atlas-drive 0).
   Controller went 56 -> 58 for `wolos-mm` (ADR 0061: `prctl(PR_SET_MEMORY_MERGE)` before an exec, `pidfd_open` and
   `process_madvise`; std wraps none). It went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
   no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap and `_exit` in that handler. A raise
@@ -317,7 +317,7 @@ brackets; `cargo test` runs in the `test` job).
   table (**CI** [test] `standards_quotes_the_baseline`). (C, R2C-19, audit8)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
-  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`, `wolkit_image`, `wolkit_text`, `webpolicy`, `atlas_wire`). **CI** [fuzz]
+  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`, `wolkit_image`, `wolkit_text`, `webpolicy`, `atlas_wire`, `atlas_drive_wire`). **CI** [fuzz]
   runs each target 60 s on pinned nightly; [test] `tools/ci/fuzz-replay.sh` replays
   `fuzz/regressions/<target>/` on stable, and `crates/shared/tests/fuzz_list.rs` fails when a
   target has no `[[bin]]`, no seeds, no matrix row or no name in this list. A new decoder without

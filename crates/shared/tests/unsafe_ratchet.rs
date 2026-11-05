@@ -81,6 +81,8 @@ use std::path::{Path, PathBuf};
 /// `tests/shim_loader_12.rs` (+7): the stand-in host and the stand-in library's hooks called through
 /// the C ABI. Each has a SAFETY line. `federate` 0 and `wolcrypt` 0 (copied from wave3/trust-core): no unsafe, `#![forbid(unsafe_code)]`.
 /// `atlas-fed` 0 (FED-ATLAS, 2026-11-05, ADR 0052 "Atlas"): the browser's Federate helper, std only, `#![forbid(unsafe_code)]`.
+/// `atlas-drive` 0 (ATLAS-DRIVE, 2026-11-05, ADR 0063): browser automation over the pipe; the browser's fds 3 and 4 are
+/// placed by a `sh` trampoline (`3<&0 4>&1`) instead of `pre_exec`, so the crate keeps `#![forbid(unsafe_code)]`.
 /// realtime 69 -> 79 (DT-2, compositor animations, counted at the wave-3 merge): `src/ffi.rs`
 /// `wol_anim_curve_name` and `wol_anim_curve` for the wol-hypr plugin (two `unsafe(no_mangle)`, one
 /// `unsafe extern`, the name read and the four-float out-write, each with a SAFETY line) and five
@@ -171,6 +173,8 @@ const BASELINE: &[(&str, usize)] = &[
     ("atlas", 1),
     // ADR 0052 (Atlas): the Federate helper links the verifier and nothing else; no unsafe.
     ("atlas-fed", 0),
+    // ADR 0063 (Atlas Drive): the pipe's descriptors are placed by a shell redirection, not `pre_exec`; no unsafe.
+    ("atlas-drive", 0),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -313,6 +313,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-drive"
+version = "0.12.0"
+dependencies = [
+ "serde_json",
+ "shared",
+]
+
+[[package]]
 name = "atlas-fed"
 version = "0.12.0"
 dependencies = [

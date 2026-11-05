@@ -86,6 +86,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0057](adr/0057-search-by-meaning.md) | Search by meaning in Settings, the Search bar and `wol help` | accepted |
 | [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
 | [0060](adr/0060-wolkit-on-webgpu-and-wasm.md) | libWolkit on WebGPU and WebAssembly: one renderer trait, wgpu as the portable target | proposed |
+| [0063](adr/0063-atlas-drive.md) | Atlas Drive: browser automation for Atlas over the CDP pipe, built for AI agents (snapshot with refs, diff, token budgets, batch, trap scan, MCP, permissions without spam) | accepted |
 | [0061](adr/0061-runtime-tuning-js-engines.md) | Runtime tuning: kernel and userland memory for JavaScript engines (fault-around, KSM, Bun allocator, page-out) | accepted |
 
 ## Modules
@@ -134,6 +135,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/performance.md](modules/performance.md) | measured desktop latency and frame targets, the probes and how to reproduce them | [0006](adr/0006-vendored-blocking-idle-exit.md) |
 | [modules/menus.md](modules/menus.md) | the standard menus in the bar | [0059](adr/0059-the-wolos-experience.md) |
 | [modules/monitor.md](modules/monitor.md) | wol-monitor: System Monitor (live graphs of processor, memory, disks, network, graphics, temperatures; apps from their scopes with Memory Saver state; process tree; disks; startup services) | |
+| [modules/atlas-drive.md](modules/atlas-drive.md) | Atlas Drive (`atlas-drive`, `crates/atlas-drive`): the verbs, the snapshot grammar, permissions, the frozen CDP subset, status of every verb and the Playwright parity table; numbers in [bench/atlas-drive.md](bench/atlas-drive.md) | [0063](adr/0063-atlas-drive.md) |
 | [modules/runtime-tuning.md](modules/runtime-tuning.md) | kernel and userland memory for JavaScript engines: fault-around, KSM, Bun allocator, page-out, `wolos-mm`; the measured table | [0061](adr/0061-runtime-tuning-js-engines.md) |
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
@@ -162,5 +164,6 @@ Each module document names its ADR and its code by crate and path.
 | [plugins/plugin.schema.json](plugins/plugin.schema.json) | JSON schema of a shell plugin manifest (ADR 0031, [modules/plugins.md](modules/plugins.md)) |
 | [bench/memsaver-discord.md](bench/memsaver-discord.md) | Discord under a 100 MB budget: before and after per state, what did not work, what reached 100 MB and what did not; raw runs in `bench/memsaver-discord.json`, harness in `tools/bench/discord/` |
 | [bench/webapps-baseline.md](bench/webapps-baseline.md) | web-app baseline: what each web-based app costs in memory, start-up, idle and frames, Memory Saver on and off, the gap against native apps and the ranked wins; raw data in `bench/webapps-baseline.json` and `bench/webapps-roles.json`, harness in `tools/bench/webapps/` |
+| [bench/atlas-drive.md](bench/atlas-drive.md) | Atlas Drive against Playwright 1.64.1 on the same Atlas binary: cold start, clicks, snapshots and their tokens, the agent task, driver memory and idle wakeups, 10 interleaved runs, with the rows Drive loses; raw runs in `bench/atlas-drive.json`, harness in `tools/bench/atlas-drive/` | [0063](adr/0063-atlas-drive.md) |
 | [bench/atlas-tor-plan.md](bench/atlas-tor-plan.md) | Atlas Tor tab benchmark plan: bootstrap, warm open, page load, relay overhead, memory and leak checks against the Brave Tor window; nothing measured yet | [0053](adr/0053-atlas-private-and-tor-tabs.md) |
 | [research/attested-gaming-mode.md](research/attested-gaming-mode.md) | research: attested gaming mode and kernel anti-cheat on WolOS (builds on ADR 0025; not a decision) |

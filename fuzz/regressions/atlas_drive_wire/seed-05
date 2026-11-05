@@ -1,0 +1,1 @@
+{"peers":[{"exe":"/usr/bin/agent","scopes":["read","act"],"granted_ms":1}],"auto":{"until_ms":5,"sites":["a.test"]}}

@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# atlas-drive (ADR 0063, docs/modules/atlas-drive.md): browser automation for Atlas, built for AI agents.
+# The daemon launches Atlas with --remote-debugging-pipe (fds 3 and 4, never a TCP port) and answers
+# on $XDG_RUNTIME_DIR/atlas/drive.sock. Threads, no async runtime, no dependency beyond shared + serde_json.
+[package]
+name = "atlas-drive"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Atlas Drive: CDP over a pipe, an agent-sized page snapshot, and the verbs to act on it"
+publish = false
+
+[lib]
+name = "atlas_drive"
+path = "src/lib.rs"
+
+[[bin]]
+name = "atlas-drive"
+path = "src/main.rs"
+
+[dependencies]
+shared.workspace = true
+serde_json.workspace = true
