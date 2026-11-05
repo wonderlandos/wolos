@@ -1,0 +1,8 @@
+# WolOS defaults for the settings every GTK app reads through the settings portal. GTK 4 and libadwaita
+# (Files, Text Editor, Calculator) take their window-button layout from here: without a value in the
+# account's dconf (`wol theme apply` writes one a moment into the session) they get the schema default
+# `appmenu:close`, so Files showed one grey dot or no buttons (QA-VIS1-25, QA-VIS2-51). Compiled by
+# glib-compile-schemas (wolos-system.install; Arch's glib2 hook does the same).
+# The value is crates/core/src/theme/apps.rs BUTTON_LAYOUT: all on the right, close rightmost.
+[org.gnome.desktop.wm.preferences]
+button-layout=':minimize,maximize,close'

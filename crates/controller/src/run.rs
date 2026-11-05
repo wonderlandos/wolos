@@ -971,12 +971,31 @@ fn shell(env: &mut dyn Env, inv: &Invocation) -> i32 {
     let sock = Path::new(&rt).join(SHELL_SOCKET);
     match env.request(&sock, shell_line(inv).as_bytes()) {
         Ok(_) => 0,
-        Err(e) => fail(
-            env,
-            ErrorCode::Unavailable,
-            &format!("shell not running ({e})"),
-        ),
+        Err(e) => {
+            // A key that asks for a panel (Super+Esc, Super+Tab) is a person at the screen with
+            // no shell: start its user unit now (QA-LIVE-21). Not for `reload`, which a settings
+            // change sends to a shell that may legitimately not run.
+            let started = inv.action != "shell.reload" && start_shell(env);
+            let more = if started { "; starting it" } else { "" };
+            fail(
+                env,
+                ErrorCode::Unavailable,
+                &format!("shell not running ({e}){more}"),
+            )
+        }
     }
+}
+
+/// The user unit that keeps the shell up (`files/usr/lib/systemd/user/wolos-shell.service`).
+const SHELL_UNIT: &str = "wolos-shell.service";
+
+/// Asks the user manager to start the shell's unit, without waiting for it (a keybind must
+/// return). False where there is no user manager to ask.
+fn start_shell(env: &mut dyn Env) -> bool {
+    let argv: Vec<String> = ["systemctl", "--user", "start", "--no-block", SHELL_UNIT]
+        .map(String::from)
+        .into();
+    env.exec_quiet(&argv).is_ok_and(|code| code == 0)
 }
 
 /// `wol shell call <plugin> <fn> [json...]` and `wol shell status`: one line to the shell, one

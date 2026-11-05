@@ -136,7 +136,8 @@ pub unsafe extern "C" fn wol_window_lights(
     };
     let decoration = match decoration {
         0 => Decoration::None,
-        2 => Decoration::Client,
+        // 6: an Xwayland client that draws its own frame (_GTK_FRAME_EXTENTS) is client-side too.
+        2 | 6 => Decoration::Client,
         3 => Decoration::X11,
         4 => Decoration::X11Bare,
         5 => Decoration::Kit,
@@ -1006,6 +1007,14 @@ mod tests {
         assert_eq!(lights(Some(c"steam"), 3, 0, 0), 0);
         assert_eq!(lights(None, 1, 0, 0), 3);
         assert_eq!(lights(class, 9, 0, 0), 3, "unknown: ours");
+        // QA-WM-2: an Xwayland GTK app that draws its own frame (it sets `_GTK_FRAME_EXTENTS`, which
+        // wol-hypr reports as decoration 6) keeps its header-bar buttons: a strip over it is a second
+        // set of buttons, the title twice and a band between the strip and the app's shadow margin.
+        // A plain X11 window still gets ours, a menu or tooltip none.
+        let editor = Some(c"org.gnome.TextEditor");
+        assert_eq!(lights(editor, 6, 0, 0), 0, "own frame: no strip");
+        assert_eq!(lights(editor, 3, 0, 0), 3, "plain X11: ours");
+        assert_eq!(lights(editor, 4, 0, 0), 0, "menu, tooltip");
     }
 
     #[test]

@@ -1,0 +1,35 @@
+# The desktop shell (bar, dock, wallpaper, notifications, panels), kept up by the user manager
+# (QA-LIVE-21). `wol-shell --supervised` already restarts a shell that crashes (crates/shell/src/
+# supervise.rs); this unit restarts the supervisor itself, so `pkill -9 wol-shell` (which matches
+# both) or an OOM kill no longer leaves a black desktop that nothing brings back.
+# The compositor's start line starts it (hyprland.lua: after Setup at the first sign-in, and after
+# the session environment is imported); `wol shell show|toggle|hide` starts it again when the
+# socket is gone, so Super+Esc brings the shell back from the keyboard.
+[Unit]
+Description=WolOS desktop shell (wol-shell)
+PartOf=wolos-session.target
+After=wolos-session.target
+# A crash burst never leaves the desktop dead (RH-221): no start limit; the supervisor spaces its
+# own restarts, and the unit stops with the session (PartOf).
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/wol-shell --supervised
+# The supervisor trims this file (stderr_log) and the session's logs read it: an appending file.
+StandardError=append:%t/wol-shell.log
+# Any end but the supervisor's own deliberate ones brings it back, SIGTERM and SIGKILL included.
+# Exit 0 = the shell asked to quit, or another supervisor already holds this session; exit 1 = the
+# display is gone (the session is over), the supervisor gave up after its ceiling of restarts, or
+# it has no guard file: those stay ended.
+Restart=always
+RestartSec=1
+RestartPreventExitStatus=0 1
+SuccessExitStatus=1
+# Losing the shell ends the desktop (the same reason as the lock screen and the idle helper).
+ManagedOOMPreference=omit
+# The shell kept the compositor's priority while it ran inside the session scope; as a user unit it
+# carries the same two values itself (files/usr/lib/systemd/system/session-.scope.d/70-wolos-limits.conf,
+# pinned equal by units.rs shell_unit_keeps_the_session_scope_priority).
+CPUWeight=1000
+MemoryMin=256M

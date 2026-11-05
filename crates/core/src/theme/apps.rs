@@ -1415,6 +1415,43 @@ mod tests {
         );
     }
 
+    /// QA-VIS1-25 / QA-VIS2-51: Files (Nautilus, libadwaita) showed no window buttons, or one grey
+    /// dot at the right edge. GTK 4 takes the button layout from the settings portal, which reads
+    /// gsettings; the key was only ever written by `wol theme apply` a moment into the session, so
+    /// an app opened before that (or where the write failed) got the schema default `appmenu:close`.
+    /// The system default carries the layout itself, so every app reads the same one from its first
+    /// frame; it is the one `wol theme apply` writes and the INI files carry.
+    #[test]
+    fn the_system_default_button_layout_is_the_themes() {
+        let over = include_str!(
+            "../../../../desktop/overlay/usr/share/glib-2.0/schemas/50_wolos.gschema.override"
+        );
+        let mut section = "";
+        let mut layout = None;
+        for l in over.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
+            if let Some(s) = l.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+                section = s;
+            } else if let Some(v) = l.strip_prefix("button-layout=") {
+                assert_eq!(section, "org.gnome.desktop.wm.preferences");
+                layout = Some(v.trim_matches('\''));
+            }
+        }
+        assert_eq!(layout, Some(BUTTON_LAYOUT));
+        // The same words in the files GTK 3 and GTK 4 read before any portal answers.
+        for ini in [
+            include_str!("../../../../desktop/overlay/etc/xdg/gtk-3.0/settings.ini"),
+            include_str!("../../../../desktop/overlay/etc/xdg/gtk-4.0/settings.ini"),
+            include_str!("../../../../desktop/overlay/usr/share/wolos/gtk-3.0/settings.ini"),
+            include_str!("../../../../desktop/overlay/usr/share/wolos/gtk-4.0/settings.ini"),
+        ] {
+            assert!(ini.contains(&format!("gtk-decoration-layout={BUTTON_LAYOUT}\n")));
+        }
+        // All three controls are there for an app to draw, close among them.
+        for b in ["minimize", "maximize", "close"] {
+            assert!(BUTTON_LAYOUT.contains(b), "{b}");
+        }
+    }
+
     #[test]
     fn gsettings_follow_the_variant() {
         let l = gsettings(&theme("wol-light"));

@@ -67,6 +67,49 @@ fn shell_panels_send_one_line_to_the_shell_socket() {
     );
 }
 
+/// QA-LIVE-21: Super+Esc and the other shell keybinds go through `wol shell`. With the shell
+/// gone (the black desktop) the key itself starts the shell's user unit again, without waiting
+/// for it; a `reload` (a settings change told to a shell that may not run) starts nothing.
+#[test]
+fn shell_keybind_starts_the_shell_when_it_is_gone() {
+    let gone = || FakeEnv {
+        vars: vec![("XDG_RUNTIME_DIR".into(), "/run/u".into())],
+        ..Default::default()
+    };
+    let start = vec![
+        "systemctl".to_owned(),
+        "--user".into(),
+        "start".into(),
+        "--no-block".into(),
+        "wolos-shell.service".into(),
+    ];
+    for line in [
+        "shell toggle session",
+        "shell show session",
+        "shell hide osd",
+    ] {
+        let mut env = gone();
+        assert_eq!(
+            run(line, &mut env),
+            69,
+            "{line}: still an error for a script"
+        );
+        assert_eq!(env.execs, std::slice::from_ref(&start), "{line}");
+        assert!(env.err.contains("starting it"), "{line}: {}", env.err);
+    }
+    let mut env = gone();
+    assert_eq!(run("shell reload", &mut env), 69);
+    assert!(env.execs.is_empty(), "{:?}", env.execs);
+    // A shell that answers is left alone.
+    let mut env = FakeEnv {
+        vars: vec![("XDG_RUNTIME_DIR".into(), "/run/u".into())],
+        replies: vec![String::new()],
+        ..Default::default()
+    };
+    assert_eq!(run("shell toggle session", &mut env), 0);
+    assert!(env.execs.is_empty());
+}
+
 #[test]
 fn theme_light_dark_toggle_write_the_active_file() {
     let home = temp_home("theme");

@@ -48,7 +48,7 @@ once("gnome-keyring-daemon --start --components=secrets") -- finishes the login 
 once([[sh -c '[ -x /usr/bin/fcitx5 ] && exec fcitx5 -d']])
 -- First sign-in (shell::first_login): while wol-session leaves wol-first-login in the runtime folder, this
 -- account's own Setup runs before the shell; the shell starts when it ends, however it ends.
-once([[sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
+once([[sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; dbus-update-activation-environment --systemd --all; systemctl --user start wolos-shell.service || exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
 once([[wol theme apply]]) -- GTK/Qt/foot files + gsettings from the theme in use; saves nothing (QA-SET-63)
 -- Live: the account gets Flathub (QA-FDAY-11). /var/lib/flatpak is not there, so flatpak in a terminal
 -- saw no remote; the file ships the key, nothing is downloaded (the Store adds the same remote).
