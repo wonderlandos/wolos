@@ -494,7 +494,18 @@ fn run(a: Args) -> Result<(), Error> {
                 .to_str()
                 .ok_or(Error::Malformed("program path"))?
                 .to_string();
-            let sha256 = io::sha256_file(&canon);
+            // A grant names its program by path and digest; a program too big to be hashed (the
+            // daemon would see its callers without a digest) cannot be named, so it is refused
+            // rather than recorded without one, which would match any content at that path.
+            let sha256 = match io::sha256_file(&canon) {
+                Some(io::Hashed::Digest(d)) => Some(d),
+                Some(io::Hashed::TooLarge) => {
+                    return Err(Error::Policy(
+                        "that program is too large to be named by its digest",
+                    ));
+                }
+                None => None,
+            };
             for id in &ids {
                 let mut acl = s.keyring.meta(id).ok_or(Error::NotFound)?.acl.clone();
                 acl.retain(|a| a.exe != exe_s);

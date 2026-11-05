@@ -167,6 +167,7 @@ mod tests {
             uid,
             pid,
             app: "/usr/bin/notes".into(),
+            scope: None,
         }
     }
 

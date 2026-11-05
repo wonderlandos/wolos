@@ -8,6 +8,10 @@ description = "Tor groups for Atlas Tor tabs: hardened torrc, isolating SOCKS5 r
 
 [dependencies]
 serde_json.workspace = true
+# The root-side steps of `apply` go through the one helper for root children and the one atomic
+# writer (STANDARDS 7.1 "Root commands", QA-A9-SEC-12); both are workspace crates.
+shared.workspace = true
+wol_core.workspace = true
 
 [[bin]]
 name = "wol-tor"

@@ -1,3 +1,3 @@
-# A browser that speaks a later version is answered with version 1, the one this bridge speaks.
+# A browser that speaks a later version is answered with version 2, the one this bridge speaks.
 > {"op":"hello","version":7,"pid":@PID}
-< {"reply":"hello","version":1}
+< {"reply":"hello","version":2}

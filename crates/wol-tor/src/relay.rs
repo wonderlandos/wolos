@@ -139,15 +139,31 @@ fn refuse(c: &mut TcpStream, r: Reply) -> Outcome {
 
 impl Relay {
     /// Accepts browser connections forever, one named thread each.
-    pub fn serve(self: Arc<Self>, listener: TcpListener) -> io::Result<()> {
+    /// `log` says why a stream was dropped (the binary's stderr, the journal).
+    pub fn serve(self: Arc<Self>, listener: TcpListener, log: fn(&str)) -> io::Result<()> {
+        self.serve_with(listener, move |what, work| {
+            shared::bounded::spawn_conn(what, &log, work)
+        })
+    }
+
+    /// [`Relay::serve`] with the thread start given (`start(what, work)` says whether the thread
+    /// began), so a test can refuse one. A stream whose thread the system refused (EAGAIN under the
+    /// unit's TasksMax) is dropped with a short wait; the relay keeps serving the others instead
+    /// of ending, which cut every open stream of the group (QA-A9-SEC-11).
+    pub fn serve_with(
+        self: Arc<Self>,
+        listener: TcpListener,
+        start: impl Fn(&str, Box<dyn FnOnce() + Send>) -> bool,
+    ) -> io::Result<()> {
         for conn in listener.incoming() {
             let Ok(conn) = conn else { continue };
             let me = Arc::clone(&self);
-            thread::Builder::new()
-                .name("wol-tor-stream".into())
-                .spawn(move || {
+            start(
+                "wol-tor-stream",
+                Box::new(move || {
                     let _ = me.handle(conn);
-                })?;
+                }),
+            );
         }
         Ok(())
     }

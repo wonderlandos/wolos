@@ -92,6 +92,11 @@ fn keep_ready_on() -> Res<bool> {
     Ok(fs::read_to_string(file).is_ok_and(|t| ready::parse(&t)))
 }
 
+/// A line for the journal (stderr): a stream thread the system refused.
+fn journal(line: &str) {
+    eprintln!("<3>wol-tor: {line}");
+}
+
 fn systemctl_user(args: &[&str]) -> Res<()> {
     let s = Command::new("systemctl")
         .arg("--user")
@@ -369,7 +374,7 @@ fn host_run(g: &Group, atlas: Vec<String>, shared_tor: Option<PathBuf>) -> Res<i
     });
     thread::Builder::new()
         .name("wol-tor-relay".into())
-        .spawn(move || relay.serve(listener))
+        .spawn(move || relay.serve(listener, journal))
         .map_err(|e| e.to_string())?;
     if shared_tor.is_some() {
         // The machine's tor is not ours to own or to watch (TAKEOWNERSHIP would stop it when this
@@ -486,7 +491,7 @@ fn switches_verb(args: &[String]) -> Res<()> {
             ..new.clone()
         }
         .render();
-        fs::write(&file, text).map_err(|e| {
+        shared::atomic::atomic_write(&file, ROOT_FILE_MODE, text.as_bytes()).map_err(|e| {
             format!(
                 "{}: {e} (changing the Tor scopes needs administrator rights)",
                 file.display()
@@ -499,15 +504,23 @@ fn switches_verb(args: &[String]) -> Res<()> {
     Ok(())
 }
 
+/// Mode of the files the root steps write (switches, applied, rule files): the owner writes, all
+/// read; the umask of the unit does not matter.
+const ROOT_FILE_MODE: u32 = 0o644;
+
+/// One root-side step of `apply`: a file written atomically (a reader of the rule files sees the
+/// old text or the new, never half) or a program started through `privileged_command` (cleared
+/// environment, fixed PATH, no shell; STANDARDS 7.1 "Root commands", QA-A9-SEC-12).
 fn run_step(st: &transparent::PrivStep) -> Res<()> {
     if let Some((path, text)) = &st.write_file {
         let p = Path::new(path);
         if let Some(d) = p.parent() {
             fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
         }
-        return fs::write(p, text).map_err(|e| format!("{path}: {e}"));
+        return shared::atomic::atomic_write(p, ROOT_FILE_MODE, text.as_bytes())
+            .map_err(|e| format!("{path}: {e}"));
     }
-    let mut c = Command::new(&st.argv[0]);
+    let mut c = wol_core::privileged::privileged_command(&st.argv[0]);
     c.args(&st.argv[1..]);
     if st.stdin.is_some() {
         c.stdin(std::process::Stdio::piped());
@@ -572,7 +585,8 @@ fn apply_verb(args: &mut Vec<String>) -> Res<i32> {
         if let Some(d) = p.parent() {
             fs::create_dir_all(d).map_err(|e| format!("{}: {e}", d.display()))?;
         }
-        fs::write(&p, to.render()).map_err(|e| format!("{}: {e}", p.display()))?;
+        shared::atomic::atomic_write(&p, ROOT_FILE_MODE, to.render().as_bytes())
+            .map_err(|e| format!("{}: {e}", p.display()))?;
     }
     Ok(0)
 }
@@ -964,7 +978,7 @@ fn relay_only(g: &Group, listen: &str) -> Res<i32> {
         ready,
         ready_wait: READY_WAIT,
     });
-    relay.serve(listener).map_err(|e| e.to_string())?;
+    relay.serve(listener, journal).map_err(|e| e.to_string())?;
     Ok(0)
 }
 
@@ -1213,5 +1227,52 @@ fn main() -> ExitCode {
             eprintln!("wol-tor: {e}");
             ExitCode::from(1)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn step(argv: &[&str], write_file: Option<(&Path, &str)>) -> transparent::PrivStep {
+        transparent::PrivStep {
+            argv: argv.iter().map(|s| (*s).to_owned()).collect(),
+            stdin: None,
+            write_file: write_file.map(|(p, t)| (p.to_string_lossy().into_owned(), t.to_owned())),
+        }
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let d = env::temp_dir().join(format!("wol-tor-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// QA-A9-SEC-12: a root step runs with a cleared environment and the fixed PATH, not the
+    /// unit's (`CARGO_MANIFEST_DIR` is set by cargo and must not reach the child).
+    #[test]
+    fn a_root_step_starts_with_a_cleared_environment() {
+        let script = r#"test -z "$CARGO_MANIFEST_DIR" && test "$PATH" = /usr/bin:/usr/sbin"#;
+        run_step(&step(&["/bin/sh", "-c", script], None)).unwrap();
+    }
+
+    /// QA-A9-SEC-12: a rule file is replaced whole (temp name, rename), with the mode the step
+    /// means whatever the umask, and no temporary is left behind.
+    #[test]
+    fn a_rule_file_is_written_atomically_with_its_mode() {
+        let d = scratch("rules");
+        let f = d.join("sub/rules.nft");
+        run_step(&step(&[], Some((&f, "one\n")))).unwrap();
+        run_step(&step(&[], Some((&f, "two\n")))).unwrap();
+        assert_eq!(fs::read_to_string(&f).unwrap(), "two\n");
+        assert_eq!(fs::metadata(&f).unwrap().mode() & 0o7777, ROOT_FILE_MODE);
+        let left: Vec<_> = fs::read_dir(f.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, ["rules.nft"], "no temporary left");
+        let _ = fs::remove_dir_all(&d);
     }
 }

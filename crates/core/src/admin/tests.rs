@@ -964,6 +964,31 @@ fn describe_hides_printer_credentials() {
     assert_eq!(describe(&r(Hostname, &["wolos"])), "hostname wolos");
 }
 
+/// QA-A9-SEC-10: any URL-shaped argument is logged without `user:password@`, not only the
+/// printer's (a PAC address may carry credentials).
+#[test]
+fn describe_never_carries_userinfo() {
+    assert_eq!(
+        describe(&r(
+            Proxy,
+            &["auto", "https://u:p4ss@wpad.example/x.pac", "-"]
+        )),
+        "proxy auto https://wpad.example/x.pac -"
+    );
+    assert_eq!(
+        describe(&r(
+            Proxy,
+            &["auto", "http://u@wpad.example/x.pac", "localhost"]
+        )),
+        "proxy auto http://wpad.example/x.pac localhost"
+    );
+    // Not a URL, or no credentials: unchanged.
+    assert_eq!(
+        describe(&r(Proxy, &["manual", "p.example:3128", "-", "-", "-"])),
+        "proxy manual p.example:3128 - - -"
+    );
+}
+
 /// QA-100 error reports switch: the sender's own flag, then the timer follows.
 #[test]
 fn reports_switch_writes_the_flag_and_the_timer() {

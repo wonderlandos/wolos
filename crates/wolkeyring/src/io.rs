@@ -434,23 +434,47 @@ pub fn app_of_cgroup(cg: &str) -> Option<String> {
     (!u.is_empty() && u.len() <= 255).then(|| u.to_string())
 }
 
-/// SHA-256 of a file, hex, read in 1 MiB pieces (at most 1 GiB).
-pub fn sha256_file(path: &Path) -> Option<String> {
+/// The most of an executable that is hashed to identify a caller (64 MiB: every program of the
+/// system and every packaged app fits; a bigger file is a bundle, not what a digest ACL names).
+pub const MAX_HASHED: u64 = 64 << 20;
+
+/// What hashing a caller's executable gave.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Hashed {
+    /// SHA-256, hex.
+    Digest(String),
+    /// Longer than [`MAX_HASHED`]: no digest, so a grant bound to a digest cannot match this
+    /// caller (QA-A9-SEC-4); the file is not read.
+    TooLarge,
+}
+
+/// SHA-256 of a file, hex, read in 1 MiB pieces; a file longer than [`MAX_HASHED`] is not read
+/// (it is [`Hashed::TooLarge`], also when it grows past the cap while read). None when it cannot
+/// be read.
+pub fn sha256_file(path: &Path) -> Option<Hashed> {
     use std::io::BufRead;
     let f = std::fs::File::open(path).ok()?;
-    let mut r = std::io::BufReader::with_capacity(1 << 20, f.take(1 << 30));
+    if f.metadata().ok()?.len() > MAX_HASHED {
+        return Some(Hashed::TooLarge);
+    }
+    let mut r = std::io::BufReader::with_capacity(1 << 20, f.take(MAX_HASHED + 1));
     use sha2::Digest;
     let mut h = sha2::Sha256::new();
+    let mut total = 0u64;
     loop {
         let buf = r.fill_buf().ok()?;
         if buf.is_empty() {
             break;
         }
+        total += buf.len() as u64;
         h.update(buf);
         let n = buf.len();
         r.consume(n);
     }
-    Some(crate::wire::hex(&h.finalize()))
+    if total > MAX_HASHED {
+        return Some(Hashed::TooLarge);
+    }
+    Some(Hashed::Digest(crate::wire::hex(&h.finalize())))
 }
 
 #[cfg(test)]

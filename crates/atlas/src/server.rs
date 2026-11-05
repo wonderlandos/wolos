@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 
 /// How long the bridge stays with nothing to do.
 pub const IDLE: Duration = Duration::from_secs(30);
-/// How long a new connection has to say hello, counted from accept (not from each read). The only
+/// How long a new connection has to answer the greeting and say hello, counted from accept (not from each read). The only
 /// timer while connected, and only until the hello.
 pub const HELLO_WAIT: Duration = Duration::from_secs(5);
 /// Connections open at once; the next is refused with [`ErrorCode::Busy`].
@@ -154,13 +154,18 @@ fn accept(listener: &UnixListener, config: &Arc<Config>, live: &Shared) {
             continue;
         };
         let (config, live) = (config.clone(), live.clone());
-        let _ = std::thread::Builder::new()
-            .name("connection".into())
-            .stack_size(STACK)
-            .spawn(move || {
+        let log = config.log.clone();
+        // A thread the system refuses drops this connection (and its hold) with a wait and a
+        // journal line, instead of a silent close with no pause (QA-A9-SEC-7 class).
+        shared::bounded::spawn_conn_with(
+            std::thread::Builder::new().stack_size(STACK),
+            "atlas-bridge connection",
+            &*log,
+            move || {
                 connection(s, &config, &live);
                 drop(hold);
-            });
+            },
+        );
     }
 }
 
@@ -240,8 +245,16 @@ fn connection(s: UnixStream, config: &Arc<Config>, live: &Shared) {
     };
     let _ = w.set_write_timeout(Some(WRITE_WAIT));
     let w: Writer = Arc::new(Mutex::new(w));
+    // The bridge speaks first (ADR 0033, QA-A9-SEC-1): `hello <nonce>`, and the echo must come
+    // from the connecting pid, byte by byte (SCM_CREDENTIALS). A hello written before accept, or
+    // by a process that only holds a copy of the descriptor, never counts. The one deadline covers
+    // the greeting and the hello line.
+    let deadline = Instant::now() + HELLO_WAIT;
+    if shared::jobs::greet_by(&s, deadline).is_err() {
+        return end(&w, &not_browser());
+    }
     let mut r = BufReader::new(s);
-    let hello = match read_hello(&mut r, Instant::now() + HELLO_WAIT) {
+    let hello = match read_hello(&mut r, deadline) {
         Line::Got(l) => Request::decode(&l).ok(),
         _ => None,
     };

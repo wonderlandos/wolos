@@ -116,10 +116,15 @@ impl PeerIdentity {
         if self.showers.contains(&app.as_str()) && self.injected() {
             return None;
         }
+        // The one program told apart by its scope: the web app host (the scope names the app).
+        let scope = (app == crate::webapp::HOST)
+            .then(|| self.web_app())
+            .flatten();
         Some(Caller {
             uid: self.uid,
             pid: self.pid,
             app,
+            scope,
         })
     }
 
@@ -197,6 +202,20 @@ impl PeerIdentity {
                 .map(|a| String::from_utf8_lossy(a).into_owned())
                 .collect(),
         )
+    }
+
+    /// The value of environment variable `name` in the pinned process's initial environment, read
+    /// through the pinned `/proc/<pid>` (never by pid number, QA-A9-SEC-6); None when the process
+    /// changed since accept, cannot be read, or has no such variable.
+    pub fn env_var(&self, name: &str) -> Option<String> {
+        if !self.still_same() {
+            return None;
+        }
+        let env = proc_file(self.dir.as_ref()?, "environ")?;
+        let key = format!("{name}=");
+        env.split(|b| *b == 0)
+            .find_map(|e| e.strip_prefix(key.as_bytes()))
+            .and_then(|v| String::from_utf8(v.to_vec()).ok())
     }
 
     /// Executable bytes as captured at accept (for exact-path checks such as the realtime agent).
@@ -616,6 +635,40 @@ mod tests {
         let _ = c.kill();
         let _ = c.wait();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// QA-A9-SEC-6: a variable of the peer is read through the pinned process, so it is the
+    /// process that connected, and it is not read at all once that process has ended (a reused
+    /// pid is another process: reading `/proc/<pid>/environ` by number would have named it).
+    #[test]
+    fn a_variable_is_read_from_the_pinned_process_only() {
+        let mut c = child(&[("XDG_RUNTIME_DIR", "/run/user/4242")]);
+        let id = PeerIdentity::of_process(i32::try_from(c.id()).unwrap(), &SHOWERS);
+        assert_eq!(
+            id.env_var("XDG_RUNTIME_DIR").as_deref(),
+            Some("/run/user/4242")
+        );
+        assert_eq!(id.env_var("NOT_THERE"), None);
+        let _ = c.kill();
+        let _ = c.wait();
+        assert_eq!(
+            id.env_var("XDG_RUNTIME_DIR"),
+            None,
+            "the pinned process ended: nothing is read"
+        );
+    }
+
+    /// QA-A9-SEC-6: the web host's scope comes with the caller (read through the pin), other
+    /// programs carry none.
+    #[test]
+    fn only_the_web_host_carries_a_scope() {
+        let (a, _b) = UnixStream::pair().unwrap();
+        let id = PeerIdentity::capture(&a).unwrap();
+        assert_eq!(
+            id.caller().unwrap().scope,
+            None,
+            "the test binary is no host"
+        );
     }
 
     #[test]

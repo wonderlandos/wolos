@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! Atlas Host Protocol, version 1 (ADR 0043 D4, docs/modules/atlas.md): what the browser's host
+//! Atlas Host Protocol, version 2 (ADR 0043 D4, docs/modules/atlas.md): what the browser's host
 //! component and `atlas-bridge` say to each other over `$XDG_RUNTIME_DIR/atlas/bridge.sock`.
 //!
-//! One JSON object per line, UTF-8, at most [`MAX_LINE`] bytes with the newline. The browser
-//! speaks first with [`Request::Hello`]; every later request carries an `id` (1 or more) and gets
-//! exactly one [`Reply`] with that id, in the order the answers are ready (a share sheet that waits
-//! for the person does not hold back a Trash). Errors that belong to no request use id 0.
+//! The bridge speaks first (ADR 0033, QA-A9-SEC-1): `hello <nonce>`, which the browser echoes
+//! (`shared::jobs::answer_hello`); the bridge checks that every byte of the echo was written by the
+//! process that connected (SCM_CREDENTIALS). Then one JSON object per line, UTF-8, at most
+//! [`MAX_LINE`] bytes with the newline. The browser sends [`Request::Hello`] first; every later
+//! request carries an `id` (1 or more) and gets exactly one [`Reply`] with that id, in the order
+//! the answers are ready (a share sheet that waits for the person does not hold back a Trash).
+//! Errors that belong to no request use id 0.
 //!
 //! The encoding is canonical: [`Request::encode`] and [`Reply::encode`] write the fields in the
 //! order of the fixtures in `tests/fixtures/atlas/`, which the browser side tests byte for byte.
@@ -13,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 /// The protocol version this side speaks.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 /// Directory under `$XDG_RUNTIME_DIR` (0700) and the socket in it (0600).
 pub const SOCKET_DIR: &str = "atlas";
 /// The socket's file name in that directory.

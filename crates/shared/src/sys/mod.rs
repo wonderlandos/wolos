@@ -39,13 +39,59 @@ pub const OPEN_QUIET: i32 = libc::O_NONBLOCK | libc::O_NOCTTY;
 /// [`OPEN_QUIET`] and `O_NOFOLLOW`, so a FIFO does not block, a final symlink is refused, and a
 /// terminal never becomes the opener's controlling terminal. A root daemon without one (wold
 /// under systemd) would otherwise take a pty the caller named and die of its hang-up (audit
-/// S4-2). Check the opened file (`metadata().is_file()`), not the name. Err as `open(2)`.
+/// S4-2). Check the opened file (`metadata().is_file()`), not the name. Err as `open(2)`. For a name
+/// from outside that must be a regular file use [`open_regular`]: this one read-opens whatever the
+/// name is (QA-A9-SEC-8).
 pub fn open_named(path: impl AsRef<std::path::Path>) -> std::io::Result<std::fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
         .custom_flags(OPEN_QUIET | libc::O_NOFOLLOW)
         .open(path)
+}
+
+/// Open, for reading, a regular file that someone else named (a package to install, a file to
+/// check) without ever read-opening anything else (QA-A9-SEC-8). The name is opened with `O_PATH`
+/// and `O_NOFOLLOW` (which has no side effect on any kind of node: a watchdog device arms on a
+/// read-open, a tape or tty-class node acts on it), the descriptor is `fstat`ed, anything but a
+/// regular file is refused, and only then is the file opened for reading through
+/// `/proc/self/fd/<n>`, which is that same inode: what was checked is what is read. The reading
+/// open has [`OPEN_QUIET`] too. Err as `open(2)`, or `InvalidInput` for a node that is not a
+/// regular file.
+pub fn open_regular(path: impl AsRef<std::path::Path>) -> std::io::Result<std::fs::File> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let anchor = open_path_regular(path)?;
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(OPEN_QUIET)
+        .open(format!("/proc/self/fd/{}", anchor.as_raw_fd()))?;
+    // The anchor and the reading descriptor are one inode; the check is cheap and keeps the
+    // promise even if a future kernel quirk made them differ.
+    if !f.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    Ok(f)
+}
+
+/// The first half of [`open_regular`]: the `O_PATH` descriptor of `path`, which is only returned
+/// when it is a regular file (it cannot be read; it names the inode).
+pub fn open_path_regular(path: impl AsRef<std::path::Path>) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let anchor = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_PATH | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    if !anchor.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    Ok(anchor)
 }
 
 /// Write `bytes` with one file descriptor attached (SCM_RIGHTS).

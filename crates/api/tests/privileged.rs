@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Guard for audit A22/B12, R2C-16/R2C-17: every program a root process starts goes through
 //! `wol_core::privileged` (re-exported as `api::privileged`: cleared environment, fixed PATH, no
-//! shell). This test reads every file under crates/api/src and crates/controller/src/bin (the root
-//! binaries wol-login, wol-session-pam and the setuid-free rest), drops every `#[cfg(test)]` item
+//! shell). This test reads every file under crates/api/src, crates/controller/src/bin (the root
+//! binaries wol-login, wol-session-pam and the setuid-free rest) and crates/wol-tor/src/bin (`wol-tor
+//! apply`, run as root by wol-tor-rules.service), drops every `#[cfg(test)]` item
 //! by brace matching (not only the first), and counts each launch per file. A file may launch
 //! another way only as often as its ALLOWED row says, each row with the reason it is safe; a row
 //! whose count no longer matches fails too, so a second launch in an allowed file is caught.
@@ -25,7 +26,12 @@ const LAUNCHES: &[&str] = &[
 ];
 
 /// The trees read: (name, directory relative to crates/api).
-const ROOTS: &[(&str, &str)] = &[("api", "src"), ("controller-bin", "../controller/src/bin")];
+const ROOTS: &[(&str, &str)] = &[
+    ("api", "src"),
+    ("controller-bin", "../controller/src/bin"),
+    // wol-tor-rules.service runs `wol-tor apply` as root (QA-A9-SEC-12).
+    ("wol-tor-bin", "../wol-tor/src/bin"),
+];
 
 /// (tree, file under it, needle, how many times, reason).
 const ALLOWED: &[(&str, &str, &str, usize, &str)] = &[
@@ -66,6 +72,17 @@ const ALLOWED: &[(&str, &str, &str, usize, &str)] = &[
         1,
         "exec-merge asks for KSM and then replaces itself (exec, no child) with the app the \
          launcher named by absolute path, as the same user: no privilege is added or dropped",
+    ),
+    (
+        "wol-tor-bin",
+        "wol-tor.rs",
+        "Command::new(",
+        8,
+        "every one runs as the person's account, never as root: systemctl --user (2), the Atlas \
+         command line of the group (atlas_cmd), tor itself under the group's own unit, nft list \
+         in `doctor`, systemd-run, and the two exec() into tor/Atlas (no child). The root steps \
+         of `apply` (run_step) go through privileged_command; a new launch here must say which \
+         account runs it",
     ),
 ];
 

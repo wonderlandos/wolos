@@ -148,7 +148,7 @@ fn socket(items: usize, ops: usize) {
     let l = wolkeyring::daemon::bind(&path).unwrap();
     {
         let d = d.clone();
-        std::thread::spawn(move || wolkeyring::daemon::serve(d, l));
+        std::thread::spawn(move || wolkeyring::daemon::serve(d, l, |_| {}));
     }
     let mut s = std::os::unix::net::UnixStream::connect(&path).unwrap();
     let mut r = BufReader::new(s.try_clone().unwrap());

@@ -216,7 +216,11 @@ for the tools). The rules in one place:
     under it (`Path::components`, no `..`, no absolute parts) before open or unlink.
   - **TOCTOU**: open the file, then check the opened descriptor (`fstat`, `O_NOFOLLOW`,
     `openat`); never check a path and then open it. Installer and updater write to a temp name in
-    the same directory and `rename`.
+    the same directory and `rename`. A name from outside that must be a regular file is opened
+    with `shared::sys::open_regular` (`O_PATH` + `O_NOFOLLOW`, `fstat`, then the read-open through
+    `/proc/self/fd/<n>`): a read-open of a device node has driver side effects (a watchdog arms).
+    **CI** [test] `crates/shared/tests/open_regular.rs` (strace sees only `O_PATH` on a FIFO; no
+    shipped code outside `shared::sys` calls `open_named`). (QA-A9-SEC-8)
   - **Unbounded reads**: every `read_to_end`, `lines()`, JSON decode, archive extraction and HTTP
     body has a byte and count limit, and the peer that exceeds it is dropped.
   - **Shelling out**: never `sh -c` with a string that contains outside data; `Command::new`
@@ -252,7 +256,9 @@ brackets; `cargo test` runs in the `test` job).
   `PATH=/usr/bin:/usr/sbin`, `LC_ALL=C`, stdin from /dev/null, typed arguments with `--` before
   positional ones, no shell. A caller that must add a variable back says why at that line (the
   login window keeps `LANG`; homectl reads its secrets from the environment). **CI** [test]
-  `crates/api/tests/privileged.rs` reads `crates/api/src` and `crates/controller/src/bin`, drops
+  `crates/api/tests/privileged.rs` reads `crates/api/src`, `crates/controller/src/bin` and
+  `crates/wol-tor/src/bin` (`wol-tor apply`, run as root by `wol-tor-rules.service`; its rule files
+  are written with `shared::atomic::atomic_write`, QA-A9-SEC-12), drops
   every `#[cfg(test)]` item, and fails when a launch bypasses it more often than its per-file
   ALLOWED row says. (B12, R2C-16/17)
 - **Identity** is captured once at `accept()` as `api::peer::PeerIdentity::capture`
@@ -263,8 +269,11 @@ brackets; `cargo test` runs in the `test` job).
   (`crates/shell/src/ui/ipc.rs`), and code that waits on a child it started keeps the `Child`
   (or a pidfd) and never signals or polls a pid number (`wol_core::progress::run_tracked_cmd`).
   **CI** [test] `crates/shared/tests/proc_identity.rs` fails on an executable read built from a
-  pid number (R2C-22). The server greets first and the client waits for the greeting before it
-  sends (`shared::jobs::greet`, `shared::jobs::connect`; ADR 0033). **CI** [test] regression tests
+  pid number, and now on any identity file (`environ`, `cgroup`, `cmdline`, ...) built from one
+  (R2C-22, QA-A9-SEC-6). A server that decides "this is program X" greets first and the client waits for the greeting before it
+  sends (`shared::jobs::greet`, `shared::jobs::connect`; ADR 0033); the atlas bridge does the same
+  (`shared::jobs::greet_by`, the one 5-second deadline of greeting and hello; QA-A9-SEC-1): a pid
+  the client writes in its own hello is a claim, never an identity. **CI** [test] regression tests
   in `crates/api/src/server.rs` (`a_peer_that_execs_after_sending_is_refused`,
   `a_request_written_before_accept_by_a_process_that_execs_is_ignored`). (B1)
 - **Fresh password**: which admin requests need a password typed now (not the session `AuthCache`)
@@ -354,7 +363,7 @@ with its proof: the class rule or its own regression test, red before the fix an
 4. **RC-23** No surface has a fixed size larger than the smallest supported logical screen, 640x400 at any scale: a size is the constant clamped to the screen less its insets, content scrolls when it is longer, a popover flips to stay inside the window, the compositor scale is automatic, and the golden matrix renders every surface at 640x400, 1366x768, 1920x1080 and 3840x2160 at 1x and 2x with no layout issue. **CI** RH-231, RH-232.
 5. **RC-16** A document names only what the tree has: on-screen names come from the copy catalog, verbs from the command tree, paths from the repository and the image; a feature the lead has not decided is marked planned, not described as present. **CI** RH-161, RH-162.
 6. **RC-14** The integration branch always descends from the last release tag and from every merged wave; a fix counts as fixed only when its commit is an ancestor of the integration branch and the release gate passes, and a decision record's status follows the merge, not a worker's report. **CI** RH-141, RH-142 (a submodule pin is a commit some ref of its repository still reaches).
-7. **RC-22** Every process the session depends on is supervised (restart on failure with no start limit, or a WolOS supervisor with back-off) and every wait has one named deadline that both ends read; a spawn returns its error and the caller backs off; a panic in a worker never leaves state frozen. **CI** RH-221, RH-222, RH-223.
+7. **RC-22** Every process the session depends on is supervised (restart on failure with no start limit, or a WolOS supervisor with back-off) and every wait has one named deadline that both ends read; a spawn returns its error and the caller backs off (a connection thread the system refuses drops that one connection with a journal line and a wait, `shared::bounded::spawn_conn`, never `std::thread::spawn`, never `let _ =`); a panic in a worker never leaves state frozen. **CI** RH-221, RH-222, RH-223, RH-224.
 8. **RC-19** Code that reads or writes system paths says which view it needs (sealed base, merged, layer root, writable state) and gets it from one helper; writable state lives under `/var/lib/wolos` or `/run`; the mounts of a transaction live in a private mount namespace and are undone; a measurement runs against the unmerged base. **CI** RH-191, RH-192.
 9. **RC-07** A view is driven by one live model: an event source, or a poll that updates the model and redraws only when the shape changed; a widget the person touched holds its value until the host confirms it, and a page reads its facts again when it is shown. **CI** RH-071.
 10. **RC-02** In-flight state is keyed by its request: a queue for approvals, a generation number for asynchronous results, an exclusive lock on a named file for every transaction on a shared resource; never one optional slot in a window or a daemon that a second request overwrites. **CI** RH-021.

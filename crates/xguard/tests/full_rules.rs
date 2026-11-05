@@ -14,8 +14,14 @@ impl Fix {
     fn new(tag: &str) -> Self {
         let base = std::env::temp_dir().join(format!("xg-full-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
+        // Modes are set here, not inherited from the umask of whoever runs the tests: `trusted()`
+        // refuses a folder others or the group can write, and 0002 (a user with a private group)
+        // would make these 0775 (QA-A9-SEC-5).
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
         for d in ["db", "tmp", "local", "src"] {
             std::fs::create_dir_all(base.join(d)).unwrap();
+            std::fs::set_permissions(base.join(d), std::fs::Permissions::from_mode(0o755)).unwrap();
         }
         Self { base }
     }

@@ -53,7 +53,7 @@ fn logind_watchers(d: &Arc<Daemon>) {
             continue; // Without our own session id any session's Lock would lock this keyring.
         }
         let d = d.clone();
-        std::thread::spawn(move || {
+        start_thread("logind-watch", move || {
             let Ok(conn) = zbus::blocking::Connection::system() else {
                 return;
             };
@@ -106,6 +106,22 @@ fn keep_memory_private() {
     }
 }
 
+/// A line for the journal (stderr), for the connection threads the system refuses.
+fn journal(line: &str) {
+    eprintln!("<3>wol-keyringd: {line}");
+}
+
+/// A thread the daemon cannot work without (the fast path, the idle-lock ticker, a logind watcher
+/// that locks on sleep): if the system refuses it, exit 1 so the supervisor starts the daemon
+/// again, instead of living on with a socket that looks healthy and a lock that never fires
+/// (QA-A9-SEC-3; `std::thread::spawn` would panic in this thread and leave the process up).
+fn start_thread(name: &str, work: impl FnOnce() + Send + 'static) {
+    if let Err(e) = std::thread::Builder::new().name(name.into()).spawn(work) {
+        eprintln!("<2>wol-keyringd: cannot start the {name} thread: {e}");
+        std::process::exit(1);
+    }
+}
+
 fn main() {
     keep_memory_private();
     let mut args: Vec<String> = std::env::args().skip(1).collect();
@@ -135,7 +151,7 @@ fn main() {
     }
     {
         let d = d.clone();
-        std::thread::spawn(move || {
+        start_thread("idle-tick", move || {
             loop {
                 std::thread::sleep(TICK_EVERY);
                 d.tick();
@@ -144,12 +160,12 @@ fn main() {
     }
     let listener = sock.1;
     if no_bus {
-        daemon::serve(d, listener);
+        daemon::serve(d, listener, journal);
         return;
     }
     {
         let d = d.clone();
-        std::thread::spawn(move || daemon::serve(d, listener));
+        start_thread("fast-path", move || daemon::serve(d, listener, journal));
     }
     logind_watchers(&d);
     // The Secret Service; the connection's own executor thread serves it while this one waits.

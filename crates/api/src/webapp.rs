@@ -64,7 +64,8 @@ impl Default for Dirs {
 pub trait Verbs {
     /// `caller` is the app's host (its uid is the account the verb runs as). `gone` says the host
     /// hung up (its window closed): the verb is stopped, with whatever it started, and nothing
-    /// more is asked on screen (QA-100 H9-05).
+    /// more is asked on screen (QA-100 H9-05). `runtime_dir` is the host's own `XDG_RUNTIME_DIR`
+    /// ([`Conn::runtime_dir`]).
     fn run(
         &self,
         caller: &Caller,
@@ -72,6 +73,7 @@ pub trait Verbs {
         method: &str,
         params: &str,
         gone: &dyn Fn() -> bool,
+        runtime_dir: Option<&str>,
     ) -> Result<Value, String>;
 }
 
@@ -84,6 +86,9 @@ pub struct Conn<'a> {
     /// program it was at accept (`PeerIdentity::still_same`). A host that only finished writing
     /// its request has not hung up; one that is gone has no one to show a sheet to or answer.
     pub gone: &'a dyn Fn() -> bool,
+    /// The host's own `XDG_RUNTIME_DIR` (an absolute path), read through the pinned process
+    /// (`PeerIdentity::env_var`), never by pid number (QA-A9-SEC-6).
+    pub runtime_dir: Option<&'a str>,
 }
 
 /// Administrator calls waiting or running, one per (account, app): a web app that asks again
@@ -229,7 +234,7 @@ pub fn handle(
     } else {
         None
     };
-    match verbs.run(c, app, method, params, conn.gone) {
+    match verbs.run(c, app, method, params, conn.gone, conn.runtime_dir) {
         Ok(reply) => Answer::with(reply),
         Err(why) => Answer::err(Code::Unavailable, why),
     }
@@ -238,20 +243,10 @@ pub fn handle(
 /// The real [`Verbs`]: `wol webapp-call` as the account, with nothing of wold's environment.
 pub struct WolVerbs;
 
-/// The account's session directory, from the host's own environment (`XDG_RUNTIME_DIR`): the
-/// session put it there, wold does not guess a path from a uid. Only an absolute path is taken.
-fn runtime_dir(pid: i32) -> Option<String> {
-    use std::io::Read;
-    let mut env = Vec::new();
-    std::fs::File::open(format!("/proc/{pid}/environ"))
-        .ok()?
-        .take(1 << 20)
-        .read_to_end(&mut env)
-        .ok()?;
-    env.split(|b| *b == 0)
-        .find_map(|e| e.strip_prefix(b"XDG_RUNTIME_DIR="))
-        .and_then(|v| String::from_utf8(v.to_vec()).ok())
-        .filter(|v| v.starts_with('/') && !v.contains(['\n', '\0']))
+/// The account's session directory: the host's own `XDG_RUNTIME_DIR` as the session put it (wold
+/// does not guess a path from a uid). Only an absolute path without a newline or NUL is taken.
+pub fn runtime_dir_of(value: Option<String>) -> Option<String> {
+    value.filter(|v| v.starts_with('/') && !v.contains(['\n', '\0']))
 }
 
 impl Verbs for WolVerbs {
@@ -262,6 +257,7 @@ impl Verbs for WolVerbs {
         method: &str,
         params: &str,
         gone: &dyn Fn() -> bool,
+        runtime_dir: Option<&str>,
     ) -> Result<Value, String> {
         use std::io::Read;
         use std::os::unix::process::CommandExt;
@@ -280,7 +276,7 @@ impl Verbs for WolVerbs {
             .current_dir(&who.home)
             .stderr(std::process::Stdio::null())
             .stdout(writer);
-        if let Some(dir) = runtime_dir(caller.pid) {
+        if let Some(dir) = runtime_dir {
             cmd.env("XDG_RUNTIME_DIR", dir);
         }
         let reading = std::thread::Builder::new()
@@ -341,6 +337,7 @@ mod tests {
             method: &str,
             params: &str,
             _: &dyn Fn() -> bool,
+            _: Option<&str>,
         ) -> Result<Value, String> {
             self.0
                 .borrow_mut()
@@ -397,6 +394,7 @@ mod tests {
         let conn = Conn {
             args: args.as_deref(),
             gone: &|| false,
+            runtime_dir: None,
         };
         handle(rest, caller, app, d, g, v, &conn)
     }
@@ -406,7 +404,21 @@ mod tests {
             uid,
             pid: 77,
             app: HOST.into(),
+            scope: None,
         }
+    }
+
+    /// QA-A9-SEC-6: the session directory handed to the verb is the host's own variable, an
+    /// absolute path with no line break; anything else is not passed on.
+    #[test]
+    fn the_runtime_dir_is_an_absolute_path_or_nothing() {
+        assert_eq!(
+            runtime_dir_of(Some("/run/user/1000".into())).as_deref(),
+            Some("/run/user/1000")
+        );
+        assert_eq!(runtime_dir_of(Some("run/user/1000".into())), None);
+        assert_eq!(runtime_dir_of(Some("/run/user/1\n000".into())), None);
+        assert_eq!(runtime_dir_of(None), None);
     }
 
     fn code(a: &Answer) -> Option<Code> {
@@ -516,11 +528,13 @@ mod tests {
                 uid: 1000,
                 pid: 5,
                 app: "/usr/bin/wol".into(),
+                scope: None,
             }),
             Some(Caller {
                 uid: 0,
                 pid: 5,
                 app: "/tmp/wol-webhost".into(),
+                scope: None,
             }),
         ] {
             let a = ask(
@@ -640,6 +654,7 @@ mod tests {
             let conn = Conn {
                 args: Some(&args),
                 gone: &|| false,
+                runtime_dir: None,
             };
             let a = handle(
                 "about",
@@ -680,6 +695,7 @@ mod tests {
             let conn = Conn {
                 args: args.as_deref(),
                 gone: &|| false,
+                runtime_dir: None,
             };
             let a = handle(
                 "about",
@@ -736,6 +752,7 @@ mod tests {
                 _: &str,
                 _: &str,
                 _: &dyn Fn() -> bool,
+                _: Option<&str>,
             ) -> Result<Value, String> {
                 let _ = self.0.send(());
                 let _ = self

@@ -11,15 +11,19 @@ The program `atlas-bridge` lets the Atlas browser Share a file, Open With anothe
 ```text
 browser (atlas_host)                      atlas-bridge                       wold -> desktop
   connect bridge.sock      ─────────▶  SO_PEERCRED + pinned /proc/<pid>
+                           ◀─────────  hello <nonce>   (the bridge speaks first, ADR 0033)
+  hello <nonce>            ─────────▶  every byte written by the connecting pid (SCM_CREDENTIALS)
   {"op":"hello",...}       ─────────▶  exe == /opt/atlas/atlas, pid matches
-                           ◀─────────  {"reply":"hello","version":1}
+                           ◀─────────  {"reply":"hello","version":2}
   {"op":"share","id":1,..} ─────────▶  file there, a file      ─────────▶  share.file  (sheet on screen)
   {"op":"trash","id":2,..} ─────────▶  (own thread)            ─────────▶  file.trash
                            ◀─────────  {"reply":"ok","id":2,"outcome":"trashed"}
                            ◀─────────  {"reply":"ok","id":1,"outcome":"copied"}   (the person chose)
 ```
 
-## The protocol, version 1
+## The protocol, version 2
+
+Version 2 (QA-A9-SEC-1) adds the greeting. As soon as the bridge accepts a connection it writes `hello <nonce>` (128 random bits, hex) and reads nothing else until the browser has written the same line back (`shared::jobs::answer_hello`). The bridge turns on SO_PASSCRED before it sends the greeting and requires every byte of the echo to carry the pid the kernel recorded at connect (`shared::jobs::greet_by`), so a hello written before the bridge accepted, or answered by another process that holds a copy of the descriptor, is refused as `not-browser`. The greeting and the hello line share the one 5-second deadline.
 
 One JSON object per line, UTF-8, at most 32 KiB including the newline. Field order is canonical (the fixtures are compared byte for byte); a line that is not an object, has an unknown field or an unknown `op` is refused.
 
@@ -86,7 +90,7 @@ A wold older than libwol 1.15 answers the three calls "not a known call". The br
 ## Identity and permissions
 
 - The socket is 0600 in a 0700 directory (`atlas-bridge.socket`), so only the account's processes connect.
-- At accept the bridge reads the peer's uid and pid (SO_PEERCRED), opens `/proc/<pid>` as a directory and reads the executable through that descriptor (STANDARDS 7.1 "Identity", audit C10-6): the peer must be this account's process running `/opt/atlas/atlas` (canonical path), its hello must name that pid, and before each verb it must still run the executable it ran at accept.
+- At accept the bridge reads the peer's uid and pid (SO_PEERCRED), opens `/proc/<pid>` as a directory and reads the executable through that descriptor (STANDARDS 7.1 "Identity", audit C10-6): the peer must be this account's process running `/opt/atlas/atlas` (canonical path), it must answer the greeting itself (every byte of the echo is stamped with the writing process by the kernel), its hello must name that pid, and before each verb it must still run the executable it ran at accept.
 - **What "the browser" means.** Any process of this account that runs the browser executable counts as the browser, renderers and other child processes included (they all run `/opt/atlas/atlas`). The bridge cannot tell the browser's main process from a compromised renderer; keeping web content out of the sockets of the account is the engine's sandbox, which this check relies on. What a stolen connection can do is limited to the three verbs on files that exist, and Share and Open With wait for the person to choose in the desktop's own sheet, and Move to Trash is only as safe as the person's grant `trash`.
 - During an update of the package the running browser's executable reads as `/opt/atlas/atlas (deleted)` (`read_link` appends it); such a peer is refused as `not-browser` until the browser is restarted.
 - The bridge's own listening socket is not inherited by the programs it starts (it is a close-on-exec copy of the descriptor systemd passes), so the opener the fallback runs, and the app that opener starts, cannot accept connections.

@@ -26,6 +26,7 @@ fn caller(app: &str) -> Caller {
         uid: 1000,
         pid: 4242,
         app: app.into(),
+        scope: None,
     }
 }
 
