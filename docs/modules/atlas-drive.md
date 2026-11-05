@@ -10,6 +10,8 @@ It speaks CDP to the browser over `--remote-debugging-pipe` (the browser's file 
 
 ## How it runs
 
+**Installed by default.** The image ships `/usr/bin/atlas-drive` (in the `wolos-system` package: `tools/build-rust.sh`, the same release build as the other binaries; `crates/controller/tests/image_build_rust.rs` fails when it is missing). There is no systemd unit and no socket activation: the daemon is per user and on demand, started by the first `atlas-drive <verb>` (or `atlas-drive serve --launch` to warm the browser up front), and it creates `$XDG_RUNTIME_DIR/atlas` itself or uses the one `atlas-bridge.socket` made (both 0700), and refuses to serve from it when it is a symlink, another account's or open to group or others (`server::private_dir`). Registering it as an MCP server or a skill for the bundled helpers by default is not done yet (after the ISO); `atlas-drive mcp` works when a helper is pointed at it.
+
 ```
 atlas-drive serve [--browser PATH] [--headed] [--profile DIR] [--no-sandbox] [--disable-gpu] [--launch]   the daemon
 atlas-drive <verb> [args]      any verb as a command (the first one starts the daemon if none runs)

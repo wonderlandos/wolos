@@ -64,6 +64,10 @@ done
 # The Atlas browser's bridge to Share, Open With and Trash (ADR 0043): socket-activated by the user unit.
 [ -x "$B/atlas-bridge" ] || { echo "build-rust.sh: binary atlas-bridge not produced" >&2; exit 1; }
 install -m 755 "$B/atlas-bridge" "$DEST/usr/lib/atlas-bridge"
+# Atlas Drive (ADR 0063): browser automation for scripts and AI helpers, from the workspace build.
+# No unit: the first `atlas-drive <verb>` starts the per-user daemon on $XDG_RUNTIME_DIR/atlas/drive.sock.
+[ -x "$B/atlas-drive" ] || { echo "build-rust.sh: binary atlas-drive not produced" >&2; exit 1; }
+install -m 755 "$B/atlas-drive" "$DEST/usr/bin/atlas-drive"
 
 # Files' right-click "Check for Malware": starts wol-analyze, links only Nautilus' library.
 EXT=$DEST$(pkg-config --variable=extensiondir libnautilus-extension-4)

@@ -34,7 +34,7 @@ fn cargo_calls_ask_only_for_their_packages_features() {
             r#"echo "$*" >> {log}
 p=; f=; while [ $# -gt 0 ]; do case $1 in -p) p=$2; shift;; --features) f="$f $2"; shift;; esac; shift; done
 for x in $f; do case $x in */*) [ -z "$p" ] || [ "${{x%%/*}}" = "$p" ] || {{ echo "error: the package '$p' does not contain this feature: $x" >&2; exit 101; }};; esac; done
-for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-monitor wol-flatpak-consent wol-analyze wol-share wol-kit-host wol-plugin-maker wol-webhost wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam wolos-mm wol-keyring wol-keyringd wol-tor atlas-bridge; do
+for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-monitor wol-flatpak-consent wol-analyze wol-share wol-kit-host wol-plugin-maker wol-webhost wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam wolos-mm wol-keyring wol-keyringd wol-tor atlas-bridge atlas-drive; do
   printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done
 for b in wol-quicklook; do printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done"#,
             log = log.display(),
@@ -72,5 +72,11 @@ for b in wol-quicklook; do printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {r
     assert!(
         t.join("dest/usr/bin/wol-quicklook").exists(),
         "wol-quicklook is not installed\n{err}"
+    );
+    // Atlas Drive (ADR 0063) comes with the system, not as source: the agent's command is on PATH.
+    // No unit: the first `atlas-drive <verb>` starts the daemon (docs/modules/atlas-drive.md).
+    assert!(
+        t.join("dest/usr/bin/atlas-drive").is_file(),
+        "build-rust.sh does not install atlas-drive\n{err}"
     );
 }
