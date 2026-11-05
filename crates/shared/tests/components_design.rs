@@ -95,11 +95,12 @@ fn rust_const(src: &str, name: &str) -> f64 {
     val.split('+')
         .map(|term| {
             let term = term.trim();
-            term.parse().unwrap_or_else(|_| match term.rsplit_once('.') {
-                Some((pair, "0")) => rust_pair(src, pair).0,
-                Some((pair, "1")) => rust_pair(src, pair).1,
-                _ => rust_const(src, term),
-            })
+            term.parse()
+                .unwrap_or_else(|_| match term.rsplit_once('.') {
+                    Some((pair, "0")) => rust_pair(src, pair).0,
+                    Some((pair, "1")) => rust_pair(src, pair).1,
+                    _ => rust_const(src, term),
+                })
         })
         .sum()
 }

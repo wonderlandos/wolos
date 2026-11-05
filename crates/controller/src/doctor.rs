@@ -21,15 +21,16 @@ pub mod tls;
 
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware", "memory",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+    "memory",
 ];
 /// Areas run only when asked for by name (`wol doctor tls` connects to servers outside the
 /// computer, so neither plain `wol doctor` nor the Doctor app runs it).
 pub const ON_ASK: &[&str] = &[tls::AREA];
 /// What `wol doctor <area>` accepts: [`AREAS`], then [`ON_ASK`].
 pub const CHOICES: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware", "memory",
-    "tls",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+    "memory", "tls",
 ];
 
 /// Last-check age that turns the update check into a warning: three days.
