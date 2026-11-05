@@ -81,6 +81,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // wasm32, where `core` does not, so they take `shared` and `wolkit` only.
                 "wolkit-render" => ["shared", "wolkit"].contains(&dep.as_str()),
                 "wolkit-web" => ["shared", "wolkit", "wolkit-render"].contains(&dep.as_str()),
+                // The browser's Federate helper (ADR 0052 "Atlas"): a process beside the browser that
+                // answers fed:// loads with the one verifier; it links nothing else of the workspace.
+                "atlas-fed" => dep == "federate",
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",
