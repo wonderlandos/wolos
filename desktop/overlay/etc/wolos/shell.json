@@ -20,7 +20,7 @@
     {
       "title": "",
       "items": [
-        { "label": "About This Computer", "exec": ["wol-settings", "About"] },
+        { "label": "About This Computer", "exec": ["wol-settings", "about"] },
         { "label": "-" },
         { "label": "System Settings…", "exec": ["wol-settings"] },
         { "label": "-" },

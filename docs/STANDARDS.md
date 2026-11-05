@@ -373,6 +373,7 @@ with its proof: the class rule or its own regression test, red before the fix an
 14. **RC-34** A wait the person is put on is the person's to lengthen: a one-shot timer in the shell reads `kit::patience` (Settings > Accessibility > Timeouts, "Give me more time"), or says in a `// fixed wait:` comment why nobody is reading while it runs. **CI** RH-341.
 15. **RC-45** A file a tool writes is the tool's and a test says when it fell behind its input: a committed `Cargo.lock` lists every dependency its manifests name. **CI** RH-451.
 16. **RC-20** A step does not report success after dropping what it was asked to keep: what pacman installed is copied with its owner, set-id bits, file capability and other extended attributes, and hard links (`copy_tree`, `cp -a`), never with `fs::copy`; a copy that cannot keep an attribute fails the step. **CI** RH-201.
+17. **RC-47** A link to a place inside the product (a Settings page or row, a Store app, a panel) carries a stable id written once, never the title the window shows: a title is edited and translated, so a link built from it lands on the first default instead of the place (QA-SEARCH-1: "privacy settings" in Search opened Settings on its first pane). `wol-settings <page-id>[#<row-id>]` (`ui::settings::ids`) resolves the id, an older title or alias and a title in any shipped language to one page and row. **CI** RU-051.
 
 ## 10. Origins of the 0.13 bugs
 
@@ -400,6 +401,7 @@ count is the number of fixed findings (or fixed sites, marked "sites") of the cl
 | RC-14 a pin no ref reaches (rewritten history) | 4 pins (publish.yml: 2 of wolos-pkgbuilds, 1 of wolos-iso, f7605d99) | RH-142 (submodules), RP-057 (recipes), RC-071 (workflows) | `rules_rc_14_submodule_pins.rs`; wolos-pkgbuilds `checks/tests/rules_packaging.rs`; wolos-build `tests/test_rules_ci.py` | `publish.yml` on wave3/int until f7605d99 is merged |
 | RC-45 a generated file behind its input | 2 (fuzz/Cargo.lock; the themed wallpapers skipped when the generator is absent, 3c1044e) | RH-451, RP-056 | `crates/shared/tests/rules_rc_45_generated_in_step.rs`; `rules_packaging.rs` | fuzz/Cargo.lock; one `return 0` in wolos-system |
 | RC-46 a shipped file the person or Settings edits is put back by an upgrade | 2 (0f05dc2: airplay.conf, wolos-ime.sh; 870c239: ssh.conf) | RP-055 | wolos-pkgbuilds `checks/tests/rules_packaging.rs` | the `etc/` files nobody edits, 15 rows with the reason |
+| RC-47 a display string used as the key of a link (`wol-settings <title>`) | 11 sites (QA-SEARCH-1: Search items, Control Center x3, menu bar, software update badge, analyze, monitor, first login, widgets, alerts) | RU-051 | `crates/shell/tests/rules_ui.rs` (ru_051_settings_links_name_a_page_id), `src/ui/settings/ids.rs` tests | none; Store app links and `wol shell show` panels already use ids |
 
 Classes the fixes shared that already had a rule when the day began; the new fixes are under
 them and the ratchets did not rise: RC-03 (17: RH-031, RH-032), RC-13 (8: RH-131), RC-16 (7:
