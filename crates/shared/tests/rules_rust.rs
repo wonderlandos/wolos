@@ -227,7 +227,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-048", "proxy", 1),
     ("RR-048", "realtime", 3),
     ("RR-048", "shared", 6),
-    ("RR-048", "shell", 5),
+    // +3 (INT-2, 0.13 integration): kit_calendar, kit_choice and kit_groups are one-line tests whose
+    //   assertions live in tests/support/kit_case.rs `run` (ds-spec-a2).
+    ("RR-048", "shell", 8),
     ("RR-048", "wol-abi", 10),
     ("RR-049", "api", 7),
     ("RR-049", "controller", 1),
@@ -236,6 +238,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     //   timer: dock_keep, gate_transition, lock_submit, render_lane, row_names and kit/render.rs;
     //   the Store spinner test, whose Env::read sleeps on purpose to be slow (QA-STORE-81).
     ("RR-049", "shell", 20),
+    // +1 (INT-2, 0.13 integration): tests/engine_scheme.rs polls the Federate chain answered on
+    //   another thread in 2 ms steps with a 10 s bound; the test has no waker to wait on.
+    ("RR-049", "webengine", 1),
     ("RR-049", "wol-abi", 6),
     // +6 (INT-2, 0.13 integration): tests of a daemon and its socket wait for it to be ready.
     ("RR-049", "wolkeyring", 6),
@@ -269,9 +274,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-057", "controller", 2),
     ("RR-057", "core", 3),
     ("RR-057", "shared", 4),
-    // +1 (INT-2, 0.13 integration): settings/printers.rs: the page builder took the Option and
-    //   removal rows past 150 lines.
-    ("RR-057", "shell", 15),
+    // +2 (INT-2, 0.13 integration): settings/printers.rs: the page builder took the Option and
+    //   removal rows past 150 lines; ui/app_view.rs `draw`: one match that gained the arms of the 8
+    //   design-system nodes (ds-spec-a2), each arm a short call into the Kit.
+    ("RR-057", "shell", 16),
     // +1 (INT-2, 0.13 integration): wol-webhost.rs: the host's setup took a function past 150
     //   lines.
     ("RR-057", "webengine", 1),

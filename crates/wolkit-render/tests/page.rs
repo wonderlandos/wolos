@@ -467,6 +467,10 @@ fn a_click_on_a_design_system_part_asks_the_app_for_the_next_state() {
 #[test]
 fn tabs_show_the_picked_tabs_child_only() {
     use shared::view::{Choice, Node, Role};
+    // Like every page test: without the face the test passes with a note (fonts() says so).
+    if fonts().is_none() {
+        return;
+    }
     let tabs = |selected: &str| Node::Tabs {
         id: 1,
         tabs: vec![

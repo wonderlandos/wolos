@@ -271,12 +271,7 @@ impl<T> Outbox<T> {
         self.held.push((what, pending));
     }
 
-    #[allow(dead_code)] // the library does not ask; the tests do
-    pub fn len(&self) -> usize {
-        self.held.len()
-    }
-
-    #[allow(dead_code)] // as `len`
+    /// Nothing is held: the engine's spin then has no reply to look for.
     pub fn is_empty(&self) -> bool {
         self.held.is_empty()
     }

@@ -178,7 +178,7 @@ pub struct Chip {
 
 /// What a set of chips does (design/components/chip.toml).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ChipKind {
     #[default]
     Assist,
@@ -189,7 +189,7 @@ pub enum ChipKind {
 
 /// How a [`Node::Card`] stands off the page (design/components/card.toml).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub enum CardStyle {
     #[default]
     Elevated,
@@ -1146,7 +1146,8 @@ mod tests {
             j.contains(r#"{"type":"checkbox","id":1,"label":"Show hidden files","checked":true}"#),
             "{j}"
         );
-        assert!(j.contains(r#"{"type":"radio-group","id":2,"options":[{"key":"light","label":"Light"},{"key":"dark","label":"Dark"}],"selected":"dark"}"#), "{j}");
+        let radio = r#"{"type":"radio-group","id":2,"options":[{"key":"light","label":"Light"},{"key":"dark","label":"Dark"}],"selected":"dark"}"#;
+        assert!(j.contains(radio), "{j}");
         assert!(j.contains(r#"{"type":"chips","id":3,"kind":"filter","chips":[{"key":"installed","label":"Installed","on":true}]}"#), "{j}");
         assert!(j.contains(r#"{"type":"progress","label":""}"#), "{j}");
         assert!(

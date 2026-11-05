@@ -129,9 +129,9 @@ n/m: not meaningful (the app keeps committing frames in the background, so the f
 | `engine-shell` | on | 1474 / 3208 | 490 / 1965 | 273.9 | 274.5 | 85.2 | 184 | 1.18 | 56.72 | 2.34 | 101.8 / 159 | 47.8 / 73.7 | 202.4 / 279.7 | 1272 / 3121 | 361.8 |
 | `engine-shell` | off | 1157 / 2292 | 388 / 1287 | 270.1 | 270.7 | 270.8 | 0 | 0.98 | 51.2 | 1.04 | 53.1 / 70.9 | 54.1 / 85 | 127.8 / 153.9 | 338 / 161 | 392.7 |
 
-## The Servo web-app runtime after ENGINE-FIX (system web apps, 2026-11-05)
+## The page-engine web-app runtime after ENGINE-FIX (system web apps, 2026-11-05)
 
-Concept: the same system web apps (`webapps/hello`, `webapps/doctor`, the bench-only `long`) on the Servo runtime (ADR 0042), before and after the four defects WEBAPP-bench found were fixed. Why: as shipped on `wave3/int`, a Servo web app showed nothing, so no number existed for the product. How: `.claude/v012/engine-fix/wabench.py run --apps doctor,hello,long --engines servo,fixed --runs 3 --idle 150 --interact 60` in a WolOS 0.12.0 VM set up as in the identity table (4 vCPU, software rendering, 1280x800), forge load 70 to 180 during the run (other agents), medians of 3 (raw: `.claude/v012/engine-fix/results/full.json`, 18 rows, 0 failed).
+Concept: the same system web apps (`webapps/hello`, `webapps/doctor`, the bench-only `long`) on the page-engine runtime (ADR 0042), before and after the four defects WEBAPP-bench found were fixed. Why: as shipped on `wave3/int`, a web app on the page engine showed nothing, so no number existed for the product. How: `.claude/v012/engine-fix/wabench.py run --apps doctor,hello,long --engines $PAGE_ENGINE,fixed --runs 3 --idle 150 --interact 60` (`PAGE_ENGINE` is the id `wabench.py` gives the page engine) in a WolOS 0.12.0 VM set up as in the identity table (4 vCPU, software rendering, 1280x800), forge load 70 to 180 during the run (other agents), medians of 3 (raw: `.claude/v012/engine-fix/results/full.json`, 18 rows, 0 failed).
 
 What was measured against what:
 
@@ -185,7 +185,7 @@ What was measured against what:
 
 Idle: wakeups per second 133 to 1.6 (Hello) and 131 to 1.8 (Doctor), against 6 for Chromium in WEBAPP-bench (minute 5; here the last minute of 150 s), idle CPU 6.4 and 5.9 to 0.2 and 0.3 ms per second. The host now sleeps in `Engine::dispatch(-1)` and is woken by the window, the page engine or a reply from wold (`docs/modules/webengine.md`, Loop).
 
-Key and scroll latency, what is ours and what is not. A perf profile of the VM during the Doctor interaction (all CPUs, 1999 Hz, 40 Tab keys) puts 92% of all samples in the compositor's llvmpipe threads (Hyprland, which also uses 250% of the 4 vCPUs with no app open) and 0.5% in `wol-webhost` (host and shim), plus 0.2% in the page engine's own llvmpipe threads. Of one Tab key's 60 to 110 ms to the page's commit, about 22 ms is the compositor handing the key over (`vk` to the `wl_keyboard.key` event) and the rest the engine drawing in software; the host and shim added nothing measurable: the old 8 ms poll and the new blocking wait gave the same 27 ms on the trivial probe page. That part is upstream (WebRender over llvmpipe) plus the test VM, and needs a machine with a GPU to judge.
+Key and scroll latency, what is ours and what is not. A perf profile of the VM during the Doctor interaction (all CPUs, 1999 Hz, 40 Tab keys) puts 92% of all samples in the compositor's llvmpipe threads (`Hyprland`, which also uses 250% of the 4 vCPUs with no app open) and 0.5% in `wol-webhost` (host and shim), plus 0.2% in the page engine's own llvmpipe threads. Of one Tab key's 60 to 110 ms to the page's commit, about 22 ms is the compositor handing the key over (`vk` to the `wl_keyboard.key` event) and the rest the engine drawing in software; the host and shim added nothing measurable: the old 8 ms poll and the new blocking wait gave the same 27 ms on the trivial probe page. That part is upstream (WebRender over llvmpipe) plus the test VM, and needs a machine with a GPU to judge.
 
 ## How far to trust it
 

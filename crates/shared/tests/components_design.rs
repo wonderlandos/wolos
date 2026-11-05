@@ -90,7 +90,40 @@ fn rust_const(src: &str, name: &str) -> f64 {
         .unwrap_or_else(|| panic!("no `{key}` in the source"));
     let (_, val) = line.split_once('=').expect("a value");
     let val = val.trim().trim_end_matches(';');
-    val.parse().unwrap_or_else(|_| rust_const(src, val))
+    // `INSET = S3`: an alias of another constant of the same file; `NARROW = SIDEBAR_WIDTH +
+    // APP_NARROW.0`: a sum of such names and of a pair's `.0` / `.1`.
+    val.split('+')
+        .map(|term| {
+            let term = term.trim();
+            term.parse().unwrap_or_else(|_| match term.rsplit_once('.') {
+                Some((pair, "0")) => rust_pair(src, pair).0,
+                Some((pair, "1")) => rust_pair(src, pair).1,
+                _ => rust_const(src, term),
+            })
+        })
+        .sum()
+}
+
+/// `pub const NAME: (i32, i32) = (W, H);` as (W, H).
+fn rust_pair(src: &str, name: &str) -> (f64, f64) {
+    let key = format!("pub const {name}: ");
+    let line = src
+        .lines()
+        .find(|l| l.starts_with(&key))
+        .unwrap_or_else(|| panic!("no `{key}`"));
+    let val = line
+        .split_once('=')
+        .expect("a value")
+        .1
+        .trim()
+        .trim_start_matches('(')
+        .trim_end_matches(';')
+        .trim_end_matches(')');
+    let (w, h) = val.split_once(',').expect("a pair");
+    (
+        w.trim().parse().expect("a number"),
+        h.trim().parse().expect("a number"),
+    )
 }
 
 fn drift(cat: &Value, css: &str, widgets: &str) -> Vec<String> {

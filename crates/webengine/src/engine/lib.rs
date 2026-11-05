@@ -226,6 +226,8 @@ thread_local! {
 /// network, and a Federate name never does.
 struct Held(Option<WebResourceLoad>);
 
+// A held load dropped unanswered (the engine going away, a view closed) is refused, never left to
+// proceed to the network: a Federate name is `fed://` only.
 impl Drop for Held {
     fn drop(&mut self) {
         if let Some(load) = self.0.take() {
@@ -271,7 +273,13 @@ impl std::task::Wake for HostWake {
 
 /// Sends the held loads whose reply is in.
 fn answer_served() {
-    let ready = SERVED.with(|s| s.borrow_mut().ready());
+    let ready = SERVED.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.is_empty() {
+            return Vec::new();
+        }
+        s.ready()
+    });
     for (mut held, reply) in ready {
         if let Some(load) = held.0.take() {
             let status =
@@ -323,7 +331,8 @@ fn start_deferred() {
 /// Wakes the host every `RETRY_EVERY` while a mapped load waits (a host that sleeps until woken
 /// would not call `wwe_engine_spin` again).
 fn nudge(waker: Waker) {
-    let _ = std::thread::Builder::new()
+    let spare = waker.clone();
+    let started = std::thread::Builder::new()
         .name("wwe-fed-retry".into())
         .spawn(move || {
             for _ in 0..=RETRY_MAX {
@@ -334,6 +343,13 @@ fn nudge(waker: Waker) {
                 waker.wake();
             }
         });
+    if let Err(e) = started {
+        // A refused thread (TasksMax, RLIMIT_NPROC; RH-224) is logged, and the host is woken once
+        // so its spin takes the next try itself; the load's own retry budget ([`RETRY_MAX`]) ends
+        // it either way.
+        log::error!("wolwebengine: the retry thread did not start: {e}");
+        spare.wake();
+    }
 }
 
 #[derive(Default)]
