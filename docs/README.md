@@ -80,6 +80,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0053](adr/0053-atlas-private-and-tor-tabs.md) | Atlas private and Tor tabs: the kernel is the kill switch | proposed |
 | [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
 | [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
+| [0060](adr/0060-wolkit-on-webgpu-and-wasm.md) | libWolkit on WebGPU and WebAssembly: one renderer trait, wgpu as the portable target | proposed |
 
 ## Modules
 

@@ -152,6 +152,7 @@ impl<R: Read> BoundedLineReader<R> {
 }
 
 /// Give a socket a read and a write timeout (`timeout` each). Err only if the OS refuses.
+#[cfg(unix)]
 pub fn limit_socket(s: &std::os::unix::net::UnixStream, timeout: Duration) -> std::io::Result<()> {
     s.set_read_timeout(Some(timeout))?;
     s.set_write_timeout(Some(timeout))

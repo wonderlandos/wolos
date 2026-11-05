@@ -24,16 +24,24 @@
 
 pub mod canvas;
 pub mod copy;
+#[cfg(feature = "native")]
 pub mod device;
+#[cfg(feature = "native")]
 pub mod frame;
 pub mod images;
+#[cfg(feature = "native")]
 pub mod live;
+#[cfg(feature = "native")]
 pub mod pipelines;
+pub mod prepare;
+#[cfg(feature = "native")]
 pub mod present;
 pub mod select;
 pub mod shadow;
+#[cfg(feature = "native")]
 pub mod surface;
 
+#[cfg(feature = "native")]
 pub use frame::{Format, Frame, FrameStats, Renderer, RendererOptions};
 
 /// Side of the shadow prototype atlas, in pixels (R8, 1 MiB).

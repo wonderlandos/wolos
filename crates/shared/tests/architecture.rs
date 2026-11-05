@@ -70,6 +70,11 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The Federate client (ADR 0052) uses wolcrypt (a BSD-2-Clause leaf, no workspace
                 // dependency) for the hybrid TLS group and to seal its local state.
                 "federate" => dep == "wolcrypt",
+                // The render targets (wgpu, Vulkan, CPU) and the browser module (ADR 0060,
+                // "wolkit on WebGPU and WASM"): BSD-2-Clause like wolkit; they build for
+                // wasm32, where `core` does not, so they take `shared` and `wolkit` only.
+                "wolkit-render" => ["shared", "wolkit"].contains(&dep.as_str()),
+                "wolkit-web" => ["shared", "wolkit", "wolkit-render"].contains(&dep.as_str()),
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",
@@ -158,6 +163,17 @@ fn violations_table() {
         (&[("controller", &["api"])], &["controller -> api"]),
         (&[("webengine", &["wolkit", "core", "shared"])], &[]),
         (&[("webengine", &["api"])], &["webengine -> api"]),
+        (&[("wolkit-render", &["wolkit", "shared"])], &[]),
+        (&[("wolkit-render", &["core"])], &["wolkit-render -> core"]),
+        (
+            &[("wolkit-web", &["wolkit-render", "wolkit", "shared"])],
+            &[],
+        ),
+        (&[("wolkit-web", &["api"])], &["wolkit-web -> api"]),
+        (
+            &[("shell", &["wolkit-render"])],
+            &["shell -> wolkit-render"],
+        ),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

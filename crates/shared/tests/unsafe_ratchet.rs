@@ -129,6 +129,10 @@ const BASELINE: &[(&str, usize)] = &[
     ("wolsem", 0),
     // ADR 0053 (2026-11-04): Atlas Tor groups; std and safe APIs only, `forbid(unsafe_code)`.
     ("wol-tor", 0),
+    // ADR 0060: the render targets and the browser module have no `unsafe` (the wasm-bindgen glue
+    // is macro-expanded, not in the source).
+    ("wolkit-render", 0),
+    ("wolkit-web", 0),
 ];
 
 fn crates_dir() -> PathBuf {

@@ -220,6 +220,10 @@ A native window tells the compositor and the menu bar two things about itself, w
 
 `Wolkit::Services` wraps the libwol verbs so a refusal is shown, not raised: `notify(title, body) : String?`, `copy(text) : String?`, `paste : Outcome(String)`, and the blocking panels `open_file`, `save_file`, `share`, which run on `Wol.background` and call a block on the UI context with an `Outcome` (a value, or the sentence libwol wrote, for example "Allow this app to ... in System Settings"). Show the sentence inline as the HIG asks.
 
+## In the browser (ADR 0060)
+
+The same engine draws on the site: `crates/wolkit-web` compiles the portable pipeline (no Wayland, no Vulkan, no Lua) to WebAssembly and draws it on WebGPU into a `<canvas>`. The page `/kit` (`site/public/kit.html`, assets in `site/public/kit/`) shows the libwol sample window (the tree behind the shell's `app-window-parts` golden) with the same kit look, tokens, Inter faces and layout as the desktop, light or dark (`?theme=dark`, else the system setting). Click the switch, type in the field, Tab between the parts. Size: about 1.29 MB gzip for the wasm, the glue, the loader and the two fonts. See the "Render targets" section of `docs/modules/libwolkit.md` for the pieces and the checks.
+
 ## Testing without a display
 
 `require "wolkit/test"`:

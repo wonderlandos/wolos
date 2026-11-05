@@ -1,0 +1,20 @@
+/* The parts of a `shared::view` tree (ADR 0020, what libwol apps send) in wolkit, after the kit
+   look (styles/kit.wolcss in the Crystal shard is compiled FIRST, so its class ids stay 0 to 7).
+   The same roles, card list and spacing scale the shell's Kit host draws in GTK
+   (crates/shell/src/ui/app_view.rs); colours are theme tokens only. */
+
+.page { padding: 0 lg lg lg; background: surface; }
+/* The Kit host's 40 px title row is the 28 px bar plus the page gap above the divider. */
+.titlebar { min-height: 28px; }
+.list { background: card; border-radius: m; padding: xs md; box-shadow: sm; }
+.list-row { min-height: 52px; align-items: center; }
+.list-field { min-height: 52px; justify-content: center; }
+.icon { color: text; }
+
+.role-display { font-size: display; font-weight: 700; }
+.role-large { font-size: large; font-weight: 600; }
+/* The Kit host draws a title at the body size, semibold (kit.css label.title). */
+.role-title { font-size: body; font-weight: 600; }
+.role-body { font-size: body; }
+.role-secondary { font-size: secondary; color: dim; }
+.role-caption { font-size: caption; color: dim; }
