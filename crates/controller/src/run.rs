@@ -15,6 +15,8 @@ pub const SHELL_SOCKET: &str = "wol-shell.sock";
 pub const RUN_BIN: &str = "wol-run";
 /// Owner of GPU selection (realtime crate): `wol-realtime gpu env|hyprconf`.
 pub const GPU_BIN: &str = "wol-realtime";
+/// The keyring command (crates/wolkeyring, ADR 0054): `wol keyring VERB ...` runs it.
+pub const KEYRING_BIN: &str = "wol-keyring";
 const PASSWORD_TRIES: usize = 3;
 
 /// Side effects `wol` needs.
@@ -426,6 +428,15 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "update.rollback" => crate::verbs::rollback(env, inv.get("be")),
         "mirror.status" | "mirror.rank" | "mirror.gate" | "mirror.kernel" => {
             crate::mirror::run(env, inv.action, inv.flag("yes"), json)
+        }
+        "keyring" => {
+            let mut argv = vec![KEYRING_BIN.to_string()];
+            argv.extend(inv.get("verb").map(String::from));
+            argv.extend(inv.all("args").iter().map(|s| s.to_string()));
+            if inv.flag("passphrase") {
+                argv.push("--passphrase".into());
+            }
+            exec(env, &argv)
         }
         "gpu.env" => exec(env, &[GPU_BIN.into(), "gpu".into(), "env".into()]),
         "gpu.hyprconf" => exec(env, &[GPU_BIN.into(), "gpu".into(), "hyprconf".into()]),

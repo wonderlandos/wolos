@@ -21,6 +21,7 @@ members = [
     "crates/federate",
     "crates/wolcrypt",
     "crates/wol-tor",
+    "crates/wolkeyring",
 ]
 # The engine library's source (ADR 0042): built in the engine's own workspace by webengine-wolos.
 exclude = ["crates/webengine/engine"]
@@ -52,6 +53,7 @@ fips203 = { version = "=0.5.0", default-features = false, features = ["ml-kem-76
 curve25519-dalek = { version = "4.1", default-features = false }
 zeroize = { version = "1.8", default-features = false }
 wolcrypt = { path = "crates/wolcrypt" }
+wolkeyring = { path = "crates/wolkeyring" }
 shared = { path = "crates/shared" }
 wol_core = { path = "crates/core", package = "core" }
 
