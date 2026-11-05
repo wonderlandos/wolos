@@ -34,7 +34,7 @@ fn cargo_calls_ask_only_for_their_packages_features() {
             r#"echo "$*" >> {log}
 p=; f=; while [ $# -gt 0 ]; do case $1 in -p) p=$2; shift;; --features) f="$f $2"; shift;; esac; shift; done
 for x in $f; do case $x in */*) [ -z "$p" ] || [ "${{x%%/*}}" = "$p" ] || {{ echo "error: the package '$p' does not contain this feature: $x" >&2; exit 101; }};; esac; done
-for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-monitor wol-flatpak-consent wol-analyze wol-kit-host wol-plugin-maker wol-webhost wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam; do
+for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-monitor wol-flatpak-consent wol-analyze wol-share wol-kit-host wol-plugin-maker wol-webhost wol-xguard wol-xguard-clam pacman wol-authcheck wol-session-pam; do
   printf '#!/bin/sh\nexit 0\n' > {rel}/$b; chmod 755 {rel}/$b; done"#,
             log = log.display(),
             rel = target.join("release").display()
