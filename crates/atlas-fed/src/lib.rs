@@ -33,6 +33,10 @@ use std::time::{Duration, Instant};
 const REFUSE_WRITE_WAIT: Duration = Duration::from_secs(2);
 /// The idle watcher looks at the clock at least this often.
 const IDLE_TICK_MAX: Duration = Duration::from_secs(1);
+/// How long the accept loop waits for the first byte of a connection that arrives during the idle exit.
+const WAKE_PEEK: Duration = Duration::from_millis(100);
+/// How long a starting helper waits for the lock of one that is leaving (see `bind_wait`).
+pub const LOCK_WAIT: Duration = Duration::from_millis(1500);
 
 /// The protocol word that starts every request and reply line.
 pub const PROTOCOL: &str = "FED/1";
@@ -61,6 +65,9 @@ pub struct Limits {
     pub queue: usize,
     /// `None`: serve until the process is stopped.
     pub idle: Option<Duration>,
+    /// Time the idle exit waits between deciding to stop and waking the accept loop. Zero in
+    /// production; a test widens this window to put a real connection into it (QA-A9-WEB-ATLAS-10).
+    pub wake_delay: Duration,
 }
 
 impl Default for Limits {
@@ -69,6 +76,7 @@ impl Default for Limits {
             workers: WORKERS,
             queue: QUEUE,
             idle: None,
+            wake_delay: Duration::ZERO,
         }
     }
 }
@@ -242,11 +250,18 @@ fn write_reply(w: &mut impl Write, reply: &Reply) -> io::Result<()> {
 }
 
 /// Serves one connection: reads the request, answers it with `handler`, closes.
-pub fn handle(mut stream: UnixStream, handler: &Handler) {
+pub fn handle(stream: UnixStream, handler: &Handler) {
+    handle_after(None, stream, handler);
+}
+
+/// [`handle`] for a connection whose first byte was already read (the accept loop reads it during
+/// the idle exit, to tell a client from the exit's own wake).
+fn handle_after(first: Option<u8>, mut stream: UnixStream, handler: &Handler) {
     // A silent or slow peer cannot hold a worker longer than these.
     let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
     let _ = stream.set_write_timeout(Some(WRITE_TIMEOUT));
-    let reply = match read_request(&mut stream) {
+    let prefix: &[u8] = first.as_slice();
+    let reply = match read_request(&mut prefix.chain(&stream)) {
         Ok((kind, url)) => {
             catch_unwind(AssertUnwindSafe(|| handler(&url, kind))).unwrap_or_else(|_| fault_reply())
         }
@@ -284,15 +299,54 @@ impl Shared {
     }
 }
 
-fn worker(rx: Arc<Mutex<Receiver<UnixStream>>>, handler: Handler, shared: Arc<Shared>) {
+fn worker(rx: Arc<Mutex<Receiver<Incoming>>>, handler: Handler, shared: Arc<Shared>) {
     loop {
         let next = rx.lock().unwrap_or_else(PoisonError::into_inner).recv();
-        let Ok(stream) = next else {
+        let Ok((first, stream)) = next else {
             return;
         };
-        handle(stream, &handler);
+        handle_after(first, stream, &handler);
         shared.touch();
         shared.open.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+/// A connection for a worker: its first byte if the accept loop already read it, and the stream.
+type Incoming = (Option<u8>, UnixStream);
+
+/// What a connection accepted while the idle exit is under way is: the exit's own wake (it
+/// closes without a byte), or a client, whose first byte (if it sent one in time) is kept.
+fn classify_during_exit(stream: &UnixStream) -> Option<Option<u8>> {
+    // None: the wake. Some(first): a client.
+    if stream.set_read_timeout(Some(WAKE_PEEK)).is_err() {
+        return Some(None);
+    }
+    let mut byte = [0u8; 1];
+    match (&*stream).read(&mut byte) {
+        Ok(0) => None,
+        Ok(_) => Some(Some(byte[0])),
+        Err(_) => Some(None),
+    }
+}
+
+/// Hands a connection to the workers, or answers 503 at once when the queue is full.
+fn enqueue(
+    first: Option<u8>,
+    stream: UnixStream,
+    tx: &mpsc::SyncSender<Incoming>,
+    shared: &Shared,
+) {
+    shared.touch();
+    shared.open.fetch_add(1, Ordering::SeqCst);
+    match tx.try_send((first, stream)) {
+        Ok(()) => {}
+        Err(TrySendError::Full((_, stream))) => {
+            shared.open.fetch_sub(1, Ordering::SeqCst);
+            refuse(stream);
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            shared.open.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
@@ -304,7 +358,7 @@ pub fn run(listener: UnixListener, handler: Handler, limits: Limits) -> io::Resu
         last: Mutex::new(Instant::now()),
         stop: AtomicBool::new(false),
     });
-    let (tx, rx) = mpsc::sync_channel::<UnixStream>(limits.queue.max(1));
+    let (tx, rx) = mpsc::sync_channel::<Incoming>(limits.queue.max(1));
     let rx = Arc::new(Mutex::new(rx));
     let mut workers = Vec::new();
     for n in 0..limits.workers.max(1) {
@@ -315,13 +369,18 @@ pub fn run(listener: UnixListener, handler: Handler, limits: Limits) -> io::Resu
                 .spawn(move || worker(rx, handler, shared))?,
         );
     }
+    let path = listener
+        .local_addr()?
+        .as_pathname()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| io::Error::other("the socket has no path"));
     if let Some(idle) = limits.idle {
-        let path = listener
-            .local_addr()?
-            .as_pathname()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| io::Error::other("the socket has no path"))?;
+        let path = path
+            .as_ref()
+            .map_err(|e| io::Error::other(e.to_string()))?
+            .clone();
         let shared = shared.clone();
+        let wake_delay = limits.wake_delay;
         thread::Builder::new()
             .name("atlas-fed-idle".into())
             .spawn(move || {
@@ -330,7 +389,10 @@ pub fn run(listener: UnixListener, handler: Handler, limits: Limits) -> io::Resu
                     thread::sleep(tick);
                     if shared.open.load(Ordering::SeqCst) == 0 && shared.idle_for() >= idle {
                         shared.stop.store(true, Ordering::SeqCst);
-                        // Wakes the accept below; the loop sees `stop` and returns.
+                        thread::sleep(wake_delay);
+                        // Wakes the accept below: a connection that sends nothing and closes.
+                        // A real client that connects between the decision and this wake is
+                        // served, not dropped (see `is_wake`).
                         let _ = UnixStream::connect(&path);
                         return;
                     }
@@ -338,23 +400,30 @@ pub fn run(listener: UnixListener, handler: Handler, limits: Limits) -> io::Resu
             })?;
     }
     for conn in listener.incoming() {
-        if shared.stop.load(Ordering::SeqCst) {
-            break;
-        }
         let Ok(stream) = conn else {
             continue;
         };
-        shared.touch();
-        shared.open.fetch_add(1, Ordering::SeqCst);
-        match tx.try_send(stream) {
-            Ok(()) => {}
-            Err(TrySendError::Full(stream)) => {
-                shared.open.fetch_sub(1, Ordering::SeqCst);
-                refuse(stream);
+        let mut first = None;
+        if shared.stop.load(Ordering::SeqCst) {
+            match classify_during_exit(&stream) {
+                None => break,
+                Some(byte) => first = byte,
             }
-            Err(TrySendError::Disconnected(_)) => break,
+        }
+        enqueue(first, stream, &tx, &shared);
+    }
+    // Leaving: new clients find no socket (and start a helper that waits for our lock, see
+    // `bind_wait`), and whoever already connected is still answered.
+    if let Ok(p) = &path {
+        let _ = fs::remove_file(p);
+    }
+    if listener.set_nonblocking(true).is_ok() {
+        while let Ok((stream, _)) = listener.accept() {
+            let _ = stream.set_nonblocking(false);
+            enqueue(None, stream, &tx, &shared);
         }
     }
+    drop(listener);
     drop(tx);
     for w in workers {
         let _ = w.join();
@@ -372,6 +441,14 @@ pub struct Bound {
 /// Binds `path` (mode 0600, its directory 0700), after taking `<path>.lock`; a stale socket of a
 /// helper that stopped is replaced. Another helper holding the lock is `AddrInUse`.
 pub fn bind(path: &Path) -> io::Result<Bound> {
+    bind_wait(path, Duration::ZERO)
+}
+
+/// [`bind`], waiting up to `wait` for the lock: a helper that is leaving (idle exit) still holds it
+/// for a moment, and a client that found no socket has just started this one, so it takes over
+/// instead of exiting and leaving the client to time out (QA-A9-WEB-ATLAS-10). A helper that is
+/// serving keeps the lock: after `wait` this is `AddrInUse` as before.
+pub fn bind_wait(path: &Path, wait: Duration) -> io::Result<Bound> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("the socket path has no directory"))?;
@@ -384,15 +461,21 @@ pub fn bind(path: &Path) -> io::Result<Bound> {
         .truncate(false)
         .write(true)
         .open(PathBuf::from(lock_name))?;
-    match lock.try_lock() {
-        Ok(()) => {}
-        Err(fs::TryLockError::WouldBlock) => {
-            return Err(io::Error::new(
-                io::ErrorKind::AddrInUse,
-                format!("another atlas-fed serves {}", path.display()),
-            ));
+    let started = Instant::now();
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(fs::TryLockError::WouldBlock) if started.elapsed() < wait => {
+                thread::sleep(Duration::from_millis(20));
+            }
+            Err(fs::TryLockError::WouldBlock) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AddrInUse,
+                    format!("another atlas-fed serves {}", path.display()),
+                ));
+            }
+            Err(fs::TryLockError::Error(e)) => return Err(e),
         }
-        Err(fs::TryLockError::Error(e)) => return Err(e),
     }
     match fs::remove_file(path) {
         Ok(()) => {}
