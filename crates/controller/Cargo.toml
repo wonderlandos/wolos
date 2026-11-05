@@ -32,3 +32,7 @@ path = "src/bin/wol-session-pam.rs"
 [[bin]]
 name = "wol-authcheck"
 path = "src/bin/wol-authcheck.rs"
+
+[[bin]]
+name = "wolos-mm"
+path = "src/bin/wolos-mm.rs"

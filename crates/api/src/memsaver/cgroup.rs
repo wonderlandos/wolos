@@ -93,6 +93,12 @@ pub fn reclaim(dir: &Path, bytes: u64) -> Option<&'static str> {
     None
 }
 
+/// memory.high in bytes, `max` for None (a per-app budget, `wol_core::memsaver::budget`).
+pub fn set_high(dir: &Path, bytes: Option<u64>) -> bool {
+    let v = bytes.map_or_else(|| "max".to_owned(), |b| b.to_string());
+    write(dir, "memory.high", &v).is_ok()
+}
+
 pub fn freeze(dir: &Path, frozen: bool) -> bool {
     write(dir, "cgroup.freeze", if frozen { "1" } else { "0" }).is_ok()
 }
@@ -122,6 +128,17 @@ mod tests {
         assert_eq!((current(&d), cpu_usec(&d)), (4096, 777));
         assert_eq!(procs(&d), vec![10, 11]);
         assert!(freeze(&d, true));
+        std::fs::write(d.join("memory.high"), "max").unwrap();
+        assert!(set_high(&d, Some(100 << 20)));
+        assert_eq!(
+            std::fs::read_to_string(d.join("memory.high")).unwrap(),
+            "104857600"
+        );
+        assert!(set_high(&d, None));
+        assert_eq!(
+            std::fs::read_to_string(d.join("memory.high")).unwrap(),
+            "max"
+        );
         assert_eq!(
             std::fs::read_to_string(d.join("cgroup.freeze")).unwrap(),
             "1"

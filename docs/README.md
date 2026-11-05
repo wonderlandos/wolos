@@ -76,6 +76,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0044](adr/0044-etc-overlay-across-slot-switches.md) | The /etc overlay across slot switches | accepted |
 | [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
+| [0061](adr/0061-runtime-tuning-js-engines.md) | Runtime tuning: kernel and userland memory for JavaScript engines (fault-around, KSM, Bun allocator, page-out) | accepted |
 
 ## Modules
 
@@ -106,9 +107,11 @@ Each module document names its ADR and its code by crate and path.
 | [modules/hyprland-fork.md](modules/hyprland-fork.md) | the compositor fork: base version, patches in `wolos-pkgbuilds/hyprland-wolos/`, config, QoS plugin | [0012](adr/0012-seamless-boot.md) |
 | [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack (historical: FreeBSD base) | [0008](adr/0008-i915-frame-deadline-boost.md) |
 | [modules/memory-bandwidth.md](modules/memory-bandwidth.md) | iGPU bandwidth paradigms, top 5, measurement | [0007](adr/0007-gpu-tuning-interface.md) |
+| [modules/memsaver.md](modules/memsaver.md) | Memory Saver and per-app memory budgets: the table, the launch in its own scope, the limits and the duty cycle wold applies | [0026](adr/0026-memory-saver.md), [0027](adr/0027-one-app-cannot-take-the-desktop.md) |
 | [modules/modules.md](modules/modules.md) | optional modules (AI, developer, creative, console stacks): what each installs | [0032](adr/0032-optional-modules.md) |
 | [modules/packages.md](modules/packages.md) | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory | [0011](adr/0011-wol-packages.md) |
 | [modules/performance.md](modules/performance.md) | measured desktop latency and frame targets, the probes and how to reproduce them | [0006](adr/0006-vendored-blocking-idle-exit.md) |
+| [modules/runtime-tuning.md](modules/runtime-tuning.md) | kernel and userland memory for JavaScript engines: fault-around, KSM, Bun allocator, page-out, `wolos-mm`; the measured table | [0061](adr/0061-runtime-tuning-js-engines.md) |
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |
@@ -132,5 +135,6 @@ Each module document names its ADR and its code by crate and path.
 |---|---|
 | [creators-audio.md](creators-audio.md) | sound for creators: recording, streaming, producing |
 | [plugins/plugin.schema.json](plugins/plugin.schema.json) | JSON schema of a shell plugin manifest (ADR 0031, [modules/plugins.md](modules/plugins.md)) |
+| [bench/memsaver-discord.md](bench/memsaver-discord.md) | Discord under a 100 MB budget: before and after per state, what did not work, what reached 100 MB and what did not; raw runs in `bench/memsaver-discord.json`, harness in `tools/bench/discord/` |
 | [bench/webapps-baseline.md](bench/webapps-baseline.md) | web-app baseline: what each web-based app costs in memory, start-up, idle and frames, Memory Saver on and off, the gap against native apps and the ranked wins; raw data in `bench/webapps-baseline.json` and `bench/webapps-roles.json`, harness in `tools/bench/webapps/` |
 | [research/attested-gaming-mode.md](research/attested-gaming-mode.md) | research: attested gaming mode and kernel anti-cheat on WolOS (builds on ADR 0025; not a decision) |

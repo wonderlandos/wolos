@@ -1088,7 +1088,7 @@ const LIVE_MARK: &str = "ConditionPathExists=!/etc/wolos-live";
 
 /// Units 50-wolos.preset enables that may run on the live medium: (unit, the condition in the
 /// unit that keeps it off there, or "" when running there is right, reason).
-const LIVE_SAFE: [(&str, &str, &str); 20] = [
+const LIVE_SAFE: [(&str, &str, &str); 21] = [
     (
         "wold.service",
         "",
@@ -1133,6 +1133,11 @@ const LIVE_SAFE: [(&str, &str, &str); 20] = [
         "wolos-power.service",
         "",
         "power policy for the adapter and battery, live too",
+    ),
+    (
+        "wolos-mm.service",
+        "",
+        "fault-around and the KSM account rule for the live session's apps too",
     ),
     (
         "NetworkManager.service",

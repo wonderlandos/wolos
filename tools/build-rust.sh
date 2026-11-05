@@ -45,6 +45,10 @@ install -m 4755 "$B/wol-authcheck" "$DEST/usr/lib/wol-authcheck"
 [ -x "$B/wol-session-pam" ] || { echo "build-rust.sh: binary wol-session-pam not produced" >&2; exit 1; }
 install -m 755 "$B/wol-session-pam" "$DEST/usr/lib/wol-session-pam"
 
+# Memory tuning for JavaScript engines (ADR 0061): KSM opt-in before an exec, page-out of an idle app.
+[ -x "$B/wolos-mm" ] || { echo "build-rust.sh: binary wolos-mm not produced" >&2; exit 1; }
+install -m 755 "$B/wolos-mm" "$DEST/usr/bin/wolos-mm"
+
 # Files' right-click "Check for Malware": starts wol-analyze, links only Nautilus' library.
 EXT=$DEST$(pkg-config --variable=extensiondir libnautilus-extension-4)
 mkdir -p "$EXT"

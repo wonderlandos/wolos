@@ -84,6 +84,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-019", "realtime", 3),
     ("RR-019", "xguard", 1),
     ("RR-020", "aurlaws", 7),
+    // +2 (memsaver/budget.rs, MEMSAVER-X): `launch_sh` builds the `sh -c 'exec systemd-run ...'` argv
+    // of a launcher that cannot know its pid, and its test runs it.
+    ("RR-020", "core", 2),
     ("RR-021", "controller", 4),
     ("RR-021", "core", 4),
     ("RR-021", "realtime", 1),
@@ -208,14 +211,18 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-064", "shell", 5),
     ("RR-064", "wopkg", 25),
     ("RR-064", "xguard", 7),
-    ("RR-065", "core", 21),
-    ("RR-066", "core", 128),
+    // +2 (memsaver/budget.rs, MEMSAVER-X): the `posix_fadvise(DONTNEED)` call of `evict`.
+    ("RR-065", "core", 23),
+    // +3 (memsaver/budget.rs, MEMSAVER-X): `evict` walks and opens the app's own files.
+    ("RR-066", "core", 131),
     ("RR-067", "core", 4),
     ("RR-068", "api", 15),
     // +4 (MANUAL 0.12.0, RR-114 justification): controller/src/secret.rs turns terminal echo off
     // for the administrator password; std has no termios and controller depends on no listed crate.
-    ("RR-068", "controller", 55),
-    ("RR-068", "core", 6),
+    // +2 (JS-RUNTIME-X, ADR 0061, wolos-mm.rs): prctl before an exec, pidfd_open + process_madvise.
+    ("RR-068", "controller", 57),
+    // +1 (memsaver/budget.rs, MEMSAVER-X): the one `posix_fadvise` in `evict` (see unsafe_ratchet.rs).
+    ("RR-068", "core", 7),
     ("RR-068", "proxy", 1),
     ("RR-068", "shared", 16),
     ("RR-068", "shell", 6),

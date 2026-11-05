@@ -43,6 +43,8 @@ pub trait Sys {
     fn cancel(&self, scope: &str);
     /// Bytes of these processes that are compressed away (swap), wherever they were charged.
     fn swapped(&self, pids: &[i32]) -> u64;
+    /// memory.high of the cgroup, in bytes; None: no limit (`max`).
+    fn set_high(&self, cg: &str, bytes: Option<u64>) -> bool;
 }
 
 /// The real system: /proc, /sys/fs/cgroup and busctl.
@@ -189,6 +191,9 @@ impl Sys for Real {
     fn swapped(&self, pids: &[i32]) -> u64 {
         pids.iter().map(|p| pageout::swapped(&self.proc, *p)).sum()
     }
+    fn set_high(&self, cg: &str, bytes: Option<u64>) -> bool {
+        cgroup::set_high(&self.dir(cg), bytes)
+    }
 }
 
 /// Reclaim in steps so `stop` is seen quickly; a step that barely helps means only hot or shared
@@ -270,6 +275,14 @@ pub fn thaw_all(root: &Path) -> usize {
     thawed
 }
 
+/// How long the ticker sleeps: one [`TICK`], or less when a budget's duty cycle is due sooner
+/// (a frozen app is thawed on time, so its messages wait at most the cycle's stop time).
+fn next_wait(due: Option<u64>, now: u64) -> std::time::Duration {
+    due.map_or(TICK, |d| {
+        TICK.min(std::time::Duration::from_millis(d.saturating_sub(now)))
+    })
+}
+
 fn now_ms() -> u64 {
     shared::sys::monotonic_ns() / 1_000_000
 }
@@ -306,7 +319,7 @@ impl Service {
         let _ = self.ticker.set(std::thread::current());
         let mut last = None;
         loop {
-            std::thread::park_timeout(TICK);
+            std::thread::park_timeout(next_wait(self.engine().due(), now_ms()));
             let front = self.front.swap(0, std::sync::atomic::Ordering::Relaxed);
             let Some(st) = guarded_tick(&self.engine, front, now_ms()) else {
                 // The panic itself is in the journal (the panic hook); what stays frozen is not.
@@ -488,6 +501,17 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
+    /// A duty cycle due in 300 ms wakes the ticker in 300 ms, not a whole tick later; one already
+    /// due wakes it at once; none, one tick.
+    #[test]
+    fn the_ticker_wakes_for_a_due_duty_cycle() {
+        use std::time::Duration;
+        assert_eq!(next_wait(None, 1_000), TICK);
+        assert_eq!(next_wait(Some(1_300), 1_000), Duration::from_millis(300));
+        assert_eq!(next_wait(Some(900), 1_000), Duration::ZERO);
+        assert_eq!(next_wait(Some(60_000), 1_000), TICK);
+    }
+
     /// A `Sys` whose every question is a panic: the model of a bug inside the engine.
     struct Boom;
     impl Sys for Boom {
@@ -543,6 +567,9 @@ mod tests {
             panic!("engine bug")
         }
         fn swapped(&self, _pids: &[i32]) -> u64 {
+            panic!("engine bug")
+        }
+        fn set_high(&self, _cg: &str, _bytes: Option<u64>) -> bool {
             panic!("engine bug")
         }
     }
