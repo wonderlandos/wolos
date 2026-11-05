@@ -1973,7 +1973,13 @@ fn origin_of(url: &str) -> String {
 }
 
 fn rss_kb(pid: u32) -> u64 {
-    std::fs::read_to_string(format!("/proc/{pid}/status"))
+    // The process is pinned by a descriptor of its /proc directory and read through it, so a pid number
+    // reused between the two steps cannot answer for another process (proc_identity).
+    use std::os::fd::AsRawFd;
+    let Ok(dir) = std::fs::File::open(format!("/proc/{pid}")) else {
+        return 0;
+    };
+    std::fs::read_to_string(format!("/proc/self/fd/{}/status", dir.as_raw_fd()))
         .ok()
         .and_then(|s| {
             s.lines()

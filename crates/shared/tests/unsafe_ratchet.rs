@@ -153,7 +153,10 @@ const BASELINE: &[(&str, usize)] = &[
     ("shared", 19),
     // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY
     // before gtk::init for the Broadway tests (Rust 2024), which replaced three copies.
-    ("shell", 20),
+    // +2 (INT-2, round 4): tests/golden_cases/store_webapps.rs sets PATH to the folder of a fake `wol`
+    // for the Web Apps cases and puts it back (TERMINAL-TO-GUI): the page runs `wol webapp list` by name,
+    // on the main thread, before any other thread of the golden binary reads the environment.
+    ("shell", 22),
     ("wol-lua", 3),
     ("xguard-clam", 13),
     // +5 webengine for the host's present call (we-web), on top of federate's 173.
