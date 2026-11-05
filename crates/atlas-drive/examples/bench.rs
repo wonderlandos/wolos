@@ -77,6 +77,12 @@ fn main() {
 
     // cold start: process start -> first command answered
     let t0 = Instant::now();
+    // ATLAS_DRIVE_BENCH_ARGS: extra browser flags for experiments (each passed as `--arg F`)
+    let extra: Vec<String> = std::env::var("ATLAS_DRIVE_BENCH_ARGS")
+        .unwrap_or_default()
+        .split_whitespace()
+        .flat_map(|a| ["--arg".to_string(), a.to_string()])
+        .collect();
     let mut daemon = Command::new(&bin)
         .args([
             "serve",
@@ -87,10 +93,16 @@ fn main() {
             "--no-sandbox",
             "--disable-gpu",
         ])
+        .args(&extra)
         .env("ATLAS_DRIVE_CI", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(
+            std::env::var_os("ATLAS_DRIVE_BENCH_LOG")
+                .and_then(|p| std::fs::File::create(p).ok())
+                .map(Stdio::from)
+                .unwrap_or_else(Stdio::null),
+        )
         .spawn()
         .expect("daemon");
     let mut c = loop {
@@ -114,7 +126,13 @@ fn main() {
         let mut m = serde_json::Map::new();
         let t = Instant::now();
         match c.verb("goto", json!({"url": url})) {
-            Ok(_) => m.insert("goto_ms".into(), json!(ms(t))),
+            Ok(r) => {
+                if r["retried"] == true {
+                    // the browser aborted the first attempt (not the driver): counted apart
+                    m.insert("goto_retried".into(), json!(1));
+                }
+                m.insert("goto_ms".into(), json!(ms(t)))
+            }
             Err(e) => {
                 m.insert("error".into(), json!(e));
                 per_page.insert(name.clone(), Value::Object(m));
@@ -145,6 +163,15 @@ fn main() {
         per_page.insert(name.clone(), Value::Object(m));
     }
     out["pages"] = Value::Object(per_page);
+    // round 2: a navigation once the browser has idled a second (its spare renderer is ready), the
+    // same for both tools; the first visits above pay the renderer start of a just-launched browser
+    if let Some((_, url)) = pages.iter().find(|(n, _)| *n == app) {
+        std::thread::sleep(Duration::from_millis(1000));
+        let t = Instant::now();
+        c.verb("goto", json!({"url": format!("{url}?warm=1")}))
+            .expect("goto warm");
+        out["goto_warm_ms"] = json!(ms(t));
+    }
 
     // the app page: click round trip, 100 clicks, screenshot, agent task
     if let Some((_, url)) = pages.iter().find(|(n, _)| *n == app) {
@@ -219,14 +246,14 @@ fn main() {
         c.verb("goto", json!({"url": url})).expect("goto app");
         let t = Instant::now();
         let r = c
-            .verb("batch", json!({"steps": [
+            .verb("batch", json!({"quiet": true, "steps": [
                 {"verb": "fill", "params": {"target": "label~=Email", "text": "me@example.com"}},
                 {"verb": "click", "params": {"target": "role=button name=Save"}},
                 {"verb": "wait", "params": {"for": "selector", "value": "[role=status]"}},
                 {"verb": "eval", "params": {"expr": "document.querySelector('[role=status]').innerText"}},
             ]}))
             .expect("batch known");
-        out["task_known"] = json!({"ms": ms(t), "tokens": r["tokens"], "toast_seen": r.to_string().contains("Saved!"), "calls": 1});
+        out["task_known"] = json!({"ms": ms(t), "tokens": r["tokens"], "toast_seen": r.to_string().contains("Saved!"), "calls": 1, "quiet": true});
 
         // memory and idle wakeups
         std::thread::sleep(Duration::from_millis(1500));
@@ -244,6 +271,13 @@ fn main() {
         out["driver_rss_after_idle_mb"] =
             json!((rss_kb(dpid) as f64 / 1024.0 * 10.0).round() / 10.0);
         let _ = bpid;
+    }
+    // the first command of a new client when the daemon and its browser already run (pre-warmed)
+    let t = Instant::now();
+    if let Ok(mut c2) = Client::connect(&sock)
+        && c2.verb("goto", json!({"url": "about:blank"})).is_ok()
+    {
+        out["warm_first_ms"] = json!(ms(t));
     }
     let _ = c.verb("close", json!({}));
     let _ = daemon.kill();

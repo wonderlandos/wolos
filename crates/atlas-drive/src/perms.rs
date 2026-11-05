@@ -244,12 +244,12 @@ pub fn ask(cmd: &str, exe: &str, scopes: &[&str]) -> bool {
     else {
         return false;
     };
-    let end = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let end = std::time::Instant::now() + crate::util::WAIT_120S;
     loop {
         match c.try_wait() {
             Ok(Some(st)) => return st.success(),
             Ok(None) if std::time::Instant::now() < end => {
-                std::thread::sleep(std::time::Duration::from_millis(50))
+                std::thread::sleep(crate::util::WAIT_50MS)
             }
             _ => {
                 let _ = c.kill();

@@ -44,11 +44,17 @@ def flat(run):
          "clicks100_ms": run["clicks100_ms"], "shot_ms": run["shot_ms"], "shot_bytes": run["shot_bytes"],
          "task_ms": run["task"]["ms"], "task_tokens": run["task"]["tokens"], "task_toast_seen": run["task"]["toast_seen"],
          "browser_rss_mb": run["browser_rss_mb"], "driver_rss_mb": run["driver_rss_mb"], "idle_wakeups_per_s": run["idle_wakeups_per_s"]}
+    for k in ("goto_warm_ms", "warm_first_ms"):
+        if k in run: m[k] = run[k]
     if "task_known" in run:
         m["task_known_ms"] = run["task_known"]["ms"]; m["task_known_tokens"] = run["task_known"]["tokens"]
     for page, p in run["pages"].items():
         for k, v in p.items():
             if isinstance(v, (int, float)): m[f"{page}.{k}"] = v
+        # a load the browser itself aborted (net::ERR_ABORTED): Playwright's goto fails (no number),
+        # Drive retries (goto_retried). goto_clean_ms is the load of runs the browser did not abort.
+        if "goto_ms" in p and not p.get("goto_retried"): m[f"{page}.goto_clean_ms"] = p["goto_ms"]
+        m[f"{page}.goto_aborted"] = 1 if (p.get("goto_retried") or "error" in p) else 0
     return m
 
 def main():
@@ -69,7 +75,9 @@ def main():
     for who in raw:
         rows = [flat(r) for r in raw[who]]
         summary[who] = {k: stat([r.get(k) for r in rows]) for k in sorted({k for r in rows for k in r})}
-    json.dump({"runs": a.runs, "pages": PAGES, "raw": raw, "summary": summary}, open(a.out, "w"), indent=1)
+    try: pwv = json.load(open(f"{a.pw}/node_modules/playwright/package.json"))["version"]
+    except Exception: pwv = ""
+    json.dump({"runs": a.runs, "pages": PAGES, "pw_version": pwv, "raw": raw, "summary": summary}, open(a.out, "w"), indent=1)
     print("wrote", a.out)
 
 main()

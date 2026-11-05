@@ -58,6 +58,9 @@ for (const [name, url] of pages) {
 }
 
 const appUrl = pages.find(([n]) => n === app)[1];
+// round 2: a navigation once the browser has idled a second (same as bench.rs)
+await new Promise((r) => setTimeout(r, 1000));
+{ const t = performance.now(); await page.goto(appUrl + '?warm=1', { waitUntil: 'load' }); out.goto_warm_ms = ms(t); }
 await page.goto(appUrl);
 const bottom = page.locator('#bottom');
 const click = [];
@@ -99,5 +102,7 @@ out.driver_rss_mb = Math.round(rssKb(process.pid) / 1024 * 10) / 10;
 const c0 = ctx(process.pid);
 await new Promise((r) => setTimeout(r, 10000));
 out.idle_wakeups_per_s = Math.round((ctx(process.pid) - c0) / 10 * 100) / 100;
+// the first command when the browser already runs (Drive: a new client of the running daemon)
+{ const t = performance.now(); await page.goto('about:blank'); out.warm_first_ms = ms(t); }
 await browser.close();
 console.log(JSON.stringify(out));

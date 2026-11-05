@@ -18,6 +18,7 @@ pub mod daemon;
 pub mod investigate;
 pub mod keys;
 pub mod mcp;
+pub mod mirror;
 pub mod page;
 pub mod pagejs;
 pub mod peer;

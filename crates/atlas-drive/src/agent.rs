@@ -97,6 +97,10 @@ pub struct AgentState {
     /// The trap scan of the current document and the fingerprint it was made at.
     pub traps_cache: Option<(u64, String, serde_json::Value)>,
     pub boiler_gen: HashMap<u64, u64>,
+    /// Drive's isolated world in this document (src/mirror.rs).
+    pub world: Option<i64>,
+    /// Mirror keys already turned into backend node ids.
+    pub real: HashMap<i64, i64>,
 }
 
 impl AgentState {
@@ -109,6 +113,8 @@ impl AgentState {
             self.next = 0;
             self.last.clear();
             self.last_sig.clear();
+            self.world = None;
+            self.real.clear();
         }
     }
     pub fn assign(&mut self, backend: i64, role: &str, name: &str) -> u32 {
@@ -143,6 +149,8 @@ pub struct Options {
     pub region: Option<i64>,
     pub full: bool,
     pub viewport_only: bool,
+    /// Show every link's address (default: only for links without a name).
+    pub hrefs: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -606,15 +614,7 @@ impl<'a> Builder<'a> {
         match prop(n, "checked").map(val_str) {
             Some(c) if c == "true" => push("checked"),
             Some(c) if c == "mixed" => push("mixed"),
-            Some(c)
-                if c == "false"
-                    && matches!(
-                        role.as_str(),
-                        "checkbox" | "radio" | "switch" | "menuitemcheckbox" | "menuitemradio"
-                    ) =>
-            {
-                push("unchecked")
-            }
+            // unchecked is the default: no word for it
             _ => {}
         }
         if prop_bool(n, "selected") {
@@ -741,10 +741,14 @@ impl<'a> Builder<'a> {
                 body.push_str(&quote(&nm));
             }
             let val = prop_value(n);
-            if (matches!(
-                role.as_str(),
-                "textbox" | "searchbox" | "combobox" | "spinbutton" | "slider" | "textarea"
-            ) || !val.is_empty())
+            // a select lists its options with the chosen one starred: the value would say it twice
+            let mut opts: Vec<String> = vec![];
+            if role == "combobox" {
+                self.collect_options(id, &mut opts);
+            }
+            // an empty value is the default: no attribute for it
+            if !val.is_empty()
+                && opts.is_empty()
                 && matches!(
                     role.as_str(),
                     "textbox" | "searchbox" | "combobox" | "spinbutton" | "slider" | "textarea"
@@ -755,8 +759,6 @@ impl<'a> Builder<'a> {
             body.push_str(&state);
             if role == "combobox" {
                 // a select: its options are a short inline list, not a node each
-                let mut opts: Vec<String> = vec![];
-                self.collect_options(id, &mut opts);
                 if !opts.is_empty() {
                     let shown: Vec<String> = opts.iter().take(12).cloned().collect();
                     body.push_str(&format!(
@@ -969,6 +971,73 @@ fn group_hash(lines: &[Line], start: usize, bid: u32) -> (u64, usize, usize) {
     (fnv(buf.as_bytes()), n, end)
 }
 
+/// Runs of this many same-shaped controls (same role, same depth, nothing between) are folded...
+pub const FOLD_RUN: usize = 10;
+/// ...to their first lines.
+pub const FOLD_KEEP: usize = 6;
+
+/// What a model would read twice: a link with the name and address of one already shown, a label
+/// text that repeats the name of the control beside it, and long runs of same-shaped controls
+/// (a language list, a navigation box), folded to their first lines with a note in place.
+/// Returns how many lines were hidden; `notes` holds the note lines by the index they replace.
+pub fn fold(lines: &[Line], hide: &mut [bool], notes: &mut HashMap<usize, String>) -> usize {
+    let mut seen: HashSet<(&str, &str)> = HashSet::new();
+    for (i, l) in lines.iter().enumerate() {
+        if l.kind == Kind::Interactive
+            && l.role == "link"
+            && !l.name.is_empty()
+            && !seen.insert((l.name.as_str(), l.href.as_str()))
+        {
+            hide[i] = true;
+        }
+    }
+    let same_name = |j: usize, t: &str| {
+        lines
+            .get(j)
+            .is_some_and(|c| c.kind == Kind::Interactive && c.name.eq_ignore_ascii_case(t))
+    };
+    for (i, l) in lines.iter().enumerate() {
+        if l.kind == Kind::Text
+            && !l.name.is_empty()
+            && ((i > 0 && same_name(i - 1, &l.name)) || same_name(i + 1, &l.name))
+        {
+            hide[i] = true;
+        }
+    }
+    let vis: Vec<usize> = (0..lines.len()).filter(|i| !hide[*i]).collect();
+    let mut k = 0;
+    while k < vis.len() {
+        let a = &lines[vis[k]];
+        let mut e = k;
+        if a.kind == Kind::Interactive {
+            while e + 1 < vis.len() {
+                let b = &lines[vis[e + 1]];
+                if b.kind != a.kind || b.role != a.role || b.depth != a.depth {
+                    break;
+                }
+                e += 1;
+            }
+        }
+        let run = e - k + 1;
+        if run >= FOLD_RUN {
+            for &i in &vis[k + FOLD_KEEP..=e] {
+                hide[i] = true;
+            }
+            let pad = " ".repeat(a.depth.min(MAX_DEPTH));
+            notes.insert(
+                vis[k + FOLD_KEEP],
+                format!(
+                    "{pad}… {} more {} like these (--full)",
+                    run - FOLD_KEEP,
+                    a.role
+                ),
+            );
+        }
+        k = e + 1;
+    }
+    hide.iter().filter(|h| **h).count()
+}
+
 /// Assign refs, collapse repeated boilerplate, apply options; returns the rendered text.
 /// `geometry` gives, per backend node id, whether it is in the viewport (None = not fetched).
 pub fn render(
@@ -1028,7 +1097,8 @@ pub fn render(
         .map(|e| &url[..e])
         .unwrap_or("");
     for l in lines.iter_mut() {
-        if l.role == "link" && !l.href.is_empty() {
+        // the address of a named link is noise for a model (it clicks the ref); --hrefs shows them
+        if l.role == "link" && !l.href.is_empty() && (opts.hrefs || l.name.is_empty()) {
             let h = l.href.trim();
             let shown = match h.strip_prefix(origin).filter(|_| !origin.is_empty()) {
                 Some("") => "/".to_string(),
@@ -1074,7 +1144,13 @@ pub fn render(
         lines.retain(|l| l.in_view != Some(false));
     }
     let total = lines.len();
-    let header = format!("@ {} {}", url, quote(&squeeze(title, 100)));
+    // a data: or very long address is cut: the header orients, it does not carry the page
+    let shown_url = if url.chars().count() > 200 {
+        format!("{}…", url.chars().take(120).collect::<String>())
+    } else {
+        url.to_string()
+    };
+    let header = format!("@ {} {}", shown_url, quote(&squeeze(title, 100)));
 
     // diff
     let mut keyed: Vec<(String, String)> = Vec::with_capacity(lines.len());
@@ -1133,14 +1209,25 @@ pub fn render(
     state.last_sig = sig;
 
     let mut omitted = 0;
+    let mut folded = 0;
     if let Some(d) = &diff_lines {
         // a diff is small by construction; the budget still applies in order
         for (i, t) in d.iter().enumerate() {
             selected.push((i, t.clone()));
         }
     } else {
+        // the full view drops what a model would read twice; the diff baseline keeps every line
+        let mut hide = vec![false; lines.len()];
+        let mut notes: HashMap<usize, String> = HashMap::new();
+        if !opts.full && opts.region.is_none() {
+            folded = fold(&lines, &mut hide, &mut notes);
+        }
         for (i, (_, text)) in keyed.iter().enumerate() {
-            selected.push((i, text.clone()));
+            if !hide[i] {
+                selected.push((i, text.clone()));
+            } else if let Some(n) = notes.remove(&i) {
+                selected.push((i, n));
+            }
         }
     }
     let nodes_in = selected.len();
@@ -1157,7 +1244,7 @@ pub fn render(
         let mut order: Vec<usize> = (0..selected.len()).collect();
         if diff_lines.is_none() {
             let class = |i: usize| -> u8 {
-                let l = &lines[i];
+                let l = &lines[selected[i].0.min(lines.len().saturating_sub(1))];
                 if l.focused || l.in_view == Some(true) {
                     0
                 } else if focus_region
@@ -1216,7 +1303,7 @@ pub fn render(
         tokens: tokens(text.len()),
         nodes: selected.len(),
         omitted,
-        collapsed,
+        collapsed: collapsed + folded,
         text,
     }
 }
@@ -1472,8 +1559,8 @@ mod tests {
             1,
         );
         let want = "@ https://a.test/ \"Demo\"\n\
-[e1] navigation \"Main\"\n [e2] link \"Home\" -> /\n [e3] link \"Docs\"\n\
-[e4] main\n [e5] h1 \"Profile\"\n [e6] textbox \"Email\" value=\"\" required\n [e7] button \"Save\" disabled\n \"Hello world\"\n [e8] status \"Saved!\"\n\
+[e1] navigation \"Main\"\n [e2] link \"Home\"\n [e3] link \"Docs\"\n\
+[e4] main\n [e5] h1 \"Profile\"\n [e6] textbox \"Email\" required\n [e7] button \"Save\" disabled\n \"Hello world\"\n [e8] status \"Saved!\"\n\
 [e9] contentinfo\n [e10] link \"Privacy\"\n";
         assert_eq!(r.text, want);
         // the same page again gives the same refs and the same text (deterministic)

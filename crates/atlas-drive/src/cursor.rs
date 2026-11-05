@@ -9,6 +9,9 @@ pub struct Cursor {
     pub x: f64,
     pub y: f64,
     pub trail: Vec<(f64, f64)>,
+    /// Where the browser's mouse is, and in which document (`nav_gen`): a click at the same point
+    /// needs no move event (a move is frame-aligned in the renderer, a press is not).
+    pub at: Option<(u64, f64, f64)>,
 }
 
 impl Cursor {

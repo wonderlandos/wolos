@@ -104,7 +104,7 @@ fn start_worker(d: Arc<crate::daemon::Daemon>, b: Browser) {
     }
     let (sub, rx, _sink) = chan_sub(vec!["Fetch.requestPaused".into()], 512, 0);
     b.subscribe(sub);
-    let _ = std::thread::Builder::new().name("fetch-routes".into()).spawn(move || {
+    let spawned = std::thread::Builder::new().name("fetch-routes".into()).spawn(move || {
         while let Ok(line) = rx.recv() {
             let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
             let sess = v["sessionId"].as_str().map(String::from);
@@ -114,8 +114,9 @@ fn start_worker(d: Arc<crate::daemon::Daemon>, b: Browser) {
                 let r = d.routes.lock().unwrap_or_else(PoisonError::into_inner);
                 decide(&r, &url).cloned()
             };
+            let (b2, sess2, id2) = (b.clone(), sess.clone(), id.clone());
             let b = b.clone();
-            std::thread::spawn(move || {
+            let one = std::thread::Builder::new().name("fetch-route".into()).spawn(move || {
                 let s = sess.as_deref();
                 match action {
                     Some(Action::Mock { status, body, content_type }) => {
@@ -133,8 +134,16 @@ fn start_worker(d: Arc<crate::daemon::Daemon>, b: Browser) {
                     }
                 }
             });
+            if one.is_err() {
+                // no thread for it: let the request go on unrouted rather than hang the page
+                b2.fire(sess2.as_deref(), "Fetch.continueRequest", json!({"requestId": id2}));
+            }
         }
     });
+    if spawned.is_err() {
+        // a later `route add` tries again
+        STARTED.store(false, Ordering::SeqCst);
+    }
 }
 
 #[cfg(test)]

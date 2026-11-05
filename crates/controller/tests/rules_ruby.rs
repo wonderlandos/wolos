@@ -60,7 +60,8 @@ const CENSUS: &[(&str, &str)] = &[
 /// (ATLAS-THEME), a binding Ruby does not have here.
 /// tools 11 -> 18 (INT-2, round 4; none of them is shipped): the MEMSAVER-X2 harness
 /// (`tools/bench/memsaver-x2/*.py`, five: they drive Discord and read /proc from the forge) and
-/// ATLAS-DRIVE's `tools/bench/atlas-drive/bench.py` and `chart.py` (CDP timings against Playwright).
+/// the Atlas Drive benchmark (ADR 0063): `tools/bench/atlas-drive/bench.py` runs both tools interleaved and
+/// `chart.py` draws docs/bench/atlas-drive.png with matplotlib (no Rust plotting).
 const B_PYTHON: &[(&str, usize)] = &[("tools", 18)];
 /// Scanner fixtures (wrong on purpose; never part of the scope).
 const FIXTURES: &str = "crates/controller/tests/fixtures/ruby/";
