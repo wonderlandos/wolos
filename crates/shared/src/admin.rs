@@ -103,6 +103,11 @@ pub enum AdminAction {
     /// DNS over TLS (systemd-resolved): `<off|opportunistic|strict> [server…]`, a resolved.conf.d
     /// drop-in, then resolved restarted.
     DnsOverTls,
+    /// Turn the optimized x86-64-v3 repo sections on or off to match this processor
+    /// (`wol mirror gate --yes`, ADR 0030). No arguments.
+    MirrorGate,
+    /// Intel's cooling helper (`thermald.service`): `on` or `off`, with its unit.
+    CoolingHelper,
 }
 
 /// Length inferred: adding an action is one row here and one variant above.
@@ -154,6 +159,8 @@ const NAMES: &[(AdminAction, &str)] = &[
     (AdminAction::Reports, "reports"),
     (AdminAction::Proxy, "proxy"),
     (AdminAction::DnsOverTls, "dns-over-tls"),
+    (AdminAction::MirrorGate, "mirror-gate"),
+    (AdminAction::CoolingHelper, "cooling-helper"),
 ];
 
 impl AdminAction {

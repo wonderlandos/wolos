@@ -865,6 +865,16 @@ fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
 /// [`install_plan`], with `prep` run on the target and the plan folder just before install-run
 /// (what an earlier system left on the reused startup partition, what sits next to the plan).
 fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, PathBuf) {
+    install_plan_env(d, wol, prep, &[])
+}
+
+/// [`install_plan_on`] with more environment for the script.
+fn install_plan_env(
+    d: &Path,
+    wol: &str,
+    prep: impl FnOnce(&Path),
+    env: &[(&str, &str)],
+) -> (Output, PathBuf) {
     install_with(d, "/dev/nvme0n1", "off");
     let t = d.join("target");
     let _ = fs::remove_dir_all(&t);
@@ -897,6 +907,8 @@ fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, Pa
         .env("WOLOS_BOOT_NOTE", d.join("note"))
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .env("WOLOS_RESULT_DIR", d.join("results"))
+        .env("WOLOS_MIN_CPU_FILE", d.join("no-min-cpu-level"))
+        .envs(env.iter().copied())
         .output()
         .unwrap();
     (o, t)
@@ -990,6 +1002,94 @@ fn a_tpm_disk_gets_the_account_password_as_its_fallback() {
     assert!(
         keys < encrypt,
         "the keys come before the disk unlock: {out}"
+    );
+}
+
+/// `wol mirror status --json` as the fake `wol` answers it: the x86-64 level of this computer.
+fn wol_at_level(level: u8) -> String {
+    WOL_ALONGSIDE.replace(
+        "esac",
+        &format!(
+            "\"mirror status\"*) echo '{{\"level\":{level},\"cachy_supported\":{},\"servers\":[]}}' ;;\nesac",
+            level >= 3
+        ),
+    )
+}
+
+/// IMAGE-F: an image that needs a higher x86-64 level than this processor (the image says so in
+/// `/usr/share/wolos/min-cpu-level`, here WOLOS_MIN_CPU_LEVEL) is refused before the first write.
+/// The reason is in words; AVX2 is named because that is what a v3 image needs.
+#[test]
+fn a_processor_below_the_images_minimum_is_refused_before_any_write() {
+    let d = scratch("cpu-refused");
+    let (o, _) = install_plan_env(
+        &d,
+        &wol_at_level(2),
+        |_| {},
+        &[("WOLOS_MIN_CPU_LEVEL", "3")],
+    );
+    assert_eq!(o.status.code(), Some(2));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        out.contains(
+            "wolos-install: fail prepare this processor is too old for this WolOS (it needs AVX2)"
+        ),
+        "{out}"
+    );
+    let l = log(&d);
+    assert!(
+        !l.contains("install layout") && !l.contains("unsquashfs") && !l.contains("systemd-repart"),
+        "nothing ran after the refusal: {l}"
+    );
+}
+
+/// The image on disk today needs level 1 (every 64-bit PC): an older processor installs, with the
+/// standard builds (`wol mirror gate` keeps the optimized repos off below v3) and a line in the log.
+#[test]
+fn a_processor_without_avx2_installs_the_standard_builds_and_the_log_says_so() {
+    let d = scratch("cpu-standard");
+    let (o, _) = install_plan_env(&d, &wol_at_level(2), |_| {}, &[]);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(!out.contains("wolos-install: fail"), "{out}");
+    let results = fs::read_to_string(d.join("results/log")).unwrap_or_default();
+    assert!(
+        results.contains("this processor has no AVX2: the standard builds are installed"),
+        "{results}"
+    );
+    // A processor that has it says nothing.
+    let d = scratch("cpu-fast");
+    let (o, _) = install_plan_env(&d, &wol_at_level(3), |_| {}, &[]);
+    assert!(!String::from_utf8_lossy(&o.stdout).contains("wolos-install: fail"));
+    let results = fs::read_to_string(d.join("results/log")).unwrap_or_default();
+    assert!(!results.contains("AVX2"), "{results}");
+}
+
+/// Fable review: an unreadable level never passes a minimum above 1 (fail closed); at the
+/// minimum of 1 the install goes on and the log says the level was not known.
+#[test]
+fn an_unreadable_processor_level_is_refused_when_the_image_needs_more_than_the_baseline() {
+    let d = scratch("cpu-unknown-refused");
+    // The fake `wol` has no answer for `mirror status`: no level at all.
+    let (o, _) = install_plan_env(&d, WOL_ALONGSIDE, |_| {}, &[("WOLOS_MIN_CPU_LEVEL", "3")]);
+    assert_eq!(o.status.code(), Some(2));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        out.contains("wolos-install: fail prepare the processor could not be identified, and this WolOS needs AVX2"),
+        "{out}"
+    );
+    let l = log(&d);
+    assert!(
+        !l.contains("install layout") && !l.contains("unsquashfs") && !l.contains("systemd-repart"),
+        "nothing ran after the refusal: {l}"
+    );
+    let d = scratch("cpu-unknown-baseline");
+    let (o, _) = install_plan_env(&d, WOL_ALONGSIDE, |_| {}, &[]);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(!out.contains("wolos-install: fail"), "{out}");
+    let results = fs::read_to_string(d.join("results/log")).unwrap_or_default();
+    assert!(
+        results.contains("the processor level could not be read"),
+        "{results}"
     );
 }
 

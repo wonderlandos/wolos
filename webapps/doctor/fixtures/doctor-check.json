@@ -337,6 +337,69 @@
       "id": "display.devices",
       "status": "warn",
       "title": "Graphics"
+    },
+    {
+      "area": "hardware",
+      "detail": "There is no graphics card to decode video on.",
+      "id": "hardware.video",
+      "status": "skipped",
+      "title": "Video decoding"
+    },
+    {
+      "area": "hardware",
+      "detail": "There is no graphics card for 3D games.",
+      "id": "hardware.vulkan",
+      "status": "skipped",
+      "title": "3D graphics"
+    },
+    {
+      "area": "hardware",
+      "detail": "Every part found the firmware it asked for at startup.",
+      "id": "hardware.firmware",
+      "status": "ok",
+      "title": "Device firmware"
+    },
+    {
+      "area": "hardware",
+      "detail": "Fingerprint readers could not be checked.",
+      "id": "hardware.fingerprint",
+      "status": "skipped",
+      "title": "Fingerprint reader"
+    },
+    {
+      "area": "hardware",
+      "detail": "This computer has no Thunderbolt or USB4 port.",
+      "id": "hardware.thunderbolt",
+      "status": "skipped",
+      "title": "Thunderbolt and USB4"
+    },
+    {
+      "area": "hardware",
+      "detail": "This processor does not report its speed control.",
+      "id": "hardware.cpu-power",
+      "status": "skipped",
+      "title": "Processor power"
+    },
+    {
+      "area": "hardware",
+      "detail": "Intel's cooling helper is only for Intel processors in a real computer.",
+      "id": "hardware.cooling",
+      "status": "skipped",
+      "title": "Cooling"
+    },
+    {
+      "area": "hardware",
+      "detail": "Power modes could not be checked.",
+      "id": "hardware.power-modes",
+      "status": "skipped",
+      "title": "Power modes"
+    },
+    {
+      "area": "hardware",
+      "detail": "This processor can run the optimized programs; they turn on with the next update check.",
+      "id": "hardware.cpu-level",
+      "status": "ok",
+      "title": "Processor level"
     }
   ],
   "ready": false

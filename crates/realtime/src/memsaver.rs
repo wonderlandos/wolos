@@ -66,6 +66,28 @@ pub fn streams(pactl_json: &str) -> Vec<i32> {
         .collect()
 }
 
+/// Words of a reverse-DNS class that name no app: the vendor or the forge, not the program.
+const VENDOR_WORDS: [&str; 9] = [
+    "gnome",
+    "kde",
+    "freedesktop",
+    "github",
+    "gitlab",
+    "flathub",
+    "mozilla",
+    "google",
+    "microsoft",
+];
+
+/// A Flatpak app's window class is its app id (`com.spotify.Client`) and its MPRIS name the short
+/// one (`spotify`): `name` is a word of the class after its first (the top-level domain), and not a
+/// vendor word.
+fn short_name_of(class: &str, name: &str) -> bool {
+    let class = shared::memsaver::app_id(class);
+    let parts: Vec<&str> = class.split('.').collect();
+    parts.len() >= 3 && !VENDOR_WORDS.contains(&name) && parts[1..].contains(&name)
+}
+
 /// pids of MPRIS players that are Playing, from `playerctl -a metadata --format
 /// '{{status}}\t{{playerInstance}}'` lines. Chromium-style instance names carry the pid
 /// (`chromium.instance4242`); others match a window's app id (`spotify`).
@@ -93,7 +115,12 @@ pub fn players(playerctl: &str, windows: &[Window]) -> Vec<i32> {
         } else {
             first
         };
-        out.extend(windows.iter().filter(|w| named(&name, w)).map(|w| w.pid));
+        out.extend(
+            windows
+                .iter()
+                .filter(|w| named(&name, w) || short_name_of(&w.app, &name))
+                .map(|w| w.pid),
+        );
     }
     out
 }
@@ -283,6 +310,32 @@ mod tests {
         ];
         let out = "Playing\torg.wolos.webapp.music\nPlaying\tspotify.instance_2\n";
         assert_eq!(players(out, &w), vec![50, 52]);
+    }
+
+    /// IMAGE-F: a Flatpak app's window class is its app id (`com.spotify.Client`) while its MPRIS
+    /// name is the short one (`org.mpris.MediaPlayer2.spotify`, which playerctl prints as
+    /// `spotify`). Without the match the player is not found, and the Flatpak's sound stream cannot
+    /// stand in (it reports the pid inside the sandbox): music would stop when the window is hidden.
+    #[test]
+    fn a_flatpak_player_is_found_by_the_short_name_of_its_app_id() {
+        let win = |pid: i32, app: &str| Window {
+            pid,
+            app: app.into(),
+            visible: false,
+        };
+        let w = vec![
+            win(60, "com.spotify.Client"),
+            win(61, "org.mozilla.firefox"),
+            win(62, "org.gnome.Nautilus"),
+            win(63, "io.github.celluloid_player.Celluloid"),
+        ];
+        let out = "Playing\tspotify\nPlaying\tfirefox.instance_1_9\nPlaying\tcelluloid\nPaused\tnautilus\n";
+        assert_eq!(players(out, &w), vec![60, 61, 63]);
+        // A vendor word is not an app: "mozilla" or "gnome" name no player, and "github" no one.
+        assert!(players("Playing\tgnome\nPlaying\tgithub\nPlaying\tmozilla\n", &w).is_empty());
+        // A window with exactly that name and a Flatpak's both stay: when unsure, nothing playing is frozen.
+        let w2 = vec![win(70, "spotify"), win(71, "com.spotify.Client")];
+        assert_eq!(players("Playing\tspotify\n", &w2), vec![70, 71]);
     }
 
     #[test]

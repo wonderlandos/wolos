@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol doctor [area]` and `wol doctor fix <id>` (docs/modules/doctor.md): every area of the
-//! computer (sound, games, updates, security, storage, network, power, display) as one list of
+//! computer (sound, games, updates, security, storage, network, power, display, hardware) as one list of
 //! [`Check`]s in plain words, each with the fix it can run. The facts and rules stay where they
 //! live (`audio_doctor`, `wol_core::games::doctor`, `wol_core::security`, `wol_core::storage`,
 //! `wol_core::netinfo`, `wol_core::power`, `wol_core::hardware`); this module only words them for
@@ -16,11 +16,12 @@ use std::path::Path;
 use wol_core::games::doctor as games;
 
 pub mod groups;
+pub mod hw;
 pub mod tls;
 
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
 ];
 /// Areas run only when asked for by name (`wol doctor tls` connects to servers outside the
 /// computer, so neither plain `wol doctor` nor the Doctor app runs it).
@@ -1172,6 +1173,7 @@ pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
         "network" => network(env),
         "power" => power(env),
         tls::AREA => tls::checks(env),
+        "hardware" => hw::checks(env),
         _ => display(env),
     })
 }
@@ -1186,6 +1188,7 @@ fn area_name(area: &str) -> &'static str {
         "storage" => "Storage",
         "network" => "Network",
         "power" => "Power",
+        "hardware" => "Hardware",
         tls::AREA => "Secure connections",
         _ => "Displays",
     }

@@ -5,7 +5,7 @@
 {
 const { t, localize, explain } = window.wolkit;
 
-const AREAS = ["sound", "games", "updates", "security", "storage", "network", "power", "display"];
+const AREAS = ["sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware"];
 const RANK = { fail: 0, warn: 1, ok: 2, skipped: 3 };
 const BADGE = { ok: "ok", warn: "warn", fail: "fail", skipped: "info" };
 

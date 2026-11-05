@@ -713,7 +713,7 @@ pub const TREE: &[Cmd] = &[
             optional: true,
             rest: false,
         }],
-        "Check sound, games, updates, security, storage, network, power and displays, with the fix (tls: what each TLS stack negotiates, only when asked)",
+        "Check sound, games, updates, security, storage, network, power, displays and hardware, with the fix (tls: what each TLS stack negotiates, only when asked)",
     ),
     cmd(
         &["doctor", "fix"],

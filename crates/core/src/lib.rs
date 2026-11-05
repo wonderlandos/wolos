@@ -15,6 +15,7 @@ pub mod controls;
 pub mod desktop;
 pub mod downloads;
 pub mod encrypt;
+pub mod flathub;
 pub mod flatpak;
 pub mod games;
 pub mod hardware;
