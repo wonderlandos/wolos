@@ -380,6 +380,20 @@ Each component spec in `design/components/` lists its rules; the Kit tests and `
 
 <!-- component-rules:end -->
 
+### Layout, measured on every golden (RU-700 to RU-709)
+
+Not a source scan: `crates/shell/tests/support/layout_lint.rs` walks the GTK widget tree of every golden case after it renders (allocations, and the rendered pixels for RU-706) and `tests/golden.rs` counts the findings per rule and surface against the lint's own `BASELINE` (growth-only, one reason per row). Each finding names the case, the widget path, the rule and the numbers; the run writes them all to `layout-lint.tsv` next to the renders. Controls are buttons, fields, search fields, switches, drop-downs, sliders, check boxes and menu buttons; check boxes and sliders take their height from their row.
+
+| Id | Rule |
+|---|---|
+| RU-700 | A control sits at least 8 px inside every edge of the nearest container that draws a background (toolbar, card, list row, window). |
+| RU-701 | Every widget lies inside its parent's allocation, a control's own parts too (scrolled content excepted). |
+| RU-702 | A button, field, drop-down, menu button or switch is one of the scaffold control heights (24, 28, 36 or 40 px). |
+| RU-703 | A control in a toolbar or header bar sits on the bar's vertical centre. |
+| RU-704 | A search field in a toolbar is at most 320 px wide and is the last item, at the bar's right padding. |
+| RU-705 | Two controls side by side in a horizontal box are 8 or 12 px apart and never touch (segmented groups excepted). |
+| RU-706 | A disabled destructive button is drawn in the dim control style, never a pale red. |
+
 ## Not automated
 
 - Whether a sentence says what happened and what to do (needs a reader); only its shape is checked.
