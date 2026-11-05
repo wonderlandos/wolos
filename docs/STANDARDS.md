@@ -299,13 +299,22 @@ brackets; `cargo test` runs in the `test` job).
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
   `BASELINE` row (that table is the record and its comment gives the reason for every raise;
   the rows: wol-abi 513, wolkit 314, wopkg 104, realtime 49, xguard 65, controller 61, api 33,
-  core 14, xguard-clam 13, shared 19, shell 20, proxy 3, wol-lua 3, webengine 178, atlas 1, federate 0, wolcrypt 0, wolkeyring 1, audio 0, aurlaws 0, wolsem 0, wol-tor 0, wolkit-render 0, wolkit-web 0, atlas-fed 0).
+  core 16, xguard-clam 13, shared 19, shell 20, proxy 3, wol-lua 3, webengine 178, atlas 1, federate 0, wolcrypt 0, wolkeyring 1, audio 0, aurlaws 0, wolsem 0, wol-tor 0, wolkit-render 0, wolkit-web 0, atlas-fed 0).
+  Core went 14 -> 16 for `system/verity.rs` (SEAL-FAST: `FS_IOC_ENABLE_VERITY` and `FS_IOC_MEASURE_VERITY`, the seal's fs-verity in process instead of three `fsverity` spawns per file; std has no such call; with FIX-A9-CORE's two it is 18).
   Controller went 56 -> 58 for `wolos-mm` (ADR 0061: `prctl(PR_SET_MEMORY_MERGE)` before an exec, `pidfd_open` and
   `process_madvise`; std wraps none). It went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
   no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap and `_exit` in that handler. A raise
   is justified there and each new block has its `// SAFETY:` line (RR-012); lowering a count
   lowers the baseline in the same commit, and these numbers change in the same commit as the
   table (**CI** [test] `standards_quotes_the_baseline`). (C, R2C-19, audit8)
+- **The seal turns fs-verity on in process**: `wol seal apply` seals through
+  `wol_core::seal::verity::seal_all` (4 threads, `FS_IOC_ENABLE_VERITY` and `FS_IOC_MEASURE_VERITY`
+  with SHA-256, 4096-byte blocks, no salt), never one `fsverity` process per file; its answers keep
+  the input's order so the manifest bytes do not depend on thread timing, and a failure is
+  reported with its step and the system's reason, never as a missing digest. `WOL_SEAL_FSVERITY_BIN=1`
+  is the diagnosis path with the program. **CI** [test] `crates/core/tests/seal_verity.rs` (kernel
+  digest against the specification's, on a loop-mounted btrfs) and `crates/controller/tests/seal.rs`
+  (manifest byte-equality old vs new). (IMG013-3-SEAL-SLOW, SEAL-FLAKE, docs/modules/seal.md)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
   `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`, `wolkit_image`, `wolkit_text`, `webpolicy`, `atlas_wire`). **CI** [fuzz]

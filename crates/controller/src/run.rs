@@ -36,6 +36,12 @@ pub trait Env {
         let _ = secs;
         self.request(socket, req)
     }
+    /// Whether `wol seal apply` turns fs-verity on with the kernel's ioctls in this process
+    /// (the real environment, unless `WOL_SEAL_FSVERITY_BIN` is set) or by running `fsverity`
+    /// (a fake file system in a test). IMG013-3-SEAL-SLOW.
+    fn verity_in_process(&self) -> bool {
+        false
+    }
     /// Run argv with inherited stdio; exit status.
     fn exec(&mut self, argv: &[String]) -> io::Result<i32>;
     /// Run argv, capture stdout (None on failure).
@@ -1713,6 +1719,10 @@ impl Env for RealEnv {
     fn is_root(&self) -> bool {
         // SAFETY: geteuid has no preconditions.
         unsafe { libc::geteuid() == 0 }
+    }
+    fn verity_in_process(&self) -> bool {
+        // The environment variable is for diagnosing the in-process seal against the program.
+        self.var("WOL_SEAL_FSVERITY_BIN").is_none()
     }
     fn request(&mut self, socket: &Path, req: &[u8]) -> io::Result<String> {
         self.request_wait(socket, req, 30)

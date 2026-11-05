@@ -5,6 +5,9 @@ use controller::run::{FakeEnv, execute};
 use std::path::PathBuf;
 use wol_core::seal::Manifest;
 
+#[path = "../../core/tests/support/loopfs.rs"]
+mod loopfs;
+
 fn run(line: &str, env: &mut FakeEnv) -> i32 {
     let argv: Vec<&str> = line.split_whitespace().collect();
     execute(&parse(&argv).unwrap(), env)
@@ -950,6 +953,10 @@ struct VerityFs {
     /// Paths whose enable fails without verity (a file system that cannot have it).
     refused: Vec<String>,
     enables: Vec<String>,
+    /// `turn_on` asks the kernel (a loop-mounted btrfs) instead of numbering the inodes.
+    real: bool,
+    /// `seal apply` uses the in-process ioctls, as the real environment does.
+    inproc: bool,
 }
 
 impl VerityFs {
@@ -963,6 +970,8 @@ impl VerityFs {
             raced: Vec::new(),
             refused: Vec::new(),
             enables: Vec::new(),
+            real: false,
+            inproc: false,
         }
     }
     fn inode(p: &str) -> (u64, u64) {
@@ -972,7 +981,12 @@ impl VerityFs {
     }
     fn turn_on(&mut self, p: &str) {
         let n = self.on.len() + 1;
-        self.on.insert(Self::inode(p), format!("{n:064x}"));
+        let d = if self.real {
+            wol_core::seal::verity::seal_file(std::path::Path::new(p)).unwrap()
+        } else {
+            format!("{n:064x}")
+        };
+        self.on.insert(Self::inode(p), d);
     }
 }
 
@@ -991,6 +1005,9 @@ impl controller::run::Env for VerityFs {
     }
     fn is_root(&self) -> bool {
         true
+    }
+    fn verity_in_process(&self) -> bool {
+        self.inproc
     }
     fn request(&mut self, s: &std::path::Path, r: &[u8]) -> std::io::Result<String> {
         self.fake.request(s, r)
@@ -1140,4 +1157,148 @@ fn an_inode_already_sealed_when_enabled_takes_its_digest_and_a_real_failure_stop
         "not made read-only half sealed"
     );
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A slot tree with what a real one has: hard links (in one folder and across two), symlinks, a
+/// link to a folder, an empty file, files of many sizes, a hashed policy file, a data file.
+fn big_tree(root: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    for dir in [
+        "usr/bin/core_perl",
+        "usr/lib/wolos",
+        "usr/lib/locale",
+        "usr/libexec",
+        "usr/share/polkit-1/rules.d",
+    ] {
+        std::fs::create_dir_all(root.join(dir)).unwrap();
+    }
+    let body =
+        |i: usize| -> Vec<u8> { (0..(i * 131) % 20_000).map(|j| (j * 7 + i) as u8).collect() };
+    for i in 0..150 {
+        let d = root.join(format!("usr/lib/lib{}", i % 9));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(format!("x{i}.so")), body(i)).unwrap();
+    }
+    std::fs::write(root.join("usr/bin/coreutils"), b"\x7fELFcore").unwrap();
+    std::fs::set_permissions(
+        root.join("usr/bin/coreutils"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink("coreutils", root.join("usr/bin/true")).unwrap();
+    std::fs::write(root.join("usr/bin/core_perl/perlbug"), "#!/usr/bin/perl\n").unwrap();
+    std::fs::hard_link(
+        root.join("usr/bin/core_perl/perlbug"),
+        root.join("usr/bin/core_perl/perlthanks"),
+    )
+    .unwrap();
+    // A link across folders, and a third link of the same inode.
+    std::fs::hard_link(
+        root.join("usr/lib/lib0/x0.so"),
+        root.join("usr/lib/lib8/zz-link.so"),
+    )
+    .unwrap();
+    std::fs::hard_link(
+        root.join("usr/lib/lib0/x0.so"),
+        root.join("usr/libexec/helper"),
+    )
+    .unwrap();
+    std::fs::write(root.join("usr/lib/empty"), b"").unwrap();
+    std::fs::write(root.join("usr/lib/locale/locale-archive"), "data").unwrap();
+    std::os::unix::fs::symlink("bin", root.join("usr/sbin")).unwrap();
+    std::fs::write(
+        root.join("usr/share/polkit-1/rules.d/50-x.rules"),
+        "polkit.addRule()",
+    )
+    .unwrap();
+}
+
+fn written(env: &VerityFs, ends: &str) -> String {
+    env.fake
+        .written
+        .iter()
+        .find(|w| w.0.to_string_lossy().ends_with(ends))
+        .map(|w| w.1.clone())
+        .unwrap_or_default()
+}
+
+/// IMG013-3-SEAL-SLOW: the in-process seal (four threads, the kernel's ioctls) writes the same
+/// manifest and root digest, byte for byte, as the `fsverity` program run one file at a time did,
+/// on the same tree (hard links of one inode in one and in two folders, links, an empty file).
+/// Both runs ask the same kernel (a loop-mounted btrfs), so the digests are the real ones.
+#[test]
+fn the_in_process_seal_writes_the_manifest_the_fsverity_program_did() {
+    let Some(fs) = loopfs::LoopFs::new("seal-eq") else {
+        return;
+    };
+    let (a, b) = (fs.path().join("slot-a"), fs.path().join("slot-b"));
+    for r in [&a, &b] {
+        big_tree(r);
+    }
+    let mut old = VerityFs::new();
+    old.real = true;
+    let (code, _) = seal_apply(&mut old, &a.to_string_lossy());
+    assert_eq!(code, 0, "{}", old.fake.err);
+    let mut new = VerityFs::new();
+    new.inproc = true;
+    let (code, _) = seal_apply(&mut new, &b.to_string_lossy());
+    assert_eq!(code, 0, "{}", new.fake.err);
+    assert!(
+        new.enables.is_empty(),
+        "no fsverity process in the new path"
+    );
+    assert!(!old.enables.is_empty());
+    let (mo, mn) = (
+        written(&old, "usr/lib/wolos/verity.manifest"),
+        written(&new, "usr/lib/wolos/verity.manifest"),
+    );
+    assert!(
+        mo.starts_with("wolos-seal 2\n") && mo.lines().count() > 150,
+        "{mo}"
+    );
+    assert_eq!(mo, mn, "manifest bytes");
+    assert_eq!(
+        written(&old, "/efi/wolos-b/verity"),
+        written(&new, "/efi/wolos-b/verity"),
+        "root digest"
+    );
+    // The links of one inode have one digest; the empty file and the link have theirs.
+    let m = Manifest::parse_text(&mn).0;
+    assert_eq!(m.0["usr/lib/lib0/x0.so"], m.0["usr/libexec/helper"]);
+    assert_eq!(
+        m.0["usr/bin/core_perl/perlbug"],
+        m.0["usr/bin/core_perl/perlthanks"]
+    );
+    assert_eq!(m.0["usr/lib/lib8/zz-link.so"], m.0["usr/lib/lib0/x0.so"]);
+    assert_ne!(m.0["usr/lib/empty"], m.0["usr/bin/coreutils"]);
+}
+
+/// SEAL-FLAKE: a file the kernel will not seal is reported as that, with the system's reason,
+/// at the step that failed; never "no fs-verity digest" (which a killed program also produced).
+#[test]
+fn an_in_process_failure_names_the_step_and_the_reason_and_seals_nothing() {
+    // /dev/shm is tmpfs: no fs-verity.
+    let root =
+        std::path::PathBuf::from("/dev/shm").join(format!("wol-seal-none-{}", std::process::id()));
+    if !std::path::Path::new("/dev/shm").is_dir() {
+        return;
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("usr/lib")).unwrap();
+    std::fs::write(root.join("usr/lib/os.py"), "import sys\n").unwrap();
+    let mut env = VerityFs::new();
+    env.inproc = true;
+    let (code, _) = seal_apply(&mut env, &root.to_string_lossy());
+    let _ = std::fs::remove_dir_all(&root);
+    assert_ne!(code, 0);
+    let err = &env.fake.err;
+    assert!(
+        err.contains("usr/lib/os.py: fs-verity could not be enabled: "),
+        "{err}"
+    );
+    assert!(!err.contains("no fs-verity digest"), "{err}");
+    assert!(
+        !env.fake.execs.iter().any(|e| e[0] == "btrfs"),
+        "not made read-only"
+    );
 }

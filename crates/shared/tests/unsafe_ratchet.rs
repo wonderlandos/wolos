@@ -124,6 +124,10 @@ use std::path::{Path, PathBuf};
 /// golden cases); wopkg 103 -> 104 (`context.rs`: `geteuid`, no std call, SAFETY line); wolkeyring
 /// 0 -> 1 (ADR 0054, `src/bin/wol-keyringd.rs`: `prctl(PR_SET_DUMPABLE, 0)` and `setrlimit(RLIMIT_CORE,
 /// 0)` so no core file can hold the keys, SAFETY line; the library has `#![forbid(unsafe_code)]`).
+/// SEAL-FAST (2026-11-05, IMG013-3-SEAL-SLOW): core 14 -> 16 (`src/system/verity.rs`: the two
+/// SAFETY-lined `ioctl` calls, `FS_IOC_ENABLE_VERITY` and `FS_IOC_MEASURE_VERITY`, so `wol seal
+/// apply` seals 71,385 files in seconds instead of starting `fsverity` three times per file for 14
+/// minutes; std has no fs-verity call). Merged with FIX-A9-CORE's 14 -> 16 the row is 18.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 513),
@@ -135,7 +139,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
-    ("core", 14),
+    ("core", 16),
     ("proxy", 3),
     ("shared", 19),
     // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY

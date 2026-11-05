@@ -314,7 +314,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-064", "wopkg", 25),
     ("RR-064", "xguard", 7),
     // +2 (memsaver/budget.rs, MEMSAVER-X): the `posix_fadvise(DONTNEED)` call of `evict`.
-    ("RR-065", "core", 23),
+    // +4 (SEAL-FAST, IMG013-3-SEAL-SLOW): system/verity.rs, the seal's fs-verity in process: the two
+    //   `libc::ioctl` calls (FS_IOC_ENABLE_VERITY, FS_IOC_MEASURE_VERITY), `O_NOFOLLOW` and `ENODATA`;
+    //   std has no fs-verity call, and the `fsverity` program cost three process spawns per file.
+    ("RR-065", "core", 27),
     // +3 (memsaver/budget.rs, MEMSAVER-X): `evict` walks and opens the app's own files.
     // +15 (INT-2, 0.13 integration): monitor/{mod,procs,startup}.rs read /proc and /sys under a
     //   `Root` (the fixture folder in tests); consent.rs, storage.rs, net.rs and admin.rs read the
@@ -328,7 +331,8 @@ const BASELINE: &[(&str, &str, usize)] = &[
     // +2 (JS-RUNTIME-X, ADR 0061, wolos-mm.rs): prctl before an exec, pidfd_open + process_madvise.
     ("RR-068", "controller", 57),
     // +1 (memsaver/budget.rs, MEMSAVER-X): the one `posix_fadvise` in `evict` (see unsafe_ratchet.rs).
-    ("RR-068", "core", 7),
+    // +2 (SEAL-FAST, IMG013-3-SEAL-SLOW): system/verity.rs, the two ioctl blocks (SAFETY lines).
+    ("RR-068", "core", 9),
     ("RR-068", "proxy", 1),
     ("RR-068", "shared", 16),
     ("RR-068", "shell", 6),
