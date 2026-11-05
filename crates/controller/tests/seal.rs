@@ -205,6 +205,8 @@ fn boot_check_that_passes_clears_the_slots_old_mark() {
                 d('b')
             ),
         )],
+        // Nothing mounted on /usr (no layers): findmnt exits 1, as on the real early boot.
+        statuses: vec![("findmnt -n -o FSTYPE /usr".into(), 1, String::new())],
         ..Default::default()
     };
     assert_eq!(run("seal check", &mut env), 0, "{}", env.err);
@@ -808,4 +810,207 @@ fn a_deleted_manifest_fails_the_check() {
     };
     assert_eq!(run("seal check", &mut env), 1);
     assert!(env.err.contains("protected file list"), "{}", env.err);
+}
+
+/// fs-verity as the kernel keeps it: per inode, not per path. `fsverity enable` on an inode that
+/// already has it fails with EEXIST ("File exists"); `fsverity measure` answers only when every
+/// file named has it (else exit 1, no answer). `raced` paths get verity from someone else between
+/// the measure and the enable (their enable then fails with EEXIST too).
+struct VerityFs {
+    fake: FakeEnv,
+    on: std::collections::HashMap<(u64, u64), String>,
+    raced: Vec<String>,
+    /// Paths whose enable fails without verity (a file system that cannot have it).
+    refused: Vec<String>,
+    enables: Vec<String>,
+}
+
+impl VerityFs {
+    fn new() -> Self {
+        VerityFs {
+            fake: FakeEnv {
+                root: true,
+                ..Default::default()
+            },
+            on: Default::default(),
+            raced: Vec::new(),
+            refused: Vec::new(),
+            enables: Vec::new(),
+        }
+    }
+    fn inode(p: &str) -> (u64, u64) {
+        use std::os::unix::fs::MetadataExt;
+        let m = std::fs::symlink_metadata(p).unwrap();
+        (m.dev(), m.ino())
+    }
+    fn turn_on(&mut self, p: &str) {
+        let n = self.on.len() + 1;
+        self.on.insert(Self::inode(p), format!("{n:064x}"));
+    }
+}
+
+impl controller::run::Env for VerityFs {
+    fn out(&mut self, s: &str) {
+        self.fake.out(s)
+    }
+    fn err(&mut self, s: &str) {
+        self.fake.err(s)
+    }
+    fn stdout_tty(&self) -> bool {
+        false
+    }
+    fn var(&self, n: &str) -> Option<String> {
+        self.fake.var(n)
+    }
+    fn is_root(&self) -> bool {
+        true
+    }
+    fn request(&mut self, s: &std::path::Path, r: &[u8]) -> std::io::Result<String> {
+        self.fake.request(s, r)
+    }
+    fn exec(&mut self, a: &[String]) -> std::io::Result<i32> {
+        if let [t, v, p] = a
+            && t == "fsverity"
+            && v == "enable"
+        {
+            self.fake.execs.push(a.to_vec());
+            self.enables.push(p.clone());
+            if self.refused.contains(p) {
+                self.fake.err(&format!(
+                    "ERROR: FS_IOC_ENABLE_VERITY failed on '{p}': Operation not supported\n"
+                ));
+                return Ok(1);
+            }
+            if let Some(i) = self.raced.iter().position(|r| r == p) {
+                self.raced.remove(i);
+                self.turn_on(p);
+            }
+            if self.on.contains_key(&Self::inode(p)) {
+                self.fake.err(&format!(
+                    "ERROR: FS_IOC_ENABLE_VERITY failed on '{p}': File exists\n"
+                ));
+                return Ok(1);
+            }
+            self.turn_on(p);
+            return Ok(0);
+        }
+        self.fake.exec(a)
+    }
+    fn capture(&mut self, a: &[&str]) -> Option<String> {
+        if let ["fsverity", "measure", paths @ ..] = a {
+            let mut out = String::new();
+            for p in paths {
+                out.push_str(&format!("sha256:{} {p}\n", self.on.get(&Self::inode(p))?));
+            }
+            return Some(out);
+        }
+        self.fake.capture(a)
+    }
+    fn stdin_line(&mut self) -> Option<String> {
+        None
+    }
+    fn read_file(&self, p: &std::path::Path) -> Option<String> {
+        self.fake.read_file(p)
+    }
+    fn sys_topic(&mut self, t: &str) -> Option<serde_json::Value> {
+        self.fake.sys_topic(t)
+    }
+    fn now_secs(&self) -> u64 {
+        0
+    }
+    fn config_home(&self) -> PathBuf {
+        PathBuf::new()
+    }
+    fn write_file(&mut self, p: &std::path::Path, t: &str) -> std::io::Result<()> {
+        self.fake.write_file(p, t)
+    }
+}
+
+fn seal_apply(env: &mut VerityFs, r: &str) -> (i32, Manifest) {
+    let line = format!("seal apply {r} /efi/wolos-b/verity");
+    let argv: Vec<&str> = line.split_whitespace().collect();
+    let code = execute(&parse(&argv).unwrap(), env);
+    let text = env
+        .fake
+        .written
+        .iter()
+        .find(|w| w.0.ends_with("usr/lib/wolos/verity.manifest"))
+        .map(|w| w.1.clone())
+        .unwrap_or_default();
+    (code, Manifest::parse_text(&text).0)
+}
+
+/// IMG013-SEAL-HARDLINK: perl 5.44 ships usr/bin/core_perl/perlthanks as a hard link of perlbug.
+/// The seal enables verity once per inode, and every path of it (both links) gets the digest;
+/// before, the second link's enable failed with EEXIST and every install stopped at "seal 92%".
+#[test]
+fn a_hard_linked_pair_is_sealed_once_and_both_paths_get_the_digest() {
+    let root = slot_root("hardlink");
+    std::fs::create_dir_all(root.join("usr/bin/core_perl")).unwrap();
+    std::fs::write(root.join("usr/bin/core_perl/perlbug"), "#!/usr/bin/perl\n").unwrap();
+    std::fs::hard_link(
+        root.join("usr/bin/core_perl/perlbug"),
+        root.join("usr/bin/core_perl/perlthanks"),
+    )
+    .unwrap();
+    let r = root.to_string_lossy().into_owned();
+    let mut env = VerityFs::new();
+    let (code, m) = seal_apply(&mut env, &r);
+    assert_eq!(code, 0, "{}", env.fake.err);
+    let bug = &m.0["usr/bin/core_perl/perlbug"];
+    assert_eq!(
+        &m.0["usr/bin/core_perl/perlthanks"], bug,
+        "one inode, one digest"
+    );
+    assert_ne!(&m.0["usr/bin/coreutils"], bug);
+    let perl: Vec<&String> = env
+        .enables
+        .iter()
+        .filter(|p| p.contains("core_perl"))
+        .collect();
+    assert_eq!(perl.len(), 1, "verity enabled once per inode: {perl:?}");
+    // Complete: every file under the sealed dirs is in the manifest with a digest.
+    for f in [
+        "usr/bin/coreutils",
+        "usr/lib/os.py",
+        "usr/lib/locale/locale-archive",
+    ] {
+        assert!(m.0.contains_key(f), "{f} missing: {:?}", m.0.keys());
+    }
+    assert_eq!(
+        env.fake.execs.last().unwrap().join(" "),
+        format!("btrfs property set -ts {r} ro true")
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// An inode that got verity after it was measured (another link of it the walk could not tell
+/// apart, a seal still running): its enable fails with EEXIST and the seal takes the digest it
+/// already has. A file that still has no digest after a failed enable stops the seal, named.
+#[test]
+fn an_inode_already_sealed_when_enabled_takes_its_digest_and_a_real_failure_stops() {
+    let root = slot_root("eexist");
+    let r = root.to_string_lossy().into_owned();
+    let mut env = VerityFs::new();
+    env.raced.push(format!("{r}/usr/lib/os.py"));
+    let (code, m) = seal_apply(&mut env, &r);
+    assert_eq!(code, 0, "{}", env.fake.err);
+    assert_eq!(m.0["usr/lib/os.py"].len(), 64, "{:?}", m.0);
+    // A file verity cannot be enabled on (no digest after the failure): the seal stops.
+    let mut env = VerityFs::new();
+    env.refused.push(format!("{r}/usr/lib/os.py"));
+    let (code, _) = seal_apply(&mut env, &r);
+    assert_ne!(code, 0);
+    assert!(
+        env.fake
+            .err
+            .contains("could not be enabled on usr/lib/os.py"),
+        "{}",
+        env.fake.err
+    );
+    assert!(
+        !env.fake.execs.iter().any(|e| e[0] == "btrfs"),
+        "not made read-only half sealed"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

@@ -303,7 +303,11 @@ struct LsOut {
 }
 #[derive(Deserialize, Default)]
 struct LsDev {
+    name: Option<String>,
     path: Option<String>,
+    /// `TYPE`: disk, part, crypt (LUKS and verity), lvm, dm, raid1, loop...
+    #[serde(rename = "type")]
+    kind: Option<String>,
     size: Option<u64>,
     #[serde(default)]
     parttype: Option<String>,
@@ -417,10 +421,32 @@ pub struct Facts {
     pub mounts: Vec<String>,
     /// Devices on the disk in use as swap (`[SWAP]`).
     pub swaps: Vec<String>,
+    /// Device-mapper volumes opened over it (LUKS, verity, LVM), by name, the topmost first: each
+    /// holds its partition busy, so the partition table can't change under it (IMG013-INSTALL-AFTER-CUT).
+    pub volumes: Vec<String>,
+    /// Loop devices backed by one of its partitions or by a file on one of its mounts
+    /// ([`Facts::add_loops`]).
+    pub loops: Vec<String>,
+    /// Every device path on the disk (the disk, its partitions, the volumes over them).
+    pub nodes: Vec<String>,
 }
 
 /// The lsblk columns [`facts`] reads.
-pub const FACTS_LSBLK: &str = "NAME,PATH,SIZE,PARTTYPE,FSTYPE,MOUNTPOINTS";
+pub const FACTS_LSBLK: &str = "NAME,PATH,SIZE,TYPE,PARTTYPE,FSTYPE,MOUNTPOINTS";
+/// `losetup` arguments whose output [`Facts::add_loops`] reads.
+pub const LOOPS_LOSETUP: [&str; 4] = ["--json", "--list", "-O", "NAME,BACK-FILE"];
+
+#[derive(Deserialize)]
+struct LoOut {
+    #[serde(default)]
+    loopdevices: Vec<LoDev>,
+}
+#[derive(Deserialize)]
+struct LoDev {
+    name: String,
+    #[serde(rename = "back-file")]
+    back_file: Option<String>,
+}
 
 fn walk<'a>(d: &'a LsDev, out: &mut Vec<&'a LsDev>) {
     out.push(d);
@@ -435,6 +461,7 @@ pub fn facts(lsblk: &str) -> Option<Facts> {
     let top = ls.blockdevices.first()?;
     let mut f = Facts {
         bytes: top.size?,
+        nodes: top.path.clone().into_iter().collect(),
         ..Facts::default()
     };
     let mut all = Vec::new();
@@ -443,6 +470,15 @@ pub fn facts(lsblk: &str) -> Option<Facts> {
     }
     let mut found = Vec::new();
     for d in all.iter().copied() {
+        f.nodes.extend(d.path.clone());
+        if is_mapper(d) {
+            let name = d
+                .path
+                .as_deref()
+                .and_then(|p| p.strip_prefix("/dev/mapper/"))
+                .or(d.name.as_deref());
+            f.volumes.extend(name.map(str::to_owned));
+        }
         let p = Part {
             kind: d.parttype.clone().unwrap_or_default().to_lowercase(),
             fstype: d.fstype.clone().unwrap_or_default(),
@@ -461,7 +497,16 @@ pub fn facts(lsblk: &str) -> Option<Facts> {
     f.systems = FAMILIES.into_iter().filter(|s| found.contains(s)).collect();
     // Deepest first, so each unmount finds nothing mounted under it.
     f.mounts.sort_by(|a, b| b.cmp(a));
+    // The walk lists a volume after what it sits on: the topmost closes first.
+    f.volumes.reverse();
+    f.volumes.dedup();
     Some(f)
+}
+
+/// A device-mapper volume (lsblk `TYPE` crypt, lvm, dm, mpath, raid*), not a partition or a loop.
+fn is_mapper(d: &LsDev) -> bool {
+    let k = d.kind.as_deref().unwrap_or_default();
+    matches!(k, "crypt" | "lvm" | "dm" | "mpath") || k.starts_with("raid")
 }
 
 impl Facts {
@@ -480,16 +525,43 @@ impl Facts {
         s
     }
 
-    /// `wol install mounts`: `mount <path>` (deepest first), then `swap <device>`.
+    /// `wol install mounts`: what holds the disk, in the order it is let go: `detach <loop>`
+    /// (a loop keeps its backing file's mount busy), `mount <path>` (deepest first), `swap
+    /// <device>`, then `close <volume>` (topmost first). Nothing: nothing holds it.
     pub fn mount_lines(&self) -> String {
         let mut s = String::new();
+        for l in &self.loops {
+            s.push_str(&format!("detach {l}\n"));
+        }
         for m in &self.mounts {
             s.push_str(&format!("mount {m}\n"));
         }
         for w in &self.swaps {
             s.push_str(&format!("swap {w}\n"));
         }
+        for v in &self.volumes {
+            s.push_str(&format!("close {v}\n"));
+        }
         s
+    }
+
+    /// The loop devices of `losetup --json --list -O NAME,BACK-FILE` ([`LOOPS_LOSETUP`]) backed
+    /// by a device on this disk or by a file under one of its mounts; the live medium's own
+    /// loops (another disk) are never among them. Output that isn't losetup's JSON adds nothing.
+    pub fn add_loops(&mut self, losetup: &str) {
+        let Ok(lo) = serde_json::from_str::<LoOut>(losetup) else {
+            return;
+        };
+        for l in lo.loopdevices {
+            let Some(back) = l.back_file else { continue };
+            let back = back.strip_suffix(" (deleted)").unwrap_or(&back);
+            let under = |m: &String| m != "/" && std::path::Path::new(back).starts_with(m);
+            if (self.nodes.iter().any(|n| n == back) || self.mounts.iter().any(under))
+                && !self.loops.contains(&l.name)
+            {
+                self.loops.push(l.name);
+            }
+        }
     }
 }
 
@@ -738,6 +810,45 @@ mod tests {
         ubuntu.os = Some("Ubuntu 24.04.1 LTS".into());
         assert_eq!(ubuntu.title(), "Ubuntu 24.04.1 LTS");
         assert_eq!(p(DATA_TYPE, "").title(), "Partition 0");
+    }
+
+    /// IMG013-INSTALL-AFTER-CUT: what a cut-short install leaves holding the disk (its target
+    /// mounted, the system volume and a verity view open over the partition, swap on, a loop
+    /// over a partition and one over a file on the disk) is let go in an order that works,
+    /// topmost first; the live medium's own loop stays.
+    #[test]
+    fn everything_that_holds_a_disk_is_let_go_topmost_first() {
+        let ls = r#"{"blockdevices":[{"name":"vda","path":"/dev/vda","size":64000000000,"type":"disk","children":[
+          {"name":"vda1","path":"/dev/vda1","type":"part","fstype":"vfat","mountpoints":["/mnt/wolos/efi"]},
+          {"name":"vda2","path":"/dev/vda2","type":"part","fstype":"crypto_LUKS","mountpoints":[null],
+           "children":[{"name":"wolosroot","path":"/dev/mapper/wolosroot","type":"crypt","fstype":"btrfs",
+             "mountpoints":["/mnt/wolos","/mnt/wolos/home"],
+             "children":[{"name":"seal-view","path":"/dev/mapper/seal-view","type":"crypt","mountpoints":[null]}]}]},
+          {"name":"vda3","path":"/dev/vda3","type":"part","fstype":"swap","mountpoints":["[SWAP]"]},
+          {"name":"vda4","path":"/dev/vda4","type":"part","fstype":"ext4","mountpoints":[null]}]}]}"#;
+        let mut f = facts(ls).unwrap();
+        assert_eq!(f.volumes, ["seal-view", "wolosroot"]);
+        f.add_loops(
+            r#"{"loopdevices":[
+              {"name":"/dev/loop0","back-file":"/run/archiso/bootmnt/wolos/x86_64/airootfs.sfs"},
+              {"name":"/dev/loop1","back-file":"/dev/vda4"},
+              {"name":"/dev/loop2","back-file":"/mnt/wolos/var/lib/img (deleted)"},
+              {"name":"/dev/loop3","back-file":"/mnt/wolosx/img"},
+              {"name":"/dev/loop4"}]}"#,
+        );
+        assert_eq!(
+            f.mount_lines(),
+            "detach /dev/loop1\ndetach /dev/loop2\nmount /mnt/wolos/home\nmount /mnt/wolos/efi\n\
+             mount /mnt/wolos\nswap /dev/vda3\nclose seal-view\nclose wolosroot\n"
+        );
+        // Not losetup's JSON (no losetup on the medium): no loops, the rest stands.
+        let mut g = facts(ls).unwrap();
+        g.add_loops("losetup: not found");
+        assert!(g.loops.is_empty());
+        // A blank disk after a cut holds nothing.
+        let blank =
+            facts(r#"{"blockdevices":[{"path":"/dev/vda","size":1,"type":"disk"}]}"#).unwrap();
+        assert_eq!(blank.mount_lines(), "");
     }
 
     #[test]

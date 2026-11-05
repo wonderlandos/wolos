@@ -252,6 +252,8 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         ("btrfs", ""),
         ("sync", ""),
         ("cryptsetup", ""),
+        ("losetup", ""),
+        ("dmsetup", ""),
         (
             "wol",
             "case \"$*\" in\n\"encrypt decide\"*) [ \"$WOLOS_TEST_UNLOCK\" = refuse ] && exit 1; echo ${WOLOS_TEST_UNLOCK:-off} ;;\n\
@@ -317,6 +319,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .env("WOLOS_INSTALL_LOG", d.join("install.log"))
         .env("WOLOS_RESULT_DIR", d.join("results"))
+        .env("WOLOS_PROC", d.join("proc"))
         .output()
         .unwrap()
 }
@@ -580,6 +583,158 @@ fn a_new_try_closes_every_volume_the_last_one_left_open() {
     assert!(first < check, "closed before the disk is looked at: {l}");
 }
 
+/// IMG013-INSTALL-AFTER-CUT: after a power cut the disk still carries the first try's partitions;
+/// something holding one of them (a probe, a volume) makes systemd-repart fail with EBUSY. The
+/// installer lets go of the disk and settles udev before it partitions, and tries once more.
+#[test]
+fn a_busy_disk_is_let_go_and_partitioned_on_the_second_try() {
+    let d = scratch("busy-once");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    // The first call fails as on the 0.13 ISO, the next one works.
+    fake(
+        &d,
+        "systemd-repart",
+        &format!(
+            "n={}\nif [ ! -e \"$n\" ]; then : > \"$n\"; echo \"Failed to create new partition '/dev/nvme0n1p1': \
+             Device or resource busy\" >&2; exit 1; fi",
+            d.join("repart-once").display()
+        ),
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(o.status.success(), "{out}");
+    assert!(out.contains("wolos-install: done 100"), "{out}");
+    let l = log(&d);
+    let ran: Vec<&str> = l.lines().collect();
+    let repart: Vec<usize> = (0..ran.len())
+        .filter(|&i| ran[i].starts_with("systemd-repart "))
+        .collect();
+    assert_eq!(repart.len(), 2, "one more try: {l}");
+    // Before each try: the disk's holders asked, udev settled.
+    for (from, to) in [(0, repart[0]), (repart[0], repart[1])] {
+        let between = &ran[from..to];
+        assert!(
+            between
+                .iter()
+                .any(|x| x.starts_with("wol install mounts /dev/nvme0n1")),
+            "holders read before try: {between:?}"
+        );
+        assert!(
+            between.contains(&"udevadm settle"),
+            "udev settled before try: {between:?}"
+        );
+    }
+}
+
+/// A volume opened over a partition (a verity view, a disk unlocked in Files) and a loop over one
+/// hold the disk busy with nothing mounted: the check does not refuse the disk for them, and the
+/// installer closes and detaches them before it partitions (IMG013-INSTALL-AFTER-CUT).
+#[test]
+fn volumes_and_loops_over_the_disk_are_let_go_before_it_is_partitioned() {
+    let d = scratch("holders");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fs::rename(d.join("bin/lsblk"), d.join("bin/lsblk-base")).unwrap();
+    let json = r#"{"blockdevices":[{"name":"nvme0n1","path":"/dev/nvme0n1","size":512110190592,"type":"disk","children":[
+      {"name":"nvme0n1p1","path":"/dev/nvme0n1p1","type":"part","fstype":"vfat","mountpoints":[null]},
+      {"name":"nvme0n1p2","path":"/dev/nvme0n1p2","type":"part","fstype":"crypto_LUKS","mountpoints":[null],
+       "children":[{"name":"luks-1234","path":"/dev/mapper/luks-1234","type":"crypt","fstype":"btrfs","mountpoints":[null]}]}]}]}"#;
+    fake(
+        &d,
+        "lsblk",
+        &format!(
+            "case \"$*\" in *--json*/dev/nvme0n1) printf '%s\\n' '{}' ;; *) exec \"$(dirname \"$0\")/lsblk-base\" \"$@\" ;; esac",
+            json.replace('\n', "")
+        ),
+    );
+    fake(
+        &d,
+        "losetup",
+        "case \"$*\" in *--json*) printf '%s\\n' '{\"loopdevices\":[{\"name\":\"/dev/loop0\",\"back-file\":\"/run/archiso/bootmnt/airootfs.sfs\"},{\"name\":\"/dev/loop7\",\"back-file\":\"/dev/nvme0n1p2\"}]}' ;; esac",
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(o.status.success(), "{out}");
+    let l = log(&d);
+    let at = |w: &str| {
+        l.lines()
+            .position(|x| x == w)
+            .unwrap_or_else(|| panic!("{w} not run: {l}"))
+    };
+    let repart = l
+        .lines()
+        .position(|x| x.starts_with("systemd-repart "))
+        .unwrap();
+    assert!(at("losetup -d /dev/loop7") < repart, "{l}");
+    assert!(at("cryptsetup close luks-1234") < repart, "{l}");
+    assert!(
+        !l.contains("losetup -d /dev/loop0"),
+        "the live medium's loop stays: {l}"
+    );
+}
+
+/// Still busy on the second try: the fail line says what holds the disk (its mounts, volumes,
+/// and the processes with one of its devices open), not only the tool's EBUSY.
+#[test]
+fn a_disk_that_stays_busy_says_what_holds_it() {
+    let d = scratch("busy-always");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fake(
+        &d,
+        "systemd-repart",
+        "echo \"Failed to create new partition '/dev/nvme0n1p1': Device or resource busy\" >&2; exit 1",
+    );
+    // A process has the second partition open (a probe that never let go); one on another disk
+    // is not named.
+    let fd = d.join("proc/4242/fd");
+    fs::create_dir_all(&fd).unwrap();
+    std::os::unix::fs::symlink("/dev/nvme0n1p2", fd.join("7")).unwrap();
+    fs::write(d.join("proc/4242/comm"), "udisksd\n").unwrap();
+    let other = d.join("proc/77/fd");
+    fs::create_dir_all(&other).unwrap();
+    std::os::unix::fs::symlink("/dev/sda1", other.join("3")).unwrap();
+    // A disk whose name starts with this one's (/dev/nvme0n10): not this disk.
+    let ns10 = d.join("proc/88/fd");
+    fs::create_dir_all(&ns10).unwrap();
+    std::os::unix::fs::symlink("/dev/nvme0n10", ns10.join("4")).unwrap();
+    fs::write(d.join("proc/88/comm"), "ns10\n").unwrap();
+    // A process that named itself with a pipe and a newline stays one clean line.
+    let odd = d.join("proc/99/fd");
+    fs::create_dir_all(&odd).unwrap();
+    std::os::unix::fs::symlink("/dev/nvme0n1p1", odd.join("5")).unwrap();
+    fs::write(d.join("proc/99/comm"), "ev|il\nx\n").unwrap();
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert_eq!(o.status.code(), Some(1));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let last = out.lines().last().unwrap();
+    assert!(
+        last.starts_with(
+            "wolos-install: fail disk could not partition /dev/nvme0n1 (held by: process 4242 (udisksd), process 99 (evilx))"
+        ),
+        "{last}"
+    );
+    assert!(last.contains("Device or resource busy"), "{last}");
+    assert!(
+        !last.contains("process 77"),
+        "another disk's user is not named: {last}"
+    );
+    assert!(
+        !last.contains("process 88"),
+        "/dev/nvme0n10 is another disk: {last}"
+    );
+    assert!(!last.contains('|'), "one line, no pipes: {last}");
+    assert_eq!(
+        log(&d)
+            .lines()
+            .filter(|x| x.starts_with("systemd-repart "))
+            .count(),
+        2,
+        "tried exactly twice"
+    );
+}
+
 /// install-run again on the fakes [`install_with`] left (some replaced since), on an empty target.
 fn rerun(d: &Path, disk: &str) -> Output {
     let t = d.join("target");
@@ -604,6 +759,7 @@ fn rerun(d: &Path, disk: &str) -> Output {
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .env("WOLOS_INSTALL_LOG", d.join("install.log"))
         .env("WOLOS_RESULT_DIR", d.join("results"))
+        .env("WOLOS_PROC", d.join("proc"))
         .output()
         .unwrap()
 }
