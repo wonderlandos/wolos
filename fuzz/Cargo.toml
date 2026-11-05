@@ -20,6 +20,7 @@ wol-lua = { path = "../crates/wol-lua" }
 wol = { path = "../crates/wol-abi", package = "wol-abi" }
 wol_core = { path = "../crates/core", package = "core" }
 wolkit = { path = "../crates/wolkit" }
+atlas-drive = { path = "../crates/atlas-drive" }
 
 [[bin]]
 name = "ipc_decode"
@@ -150,6 +151,13 @@ bench = false
 [[bin]]
 name = "atlas_wire"
 path = "fuzz_targets/atlas_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "atlas_drive_wire"
+path = "fuzz_targets/atlas_drive_wire.rs"
 test = false
 doc = false
 bench = false

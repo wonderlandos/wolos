@@ -84,6 +84,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The browser's Federate helper (ADR 0052 "Atlas"): a process beside the browser that
                 // answers fed:// loads with the one verifier; it links nothing else of the workspace.
                 "atlas-fed" => dep == "federate",
+                // Atlas Drive (ADR 0063): browser automation over the pipe; it takes the shared types
+                // (peer credentials, euid) and nothing else of the workspace.
+                "atlas-drive" => dep == "shared",
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",

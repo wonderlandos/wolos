@@ -1,0 +1,2780 @@
+{
+ "runs": 10,
+ "pages": {
+  "app": "http://127.0.0.1:8091/app.html",
+  "wolos": "http://127.0.0.1:8092/index.html",
+  "hub": "http://127.0.0.1:8093/hub/index.html",
+  "heavy": "http://127.0.0.1:8091/wiki.html",
+  "fed": "fed://home.fed/",
+  "chrome": "chrome://version/"
+ },
+ "raw": {
+  "drive": [
+   {
+    "browser_rss_mb": 2005,
+    "click_locator_ms": [
+     32.39,
+     34.51,
+     33.76,
+     23.41,
+     42.04,
+     33.35,
+     24.63,
+     26.07,
+     32.71,
+     33.58
+    ],
+    "click_ms": [
+     17.87,
+     23.36,
+     32.95,
+     32.68,
+     33.75,
+     35.24,
+     32.38,
+     33.36,
+     32.95,
+     33.74
+    ],
+    "clicks100_ms": 2549.39,
+    "cold_ms": 1125.41,
+    "driver_rss_after_idle_mb": 101.5,
+    "driver_rss_mb": 101.5,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 465.46,
+      "snap_1000_ms": 28.15,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 14.65,
+      "snap_ms": 23.32,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 24.36
+     },
+     "chrome": {
+      "goto_ms": 159.02,
+      "snap_1000_ms": 45.91,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 47.41,
+      "snap_ms": 61.23,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 31.99
+     },
+     "fed": {
+      "goto_ms": 1041.22,
+      "snap_1000_ms": 27.88,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 26.31,
+      "snap_ms": 42.1,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 62.46
+     },
+     "heavy": {
+      "goto_ms": 805.16,
+      "snap_1000_ms": 1050.83,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1182.73,
+      "snap_ms": 1372.64,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1112.15
+     },
+     "hub": {
+      "goto_ms": 2646.31,
+      "snap_1000_ms": 32.74,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 70.84,
+      "snap_ms": 62.76,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 52.13
+     },
+     "wolos": {
+      "goto_ms": 384.79,
+      "snap_1000_ms": 90.6,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 75.54,
+      "snap_ms": 94.68,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 62.35
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 103.72,
+    "task": {
+     "calls": 2,
+     "ms": 369.19,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 187.38,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 1999,
+    "click_locator_ms": [
+     33.97,
+     34.06,
+     32.62,
+     33.58,
+     33.75,
+     32.71,
+     22.91,
+     26.64,
+     32.9,
+     34.94
+    ],
+    "click_ms": [
+     28.89,
+     34.84,
+     32.9,
+     17.73,
+     16.13,
+     31.11,
+     18.13,
+     17.14,
+     30.43,
+     33.71
+    ],
+    "clicks100_ms": 2999.1,
+    "cold_ms": 1341.8,
+    "driver_rss_after_idle_mb": 108.8,
+    "driver_rss_mb": 108.8,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 557.43,
+      "snap_1000_ms": 25.56,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 10.78,
+      "snap_ms": 26.4,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 8.41
+     },
+     "chrome": {
+      "goto_ms": 169.49,
+      "snap_1000_ms": 41.29,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 30.0,
+      "snap_ms": 49.23,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 20.57
+     },
+     "fed": {
+      "goto_ms": 831.42,
+      "snap_1000_ms": 23.79,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 21.25,
+      "snap_ms": 31.77,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 59.45
+     },
+     "heavy": {
+      "goto_ms": 620.71,
+      "snap_1000_ms": 1038.75,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1078.61,
+      "snap_ms": 1434.79,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1082.56
+     },
+     "hub": {
+      "goto_ms": 2955.62,
+      "snap_1000_ms": 38.91,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 83.56,
+      "snap_ms": 61.14,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 65.21
+     },
+     "wolos": {
+      "goto_ms": 497.4,
+      "snap_1000_ms": 90.35,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 105.15,
+      "snap_ms": 130.39,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 85.33
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 105.3,
+    "task": {
+     "calls": 2,
+     "ms": 364.48,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 155.71,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 2004,
+    "click_locator_ms": [
+     32.84,
+     33.21,
+     33.12,
+     33.55,
+     33.19,
+     33.87,
+     32.93,
+     33.62,
+     33.06,
+     33.22
+    ],
+    "click_ms": [
+     24.07,
+     15.32,
+     13.58,
+     17.07,
+     31.71,
+     32.76,
+     33.68,
+     33.32,
+     33.08,
+     34.09
+    ],
+    "clicks100_ms": 2683.5,
+    "cold_ms": 1366.1,
+    "driver_rss_after_idle_mb": 98.2,
+    "driver_rss_mb": 98.2,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 642.35,
+      "snap_1000_ms": 18.64,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 14.11,
+      "snap_ms": 56.64,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 17.25
+     },
+     "chrome": {
+      "goto_ms": 156.06,
+      "snap_1000_ms": 47.35,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 49.08,
+      "snap_ms": 60.33,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 33.47
+     },
+     "fed": {
+      "goto_ms": 935.24,
+      "snap_1000_ms": 26.64,
+      "snap_bytes": 1138,
+      "snap_io_bytes": 335,
+      "snap_io_ms": 41.15,
+      "snap_ms": 111.97,
+      "snap_tokens": 285,
+      "snap_unsafe_ms": 20.15
+     },
+     "heavy": {
+      "goto_ms": 868.02,
+      "snap_1000_ms": 1055.15,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1216.23,
+      "snap_ms": 1465.97,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1130.77
+     },
+     "hub": {
+      "goto_ms": 3487.74,
+      "snap_1000_ms": 37.09,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 701,
+      "snap_io_ms": 67.36,
+      "snap_ms": 89.87,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 61.9
+     },
+     "wolos": {
+      "goto_ms": 464.59,
+      "snap_1000_ms": 45.2,
+      "snap_bytes": 2434,
+      "snap_io_bytes": 1707,
+      "snap_io_ms": 50.53,
+      "snap_ms": 126.5,
+      "snap_tokens": 609,
+      "snap_unsafe_ms": 69.59
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 126.43,
+    "task": {
+     "calls": 2,
+     "ms": 350.75,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 177.49,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 2007,
+    "click_locator_ms": [
+     31.35,
+     32.58,
+     33.77,
+     33.61,
+     33.11,
+     32.64,
+     33.68,
+     32.85,
+     33.69,
+     33.27
+    ],
+    "click_ms": [
+     34.57,
+     31.74,
+     18.25,
+     30.26,
+     33.43,
+     18.48,
+     31.67,
+     34.24,
+     17.8,
+     16.75
+    ],
+    "clicks100_ms": 2499.5,
+    "cold_ms": 1314.99,
+    "driver_rss_after_idle_mb": 102.4,
+    "driver_rss_mb": 102.4,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 618.35,
+      "snap_1000_ms": 23.96,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 15.38,
+      "snap_ms": 50.68,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 12.94
+     },
+     "chrome": {
+      "goto_ms": 158.03,
+      "snap_1000_ms": 44.84,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 51.57,
+      "snap_ms": 64.01,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 41.36
+     },
+     "fed": {
+      "goto_ms": 838.82,
+      "snap_1000_ms": 37.65,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 28.14,
+      "snap_ms": 35.78,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 67.72
+     },
+     "heavy": {
+      "goto_ms": 764.63,
+      "snap_1000_ms": 1118.51,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1140.13,
+      "snap_ms": 1378.61,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1137.44
+     },
+     "hub": {
+      "goto_ms": 3102.17,
+      "snap_1000_ms": 39.96,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 71.32,
+      "snap_ms": 70.44,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 67.01
+     },
+     "wolos": {
+      "goto_ms": 496.81,
+      "snap_1000_ms": 86.51,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 81.11,
+      "snap_ms": 133.19,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 88.82
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 98.74,
+    "task": {
+     "calls": 2,
+     "ms": 353.15,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 167.88,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 2001,
+    "click_locator_ms": [
+     32.85,
+     33.53,
+     33.3,
+     33.9,
+     33.25,
+     32.68,
+     34.58,
+     32.87,
+     16.58,
+     16.88
+    ],
+    "click_ms": [
+     19.68,
+     10.29,
+     12.21,
+     32.53,
+     33.97,
+     33.45,
+     33.78,
+     17.78,
+     30.8,
+     32.06
+    ],
+    "clicks100_ms": 2984.62,
+    "cold_ms": 1439.19,
+    "driver_rss_after_idle_mb": 102.4,
+    "driver_rss_mb": 102.4,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 569.42,
+      "snap_1000_ms": 18.95,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 11.89,
+      "snap_ms": 54.24,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 20.62
+     },
+     "chrome": {
+      "goto_ms": 178.33,
+      "snap_1000_ms": 32.84,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 25.22,
+      "snap_ms": 61.04,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 23.04
+     },
+     "fed": {
+      "goto_ms": 821.08,
+      "snap_1000_ms": 37.12,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 27.43,
+      "snap_ms": 50.37,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 70.0
+     },
+     "heavy": {
+      "goto_ms": 754.76,
+      "snap_1000_ms": 1075.65,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1121.63,
+      "snap_ms": 1326.29,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1016.18
+     },
+     "hub": {
+      "goto_ms": 3322.68,
+      "snap_1000_ms": 36.13,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 78.48,
+      "snap_ms": 74.48,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 62.16
+     },
+     "wolos": {
+      "goto_ms": 558.63,
+      "snap_1000_ms": 100.06,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 89.34,
+      "snap_ms": 123.31,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 73.99
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 112.19,
+    "task": {
+     "calls": 2,
+     "ms": 366.43,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 160.03,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 1999,
+    "click_locator_ms": [
+     31.04,
+     32.79,
+     34.0,
+     32.82,
+     33.95,
+     33.32,
+     35.93,
+     31.41,
+     32.35,
+     33.49
+    ],
+    "click_ms": [
+     18.01,
+     12.6,
+     9.22,
+     16.41,
+     16.79,
+     31.67,
+     33.62,
+     17.86,
+     31.31,
+     19.1
+    ],
+    "clicks100_ms": 2898.9,
+    "cold_ms": 1337.0,
+    "driver_rss_after_idle_mb": 95.2,
+    "driver_rss_mb": 95.2,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 572.6,
+      "snap_1000_ms": 15.7,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 13.76,
+      "snap_ms": 39.98,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 17.52
+     },
+     "chrome": {
+      "goto_ms": 150.25,
+      "snap_1000_ms": 43.86,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 44.06,
+      "snap_ms": 62.33,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 29.91
+     },
+     "fed": {
+      "goto_ms": 804.57,
+      "snap_1000_ms": 23.0,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 23.44,
+      "snap_ms": 38.8,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 62.24
+     },
+     "heavy": {
+      "goto_ms": 798.53,
+      "snap_1000_ms": 1041.14,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1092.37,
+      "snap_ms": 1452.14,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1050.99
+     },
+     "hub": {
+      "goto_ms": 2973.9,
+      "snap_1000_ms": 37.2,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 73.8,
+      "snap_ms": 71.88,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 75.56
+     },
+     "wolos": {
+      "goto_ms": 478.43,
+      "snap_1000_ms": 96.32,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 97.86,
+      "snap_ms": 126.31,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 80.65
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 112.43,
+    "task": {
+     "calls": 2,
+     "ms": 345.21,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 142.65,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 2010,
+    "click_locator_ms": [
+     19.85,
+     27.59,
+     33.12,
+     22.27,
+     20.62,
+     41.89,
+     32.08,
+     33.55,
+     33.2,
+     32.98
+    ],
+    "click_ms": [
+     17.93,
+     19.5,
+     32.07,
+     33.58,
+     33.71,
+     33.42,
+     33.07,
+     33.25,
+     33.77,
+     18.16
+    ],
+    "clicks100_ms": 2899.5,
+    "cold_ms": 1295.31,
+    "driver_rss_after_idle_mb": 105.8,
+    "driver_rss_mb": 105.8,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 565.8,
+      "snap_1000_ms": 18.69,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 11.44,
+      "snap_ms": 28.95,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 10.06
+     },
+     "chrome": {
+      "goto_ms": 147.28,
+      "snap_1000_ms": 38.25,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 29.85,
+      "snap_ms": 50.41,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 23.11
+     },
+     "fed": {
+      "goto_ms": 833.7,
+      "snap_1000_ms": 27.09,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 23.64,
+      "snap_ms": 35.18,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 54.72
+     },
+     "heavy": {
+      "goto_ms": 813.48,
+      "snap_1000_ms": 998.82,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 975.92,
+      "snap_ms": 1356.79,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1163.66
+     },
+     "hub": {
+      "goto_ms": 3087.24,
+      "snap_1000_ms": 39.4,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 80.65,
+      "snap_ms": 78.38,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 57.78
+     },
+     "wolos": {
+      "goto_ms": 532.64,
+      "snap_1000_ms": 97.82,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 99.15,
+      "snap_ms": 133.0,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 80.93
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 97.19,
+    "task": {
+     "calls": 2,
+     "ms": 339.54,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 158.58,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 2006,
+    "click_locator_ms": [
+     33.68,
+     32.48,
+     33.22,
+     33.23,
+     30.99,
+     32.69,
+     33.42,
+     22.91,
+     27.08,
+     32.96
+    ],
+    "click_ms": [
+     24.69,
+     12.92,
+     20.93,
+     33.32,
+     33.51,
+     31.45,
+     33.43,
+     33.74,
+     32.38,
+     34.64
+    ],
+    "clicks100_ms": 3048.82,
+    "cold_ms": 1400.44,
+    "driver_rss_after_idle_mb": 104.9,
+    "driver_rss_mb": 104.9,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 587.31,
+      "snap_1000_ms": 26.64,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 14.47,
+      "snap_ms": 30.42,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 22.14
+     },
+     "chrome": {
+      "goto_ms": 155.81,
+      "snap_1000_ms": 45.18,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 44.47,
+      "snap_ms": 61.1,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 30.07
+     },
+     "fed": {
+      "goto_ms": 819.62,
+      "snap_1000_ms": 33.81,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 29.01,
+      "snap_ms": 35.74,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 75.34
+     },
+     "heavy": {
+      "goto_ms": 668.77,
+      "snap_1000_ms": 1114.6,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1097.31,
+      "snap_ms": 1373.44,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1096.57
+     },
+     "hub": {
+      "goto_ms": 3194.23,
+      "snap_1000_ms": 32.13,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 117.51,
+      "snap_ms": 63.44,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 73.25
+     },
+     "wolos": {
+      "goto_ms": 539.93,
+      "snap_1000_ms": 92.4,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 87.95,
+      "snap_ms": 143.04,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 80.94
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 107.81,
+    "task": {
+     "calls": 2,
+     "ms": 307.15,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 170.99,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 1999,
+    "click_locator_ms": [
+     34.73,
+     32.56,
+     24.61,
+     23.33,
+     34.52,
+     33.39,
+     32.9,
+     34.14,
+     32.84,
+     33.8
+    ],
+    "click_ms": [
+     34.57,
+     15.17,
+     29.35,
+     30.3,
+     32.64,
+     33.18,
+     34.19,
+     32.22,
+     33.7,
+     33.2
+    ],
+    "clicks100_ms": 2933.14,
+    "cold_ms": 1399.03,
+    "driver_rss_after_idle_mb": 109.6,
+    "driver_rss_mb": 109.6,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 566.08,
+      "snap_1000_ms": 13.23,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 11.02,
+      "snap_ms": 24.52,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 8.9
+     },
+     "chrome": {
+      "goto_ms": 186.27,
+      "snap_1000_ms": 29.5,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 31.82,
+      "snap_ms": 49.76,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 20.66
+     },
+     "fed": {
+      "goto_ms": 841.02,
+      "snap_1000_ms": 52.77,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 24.17,
+      "snap_ms": 37.87,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 69.05
+     },
+     "heavy": {
+      "goto_ms": 766.98,
+      "snap_1000_ms": 1040.68,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1001.5,
+      "snap_ms": 1349.63,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1014.01
+     },
+     "hub": {
+      "goto_ms": 2906.24,
+      "snap_1000_ms": 38.02,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 74.37,
+      "snap_ms": 69.97,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 70.52
+     },
+     "wolos": {
+      "goto_ms": 485.26,
+      "snap_1000_ms": 95.83,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 101.5,
+      "snap_ms": 130.6,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 83.52
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 133.09,
+    "task": {
+     "calls": 2,
+     "ms": 344.62,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 164.66,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   },
+   {
+    "browser_rss_mb": 2011,
+    "click_locator_ms": [
+     33.62,
+     33.75,
+     25.42,
+     40.91,
+     31.42,
+     34.01,
+     34.01,
+     23.78,
+     25.23,
+     34.02
+    ],
+    "click_ms": [
+     16.91,
+     10.45,
+     18.43,
+     30.39,
+     34.49,
+     33.67,
+     34.16,
+     18.44,
+     31.06,
+     33.01
+    ],
+    "clicks100_ms": 2983.57,
+    "cold_ms": 1472.02,
+    "driver_rss_after_idle_mb": 111.1,
+    "driver_rss_mb": 111.1,
+    "idle_wakeups_per_s": 0.2,
+    "pages": {
+     "app": {
+      "goto_ms": 518.52,
+      "snap_1000_ms": 15.87,
+      "snap_bytes": 668,
+      "snap_io_bytes": 523,
+      "snap_io_ms": 11.94,
+      "snap_ms": 37.58,
+      "snap_tokens": 167,
+      "snap_unsafe_ms": 10.65
+     },
+     "chrome": {
+      "goto_ms": 171.19,
+      "snap_1000_ms": 42.28,
+      "snap_bytes": 1659,
+      "snap_io_bytes": 178,
+      "snap_io_ms": 40.47,
+      "snap_ms": 53.44,
+      "snap_tokens": 415,
+      "snap_unsafe_ms": 25.06
+     },
+     "fed": {
+      "goto_ms": 843.26,
+      "snap_1000_ms": 35.8,
+      "snap_bytes": 353,
+      "snap_io_bytes": 334,
+      "snap_io_ms": 33.7,
+      "snap_ms": 36.89,
+      "snap_tokens": 89,
+      "snap_unsafe_ms": 55.96
+     },
+     "heavy": {
+      "goto_ms": 827.04,
+      "snap_1000_ms": 1094.54,
+      "snap_bytes": 185957,
+      "snap_io_bytes": 162206,
+      "snap_io_ms": 1124.56,
+      "snap_ms": 1356.79,
+      "snap_tokens": 46490,
+      "snap_unsafe_ms": 1068.1
+     },
+     "hub": {
+      "goto_ms": 3060.72,
+      "snap_1000_ms": 42.04,
+      "snap_bytes": 3240,
+      "snap_io_bytes": 828,
+      "snap_io_ms": 75.3,
+      "snap_ms": 95.42,
+      "snap_tokens": 810,
+      "snap_unsafe_ms": 67.9
+     },
+     "wolos": {
+      "goto_ms": 479.22,
+      "snap_1000_ms": 98.97,
+      "snap_bytes": 6946,
+      "snap_io_bytes": 2822,
+      "snap_io_ms": 98.96,
+      "snap_ms": 130.9,
+      "snap_tokens": 1737,
+      "snap_unsafe_ms": 85.88
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 110.72,
+    "task": {
+     "calls": 2,
+     "ms": 347.4,
+     "toast_seen": true,
+     "tokens": 311
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 170.29,
+     "toast_seen": true,
+     "tokens": 97
+    }
+   }
+  ],
+  "pw": [
+   {
+    "cold_ms": 1809.13,
+    "pages": {
+     "app": {
+      "goto_ms": 523.92,
+      "aria_ms": 179.82,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.74,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 520.4,
+      "aria_ms": 141.73,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 12.59,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 908.43,
+      "aria_ms": 806.38,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 88.38,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 939.6,
+      "aria_ms": 161.23,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 5.58,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 159.61,
+      "aria_ms": 98.9,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 4.52,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     147.37,
+     55.72,
+     67.8,
+     65.42,
+     70.21,
+     61.18,
+     67.31,
+     67.3,
+     66.61,
+     81.03
+    ],
+    "click_locator_ms": [
+     84.74,
+     66.15,
+     65.52,
+     65.77,
+     64.88,
+     68.46,
+     67.37,
+     63.66,
+     50.31,
+     68.93
+    ],
+    "clicks100_ms": 6046.5,
+    "shot_ms": 169.91,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 402.98,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 352.37,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1937,
+    "driver_rss_mb": 162,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1762.88,
+    "pages": {
+     "app": {
+      "goto_ms": 407.58,
+      "aria_ms": 170.29,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.32,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 490.23,
+      "aria_ms": 95.64,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 11.16,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 773.3,
+      "aria_ms": 753.5,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 84.4,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 805.47,
+      "aria_ms": 148.33,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 13.25,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 153.47,
+      "aria_ms": 105.6,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.63,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     126.79,
+     58.31,
+     66.83,
+     65.83,
+     65.35,
+     75.14,
+     58.33,
+     65.08,
+     67.04,
+     82.8
+    ],
+    "click_locator_ms": [
+     83.27,
+     68.22,
+     65.88,
+     66.11,
+     65.61,
+     68.89,
+     64.84,
+     66.79,
+     66.58,
+     67.27
+    ],
+    "clicks100_ms": 6433.05,
+    "shot_ms": 200.43,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 419.78,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 331.02,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1928,
+    "driver_rss_mb": 173.9,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1914.94,
+    "pages": {
+     "app": {
+      "goto_ms": 496.45,
+      "aria_ms": 160.53,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.7,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 3836.26,
+      "aria_ms": 240.36,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 10.04,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 216.9,
+      "aria_ms": 213.65,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 7.94,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 650.37,
+      "aria_ms": 855.59,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 85.01,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 854.74,
+      "aria_ms": 94.8,
+      "aria_bytes": 336,
+      "aria_tokens": 84,
+      "content_ms": 8.91,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 192.54,
+      "aria_ms": 97.92,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 4.89,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     132.19,
+     61.47,
+     65.44,
+     65.78,
+     66.8,
+     66.63,
+     67.32,
+     66.14,
+     68.28,
+     80.67
+    ],
+    "click_locator_ms": [
+     80.79,
+     51.28,
+     68.3,
+     67.27,
+     66.67,
+     66.53,
+     68.48,
+     64.57,
+     66.96,
+     66.68
+    ],
+    "clicks100_ms": 6316.2,
+    "shot_ms": 174.33,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 400.41,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 329.57,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1934,
+    "driver_rss_mb": 160.5,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1796.67,
+    "pages": {
+     "app": {
+      "goto_ms": 504.58,
+      "aria_ms": 220.73,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 4.33,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 591.66,
+      "aria_ms": 127.17,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 18.53,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 1059.77,
+      "aria_ms": 860.68,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 63.76,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 819.42,
+      "aria_ms": 174.24,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 14.45,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 168.09,
+      "aria_ms": 104.68,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.35,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     149.96,
+     53.5,
+     67.66,
+     66.41,
+     81.53,
+     49.43,
+     66.96,
+     66.25,
+     69.07,
+     88.22
+    ],
+    "click_locator_ms": [
+     76.88,
+     65.2,
+     64.93,
+     67.28,
+     65.22,
+     64.89,
+     69.56,
+     63.3,
+     54.98,
+     66.93
+    ],
+    "clicks100_ms": 6648.92,
+    "shot_ms": 181.62,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 409.31,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 366.66,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1937,
+    "driver_rss_mb": 163.8,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1849.99,
+    "pages": {
+     "app": {
+      "goto_ms": 452.47,
+      "aria_ms": 174.43,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 19.54,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 564,
+      "aria_ms": 128.19,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 14.1,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 1046.82,
+      "aria_ms": 843.94,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 67.76,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 806.61,
+      "aria_ms": 147.91,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 6.96,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 151.31,
+      "aria_ms": 107.93,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.35,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     129.8,
+     64,
+     65.62,
+     72.55,
+     63.02,
+     67.52,
+     65.2,
+     64.28,
+     66.14,
+     85.66
+    ],
+    "click_locator_ms": [
+     80.51,
+     66.8,
+     66.22,
+     63.79,
+     52.24,
+     68.02,
+     66.6,
+     67,
+     66.74,
+     65.52
+    ],
+    "clicks100_ms": 6315.42,
+    "shot_ms": 195.69,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 439.89,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 336.65,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1978,
+    "driver_rss_mb": 183.6,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1766.39,
+    "pages": {
+     "app": {
+      "goto_ms": 547.76,
+      "aria_ms": 170.61,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 7.54,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 502.37,
+      "aria_ms": 120.84,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 12.08,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 912.04,
+      "aria_ms": 795.05,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 82.64,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 1039.42,
+      "aria_ms": 140.35,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 7.12,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 158.95,
+      "aria_ms": 108.68,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.25,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     140.53,
+     59.95,
+     66.43,
+     63.82,
+     69.42,
+     63.25,
+     65.2,
+     66.71,
+     65.09,
+     87.29
+    ],
+    "click_locator_ms": [
+     83.18,
+     64.38,
+     66.79,
+     66.45,
+     66.43,
+     67.66,
+     66.9,
+     66.56,
+     67.27,
+     65.12
+    ],
+    "clicks100_ms": 6279.64,
+    "shot_ms": 209.98,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 392.28,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 242.55,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1985,
+    "driver_rss_mb": 163.6,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1596.59,
+    "pages": {
+     "app": {
+      "goto_ms": 425.33,
+      "aria_ms": 120.16,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 4.81,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 424.2,
+      "aria_ms": 112.38,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 7.2,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "goto_ms": 3050.42,
+      "aria_ms": 214.98,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 13.5,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 728.94,
+      "aria_ms": 860.61,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 72.62,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 818.53,
+      "aria_ms": 150.98,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 14.19,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 174.83,
+      "aria_ms": 116.98,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.67,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     123.95,
+     59.04,
+     66.03,
+     66.8,
+     67.65,
+     60.13,
+     86.72,
+     44.33,
+     50.24,
+     49.91
+    ],
+    "click_locator_ms": [
+     67.42,
+     63.78,
+     55.77,
+     67.28,
+     65.87,
+     66.21,
+     67.32,
+     66.79,
+     65.9,
+     65.99
+    ],
+    "clicks100_ms": 6434.31,
+    "shot_ms": 155.54,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 387.71,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 333.26,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1985,
+    "driver_rss_mb": 164.2,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1777.98,
+    "pages": {
+     "app": {
+      "goto_ms": 520.5,
+      "aria_ms": 143.92,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 10.36,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 3950.23,
+      "aria_ms": 217.41,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 6.09,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 242.05,
+      "aria_ms": 192.88,
+      "aria_bytes": 4228,
+      "aria_tokens": 1057,
+      "content_ms": 29.11,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 833.17,
+      "aria_ms": 811.91,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 80.53,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 875.03,
+      "aria_ms": 156.05,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 10.24,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 144.89,
+      "aria_ms": 108.64,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 6.76,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     134.71,
+     62.36,
+     65.17,
+     66.81,
+     64.39,
+     66.62,
+     66.71,
+     66.55,
+     67.66,
+     83.14
+    ],
+    "click_locator_ms": [
+     83.05,
+     66.33,
+     66.96,
+     65.86,
+     66.65,
+     67.92,
+     66.44,
+     65.35,
+     67,
+     66.98
+    ],
+    "clicks100_ms": 6481.4,
+    "shot_ms": 154.94,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 388.65,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 337.58,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1925,
+    "driver_rss_mb": 161.5,
+    "idle_wakeups_per_s": 0.4
+   },
+   {
+    "cold_ms": 1765.58,
+    "pages": {
+     "app": {
+      "goto_ms": 526.52,
+      "aria_ms": 157.31,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 12.97,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 512.73,
+      "aria_ms": 103.28,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 9.83,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 926.48,
+      "aria_ms": 795.82,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 65.47,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 814.35,
+      "aria_ms": 153.19,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 9.96,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 166.46,
+      "aria_ms": 108.43,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.79,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     138.98,
+     62.79,
+     65.63,
+     65.62,
+     67.65,
+     66.2,
+     65.34,
+     66.84,
+     66.67,
+     84.29
+    ],
+    "click_locator_ms": [
+     85.73,
+     63.64,
+     66.41,
+     66.73,
+     66.54,
+     66.71,
+     66.23,
+     66.77,
+     66.75,
+     66.65
+    ],
+    "clicks100_ms": 6281.03,
+    "shot_ms": 189.25,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 423.15,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 315.85,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1985,
+    "driver_rss_mb": 163.8,
+    "idle_wakeups_per_s": 0.3
+   },
+   {
+    "cold_ms": 1922.13,
+    "pages": {
+     "app": {
+      "goto_ms": 510.87,
+      "aria_ms": 161.29,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.74,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 504.32,
+      "aria_ms": 147.31,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 11.06,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 979.27,
+      "aria_ms": 813.89,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 83.61,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 813.92,
+      "aria_ms": 156.51,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 15.86,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 161,
+      "aria_ms": 109.44,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.81,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "click_ms": [
+     185.44,
+     45.97,
+     66.84,
+     66.1,
+     66.73,
+     65.94,
+     66.12,
+     66.77,
+     66.71,
+     82.49
+    ],
+    "click_locator_ms": [
+     50.52,
+     66.95,
+     63.93,
+     69.15,
+     64.12,
+     69.02,
+     64.67,
+     69.16,
+     66.87,
+     63.17
+    ],
+    "clicks100_ms": 6366.81,
+    "shot_ms": 172.97,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 418.23,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 338.14,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1985,
+    "driver_rss_mb": 184.3,
+    "idle_wakeups_per_s": 0.3
+   }
+  ]
+ },
+ "summary": {
+  "drive": {
+   "app.goto_ms": {
+    "median": 567.75,
+    "min": 465.46,
+    "max": 642.35,
+    "n": 10
+   },
+   "app.snap_1000_ms": {
+    "median": 18.82,
+    "min": 13.23,
+    "max": 28.15,
+    "n": 10
+   },
+   "app.snap_bytes": {
+    "median": 668.0,
+    "min": 668,
+    "max": 668,
+    "n": 10
+   },
+   "app.snap_io_bytes": {
+    "median": 523.0,
+    "min": 523,
+    "max": 523,
+    "n": 10
+   },
+   "app.snap_io_ms": {
+    "median": 12.85,
+    "min": 10.78,
+    "max": 15.38,
+    "n": 10
+   },
+   "app.snap_ms": {
+    "median": 34.0,
+    "min": 23.32,
+    "max": 56.64,
+    "n": 10
+   },
+   "app.snap_tokens": {
+    "median": 167.0,
+    "min": 167,
+    "max": 167,
+    "n": 10
+   },
+   "app.snap_unsafe_ms": {
+    "median": 15.09,
+    "min": 8.41,
+    "max": 24.36,
+    "n": 10
+   },
+   "browser_rss_mb": {
+    "median": 2004.5,
+    "min": 1999,
+    "max": 2011,
+    "n": 10
+   },
+   "chrome.goto_ms": {
+    "median": 158.53,
+    "min": 147.28,
+    "max": 186.27,
+    "n": 10
+   },
+   "chrome.snap_1000_ms": {
+    "median": 43.07,
+    "min": 29.5,
+    "max": 47.35,
+    "n": 10
+   },
+   "chrome.snap_bytes": {
+    "median": 1659.0,
+    "min": 1659,
+    "max": 1659,
+    "n": 10
+   },
+   "chrome.snap_io_bytes": {
+    "median": 178.0,
+    "min": 178,
+    "max": 178,
+    "n": 10
+   },
+   "chrome.snap_io_ms": {
+    "median": 42.27,
+    "min": 25.22,
+    "max": 51.57,
+    "n": 10
+   },
+   "chrome.snap_ms": {
+    "median": 60.69,
+    "min": 49.23,
+    "max": 64.01,
+    "n": 10
+   },
+   "chrome.snap_tokens": {
+    "median": 415.0,
+    "min": 415,
+    "max": 415,
+    "n": 10
+   },
+   "chrome.snap_unsafe_ms": {
+    "median": 27.48,
+    "min": 20.57,
+    "max": 41.36,
+    "n": 10
+   },
+   "click_locator_ms": {
+    "median": 33.11,
+    "min": 32.53,
+    "max": 33.69,
+    "n": 10
+   },
+   "click_ms": {
+    "median": 31.83,
+    "min": 17.94,
+    "max": 33.16,
+    "n": 10
+   },
+   "clicks100_ms": {
+    "median": 2916.32,
+    "min": 2499.5,
+    "max": 3048.82,
+    "n": 10
+   },
+   "cold_ms": {
+    "median": 1353.95,
+    "min": 1125.41,
+    "max": 1472.02,
+    "n": 10
+   },
+   "driver_rss_mb": {
+    "median": 103.65,
+    "min": 95.2,
+    "max": 111.1,
+    "n": 10
+   },
+   "fed.goto_ms": {
+    "median": 836.26,
+    "min": 804.57,
+    "max": 1041.22,
+    "n": 10
+   },
+   "fed.snap_1000_ms": {
+    "median": 30.84,
+    "min": 23.0,
+    "max": 52.77,
+    "n": 10
+   },
+   "fed.snap_bytes": {
+    "median": 353.0,
+    "min": 353,
+    "max": 1138,
+    "n": 10
+   },
+   "fed.snap_io_bytes": {
+    "median": 334.0,
+    "min": 334,
+    "max": 335,
+    "n": 10
+   },
+   "fed.snap_io_ms": {
+    "median": 26.87,
+    "min": 21.25,
+    "max": 41.15,
+    "n": 10
+   },
+   "fed.snap_ms": {
+    "median": 37.38,
+    "min": 31.77,
+    "max": 111.97,
+    "n": 10
+   },
+   "fed.snap_tokens": {
+    "median": 89.0,
+    "min": 89,
+    "max": 285,
+    "n": 10
+   },
+   "fed.snap_unsafe_ms": {
+    "median": 62.35,
+    "min": 20.15,
+    "max": 75.34,
+    "n": 10
+   },
+   "heavy.goto_ms": {
+    "median": 782.75,
+    "min": 620.71,
+    "max": 868.02,
+    "n": 10
+   },
+   "heavy.snap_1000_ms": {
+    "median": 1052.99,
+    "min": 998.82,
+    "max": 1118.51,
+    "n": 10
+   },
+   "heavy.snap_bytes": {
+    "median": 185957.0,
+    "min": 185957,
+    "max": 185957,
+    "n": 10
+   },
+   "heavy.snap_io_bytes": {
+    "median": 162206.0,
+    "min": 162206,
+    "max": 162206,
+    "n": 10
+   },
+   "heavy.snap_io_ms": {
+    "median": 1109.47,
+    "min": 975.92,
+    "max": 1216.23,
+    "n": 10
+   },
+   "heavy.snap_ms": {
+    "median": 1373.04,
+    "min": 1326.29,
+    "max": 1465.97,
+    "n": 10
+   },
+   "heavy.snap_tokens": {
+    "median": 46490.0,
+    "min": 46490,
+    "max": 46490,
+    "n": 10
+   },
+   "heavy.snap_unsafe_ms": {
+    "median": 1089.57,
+    "min": 1014.01,
+    "max": 1163.66,
+    "n": 10
+   },
+   "hub.goto_ms": {
+    "median": 3073.98,
+    "min": 2646.31,
+    "max": 3487.74,
+    "n": 10
+   },
+   "hub.snap_1000_ms": {
+    "median": 37.61,
+    "min": 32.13,
+    "max": 42.04,
+    "n": 10
+   },
+   "hub.snap_bytes": {
+    "median": 3240.0,
+    "min": 3240,
+    "max": 3240,
+    "n": 10
+   },
+   "hub.snap_io_bytes": {
+    "median": 828.0,
+    "min": 701,
+    "max": 828,
+    "n": 10
+   },
+   "hub.snap_io_ms": {
+    "median": 74.84,
+    "min": 67.36,
+    "max": 117.51,
+    "n": 10
+   },
+   "hub.snap_ms": {
+    "median": 71.16,
+    "min": 61.14,
+    "max": 95.42,
+    "n": 10
+   },
+   "hub.snap_tokens": {
+    "median": 810.0,
+    "min": 810,
+    "max": 810,
+    "n": 10
+   },
+   "hub.snap_unsafe_ms": {
+    "median": 66.11,
+    "min": 52.13,
+    "max": 75.56,
+    "n": 10
+   },
+   "idle_wakeups_per_s": {
+    "median": 0.1,
+    "min": 0.1,
+    "max": 0.2,
+    "n": 10
+   },
+   "shot_bytes": {
+    "median": 27605.0,
+    "min": 27605,
+    "max": 27605,
+    "n": 10
+   },
+   "shot_ms": {
+    "median": 109.27,
+    "min": 97.19,
+    "max": 133.09,
+    "n": 10
+   },
+   "task_known_ms": {
+    "median": 166.27,
+    "min": 142.65,
+    "max": 187.38,
+    "n": 10
+   },
+   "task_known_tokens": {
+    "median": 97.0,
+    "min": 97,
+    "max": 97,
+    "n": 10
+   },
+   "task_ms": {
+    "median": 349.07,
+    "min": 307.15,
+    "max": 369.19,
+    "n": 10
+   },
+   "task_toast_seen": {
+    "median": 1.0,
+    "min": 1,
+    "max": 1,
+    "n": 10
+   },
+   "task_tokens": {
+    "median": 311.0,
+    "min": 311,
+    "max": 311,
+    "n": 10
+   },
+   "wolos.goto_ms": {
+    "median": 491.03,
+    "min": 384.79,
+    "max": 558.63,
+    "n": 10
+   },
+   "wolos.snap_1000_ms": {
+    "median": 94.12,
+    "min": 45.2,
+    "max": 100.06,
+    "n": 10
+   },
+   "wolos.snap_bytes": {
+    "median": 6946.0,
+    "min": 2434,
+    "max": 6946,
+    "n": 10
+   },
+   "wolos.snap_io_bytes": {
+    "median": 2822.0,
+    "min": 1707,
+    "max": 2822,
+    "n": 10
+   },
+   "wolos.snap_io_ms": {
+    "median": 93.6,
+    "min": 50.53,
+    "max": 105.15,
+    "n": 10
+   },
+   "wolos.snap_ms": {
+    "median": 130.5,
+    "min": 94.68,
+    "max": 143.04,
+    "n": 10
+   },
+   "wolos.snap_tokens": {
+    "median": 1737.0,
+    "min": 609,
+    "max": 1737,
+    "n": 10
+   },
+   "wolos.snap_unsafe_ms": {
+    "median": 80.94,
+    "min": 62.35,
+    "max": 88.82,
+    "n": 10
+   }
+  },
+  "pw": {
+   "app.aria_bytes": {
+    "median": 744.0,
+    "min": 744,
+    "max": 744,
+    "n": 10
+   },
+   "app.aria_ms": {
+    "median": 165.79,
+    "min": 120.16,
+    "max": 220.73,
+    "n": 10
+   },
+   "app.aria_tokens": {
+    "median": 186.0,
+    "min": 186,
+    "max": 186,
+    "n": 10
+   },
+   "app.content_bytes": {
+    "median": 2133.0,
+    "min": 2133,
+    "max": 2133,
+    "n": 10
+   },
+   "app.content_ms": {
+    "median": 6.74,
+    "min": 4.33,
+    "max": 19.54,
+    "n": 10
+   },
+   "app.content_tokens": {
+    "median": 534.0,
+    "min": 534,
+    "max": 534,
+    "n": 10
+   },
+   "app.goto_ms": {
+    "median": 507.73,
+    "min": 407.58,
+    "max": 547.76,
+    "n": 10
+   },
+   "browser_rss_mb": {
+    "median": 1957.5,
+    "min": 1925,
+    "max": 1985,
+    "n": 10
+   },
+   "chrome.aria_bytes": {
+    "median": 3143.0,
+    "min": 3143,
+    "max": 3143,
+    "n": 10
+   },
+   "chrome.aria_ms": {
+    "median": 108.18,
+    "min": 97.92,
+    "max": 116.98,
+    "n": 10
+   },
+   "chrome.aria_tokens": {
+    "median": 786.0,
+    "min": 786,
+    "max": 786,
+    "n": 10
+   },
+   "chrome.content_bytes": {
+    "median": 9374.0,
+    "min": 9374,
+    "max": 9374,
+    "n": 10
+   },
+   "chrome.content_ms": {
+    "median": 5.49,
+    "min": 4.52,
+    "max": 6.76,
+    "n": 10
+   },
+   "chrome.content_tokens": {
+    "median": 2344.0,
+    "min": 2344,
+    "max": 2344,
+    "n": 10
+   },
+   "chrome.goto_ms": {
+    "median": 160.31,
+    "min": 144.89,
+    "max": 192.54,
+    "n": 10
+   },
+   "click_locator_ms": {
+    "median": 66.67,
+    "min": 65.21,
+    "max": 66.82,
+    "n": 10
+   },
+   "click_ms": {
+    "median": 66.55,
+    "min": 63.08,
+    "max": 67.31,
+    "n": 10
+   },
+   "clicks100_ms": {
+    "median": 6341.51,
+    "min": 6046.5,
+    "max": 6648.92,
+    "n": 10
+   },
+   "cold_ms": {
+    "median": 1787.33,
+    "min": 1596.59,
+    "max": 1922.13,
+    "n": 10
+   },
+   "driver_rss_mb": {
+    "median": 163.8,
+    "min": 160.5,
+    "max": 184.3,
+    "n": 10
+   },
+   "fed.aria_bytes": {
+    "median": 1867.0,
+    "min": 336,
+    "max": 1867,
+    "n": 10
+   },
+   "fed.aria_ms": {
+    "median": 152.08,
+    "min": 94.8,
+    "max": 174.24,
+    "n": 10
+   },
+   "fed.aria_tokens": {
+    "median": 467.0,
+    "min": 84,
+    "max": 467,
+    "n": 10
+   },
+   "fed.content_bytes": {
+    "median": 3266.0,
+    "min": 3266,
+    "max": 3266,
+    "n": 10
+   },
+   "fed.content_ms": {
+    "median": 10.1,
+    "min": 5.58,
+    "max": 15.86,
+    "n": 10
+   },
+   "fed.content_tokens": {
+    "median": 817.0,
+    "min": 817,
+    "max": 817,
+    "n": 10
+   },
+   "fed.goto_ms": {
+    "median": 818.97,
+    "min": 805.47,
+    "max": 1039.42,
+    "n": 10
+   },
+   "heavy.aria_bytes": {
+    "median": 468534.0,
+    "min": 468534,
+    "max": 468534,
+    "n": 10
+   },
+   "heavy.aria_ms": {
+    "median": 812.9,
+    "min": 753.5,
+    "max": 860.68,
+    "n": 10
+   },
+   "heavy.aria_tokens": {
+    "median": 117134.0,
+    "min": 117134,
+    "max": 117134,
+    "n": 10
+   },
+   "heavy.content_bytes": {
+    "median": 575433.0,
+    "min": 575433,
+    "max": 575433,
+    "n": 10
+   },
+   "heavy.content_ms": {
+    "median": 81.59,
+    "min": 63.76,
+    "max": 88.38,
+    "n": 10
+   },
+   "heavy.content_tokens": {
+    "median": 143859.0,
+    "min": 143859,
+    "max": 143859,
+    "n": 10
+   },
+   "heavy.goto_ms": {
+    "median": 910.23,
+    "min": 650.37,
+    "max": 1059.77,
+    "n": 10
+   },
+   "hub.aria_bytes": {
+    "median": 4238,
+    "min": 4228,
+    "max": 4238,
+    "n": 3
+   },
+   "hub.aria_ms": {
+    "median": 213.65,
+    "min": 192.88,
+    "max": 214.98,
+    "n": 3
+   },
+   "hub.aria_tokens": {
+    "median": 1060,
+    "min": 1057,
+    "max": 1060,
+    "n": 3
+   },
+   "hub.content_bytes": {
+    "median": 29842,
+    "min": 29842,
+    "max": 29842,
+    "n": 3
+   },
+   "hub.content_ms": {
+    "median": 13.5,
+    "min": 7.94,
+    "max": 29.11,
+    "n": 3
+   },
+   "hub.content_tokens": {
+    "median": 7461,
+    "min": 7461,
+    "max": 7461,
+    "n": 3
+   },
+   "hub.goto_ms": {
+    "median": 242.05,
+    "min": 216.9,
+    "max": 3050.42,
+    "n": 3
+   },
+   "idle_wakeups_per_s": {
+    "median": 0.3,
+    "min": 0.3,
+    "max": 0.4,
+    "n": 10
+   },
+   "shot_bytes": {
+    "median": 32722.0,
+    "min": 32722,
+    "max": 32722,
+    "n": 10
+   },
+   "shot_ms": {
+    "median": 177.98,
+    "min": 154.94,
+    "max": 209.98,
+    "n": 10
+   },
+   "task_known_ms": {
+    "median": 334.95,
+    "min": 242.55,
+    "max": 366.66,
+    "n": 10
+   },
+   "task_known_tokens": {
+    "median": 6.0,
+    "min": 6,
+    "max": 6,
+    "n": 10
+   },
+   "task_ms": {
+    "median": 406.14,
+    "min": 387.71,
+    "max": 439.89,
+    "n": 10
+   },
+   "task_toast_seen": {
+    "median": 1.0,
+    "min": 1,
+    "max": 1,
+    "n": 10
+   },
+   "task_tokens": {
+    "median": 385.0,
+    "min": 385,
+    "max": 385,
+    "n": 10
+   },
+   "wolos.aria_bytes": {
+    "median": 10715.0,
+    "min": 4238,
+    "max": 10715,
+    "n": 10
+   },
+   "wolos.aria_ms": {
+    "median": 127.68,
+    "min": 95.64,
+    "max": 240.36,
+    "n": 10
+   },
+   "wolos.aria_tokens": {
+    "median": 2679.0,
+    "min": 1060,
+    "max": 2679,
+    "n": 10
+   },
+   "wolos.content_bytes": {
+    "median": 52348.0,
+    "min": 29780,
+    "max": 52348,
+    "n": 10
+   },
+   "wolos.content_ms": {
+    "median": 11.11,
+    "min": 6.09,
+    "max": 18.53,
+    "n": 10
+   },
+   "wolos.content_tokens": {
+    "median": 13087.0,
+    "min": 7445,
+    "max": 13087,
+    "n": 10
+   },
+   "wolos.goto_ms": {
+    "median": 516.57,
+    "min": 424.2,
+    "max": 3950.23,
+    "n": 10
+   }
+  }
+ },
+ "pw_version": "1.64.1"
+}
