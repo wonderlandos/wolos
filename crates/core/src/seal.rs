@@ -4,7 +4,9 @@
 //! files' digests go to a manifest inside the slot; the manifest's own digest (the root digest)
 //! goes next to the slot's kernel on the ESP. At boot [`verify`] compares the three; a mismatch
 //! makes [`fallback`] boot the other slot and tells the person.
-//! Pure: argv lists, text formats and decisions. The `wol seal` verbs run them.
+//! Pure: argv lists, text formats and decisions. The `wol seal` verbs run them; [`verity`] is the
+//! one part that touches files (the fs-verity ioctls, in this process).
+pub use crate::system::verity;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 

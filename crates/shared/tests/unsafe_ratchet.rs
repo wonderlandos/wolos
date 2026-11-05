@@ -133,6 +133,10 @@ use std::path::{Path, PathBuf};
 /// and `kill` on a process group the runner spawned, SAFETY lines, QA-A9-CORE-3).
 /// api 33 -> 32 (MEMSAVER-X2): `memsaver/pageout.rs` owns its pidfd as an `OwnedFd` (closed on drop, so the
 /// explicit `close` block is gone) and makes one `process_madvise` call per range.
+/// SEAL-FAST (2026-11-05, IMG013-3-SEAL-SLOW): core 14 -> 16 (`src/system/verity.rs`: the two
+/// SAFETY-lined `ioctl` calls, `FS_IOC_ENABLE_VERITY` and `FS_IOC_MEASURE_VERITY`, so `wol seal
+/// apply` seals 71,385 files in seconds instead of starting `fsverity` three times per file for 14
+/// minutes; std has no fs-verity call). Merged with FIX-A9-CORE's 14 -> 16 the row is 18.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 513),
@@ -144,7 +148,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("api", 32),
     ("audio", 0),
     ("aurlaws", 0),
-    ("core", 16),
+    ("core", 18),
     ("proxy", 3),
     ("shared", 19),
     // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY

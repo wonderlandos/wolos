@@ -7,6 +7,7 @@ pub mod fake;
 pub mod info;
 pub mod proc;
 pub mod stats;
+pub mod verity;
 
 use std::os::unix::process::CommandExt;
 use std::sync::{Arc, Mutex};

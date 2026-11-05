@@ -117,6 +117,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/aurlaws.md](modules/aurlaws.md) | aurlaws: community-collection packages judged by laws over dependency graphs | [0022](adr/0022-aur-laws.md) |
 | [modules/automation.md](modules/automation.md) | helpers (`wol mcp`, scripts): policy, approval sheet wire, audit log | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/console.md](modules/console.md) | the console: `su` through sudo in every shell, command hints (`wol hint`, `hints.tsv`) for what is missing or sealed | [0032](adr/0032-optional-modules.md) |
+| [modules/seal.md](modules/seal.md) | the sealed system volume: `wol seal apply` turns fs-verity on in process (4 threads), the manifest, the failure words, the measurement | [0016](adr/0016-arch-linux-base.md), [0025](adr/0025-signed-boot.md) |
 | [modules/boot.md](modules/boot.md) | quiet boot, ESP layout, systemd-boot A/B slots, Secure Boot, install safety checks | [0016](adr/0016-arch-linux-base.md), [0023](adr/0023-installer-plans.md), [0025](adr/0025-signed-boot.md), [0044](adr/0044-etc-overlay-across-slot-switches.md) |
 | [modules/games.md](modules/games.md) | native Steam and Proton, `wol games`, `.exe` double-click on wine or umu | [0016](adr/0016-arch-linux-base.md) |
 | [modules/hardware.md](modules/hardware.md) | hardware catalogue, `wol hw`, `wolos-hw.service`, shipped firmware, gaps | [0016](adr/0016-arch-linux-base.md) |

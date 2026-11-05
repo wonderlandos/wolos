@@ -323,7 +323,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     // +4 (FIX-A9-CORE, QA-A9-CORE-3): system/mod.rs `stop_tree` signals a timed-out child's whole
     //   process group (getpgid, kill, SIGINT, SIGKILL); std has no group signal and `Child::kill`
     //   is a SIGKILL of one pid, which left arch-chroot and pacman running.
-    ("RR-065", "core", 27),
+    // +4 (SEAL-FAST, IMG013-3-SEAL-SLOW): system/verity.rs, the seal's fs-verity in process: the two
+    //   `libc::ioctl` calls (FS_IOC_ENABLE_VERITY, FS_IOC_MEASURE_VERITY), `O_NOFOLLOW` and `ENODATA`;
+    //   std has no fs-verity call, and the `fsverity` program cost three process spawns per file.
+    ("RR-065", "core", 31),
     // +3 (memsaver/budget.rs, MEMSAVER-X): `evict` walks and opens the app's own files.
     // +15 (INT-2, 0.13 integration): monitor/{mod,procs,startup}.rs read /proc and /sys under a
     //   `Root` (the fixture folder in tests); consent.rs, storage.rs, net.rs and admin.rs read the
@@ -341,7 +344,8 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-068", "controller", 62),
     // +1 (memsaver/budget.rs, MEMSAVER-X): the one `posix_fadvise` in `evict` (see unsafe_ratchet.rs).
     // +2 (FIX-A9-CORE, QA-A9-CORE-3): system/mod.rs `stop_tree` (getpgid, kill).
-    ("RR-068", "core", 9),
+    // +2 (SEAL-FAST, IMG013-3-SEAL-SLOW): system/verity.rs, the two ioctl blocks (SAFETY lines).
+    ("RR-068", "core", 11),
     ("RR-068", "proxy", 1),
     ("RR-068", "shared", 16),
     ("RR-068", "shell", 6),

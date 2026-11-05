@@ -100,6 +100,88 @@ fn measure_all(env: &mut dyn Env, paths: &[PathBuf]) -> std::collections::HashMa
     found
 }
 
+/// For each sealed file, the first path of its inode in walk order (itself when it is the first
+/// or its inode cannot be read): fs-verity is one switch per inode.
+fn first_links(sealed: &[(String, PathBuf)]) -> Vec<PathBuf> {
+    let mut first: std::collections::HashMap<(u64, u64), PathBuf> =
+        std::collections::HashMap::new();
+    sealed
+        .iter()
+        .map(|(_, f)| {
+            inode_of(f).map_or_else(
+                || f.clone(),
+                |i| first.entry(i).or_insert_with(|| f.clone()).clone(),
+            )
+        })
+        .collect()
+}
+
+/// Worker threads of the in-process seal (see [`seal::verity::THREADS`]).
+fn seal_in_process(
+    sealed: &[(String, PathBuf)],
+    firsts: &[PathBuf],
+) -> Result<std::collections::HashMap<PathBuf, String>, String> {
+    // One job per inode: the entries whose first path is themselves, in walk order.
+    let jobs: Vec<usize> = (0..sealed.len())
+        .filter(|&i| sealed[i].1 == firsts[i])
+        .collect();
+    let paths: Vec<PathBuf> = jobs.iter().map(|&i| sealed[i].1.clone()).collect();
+    let mut digests = std::collections::HashMap::new();
+    for (&i, r) in jobs
+        .iter()
+        .zip(seal::verity::seal_all(&paths, seal::verity::THREADS))
+    {
+        match r {
+            Some(Ok(d)) => {
+                digests.insert(sealed[i].1.clone(), d);
+            }
+            Some(Err(e)) => return Err(format!("{}: {e}", sealed[i].0)),
+            // Only after a failure, which the loop above met first.
+            None => return Err(format!("{} was not sealed", sealed[i].0)),
+        }
+    }
+    for (i, (_, f)) in sealed.iter().enumerate() {
+        if let Some(d) = digests.get(&firsts[i]).cloned() {
+            digests.insert(f.clone(), d);
+        }
+    }
+    Ok(digests)
+}
+
+/// The `fsverity` program, a process per call: the diagnosis path (`WOL_SEAL_FSVERITY_BIN=1`),
+/// and what the tests' fake file systems answer to.
+fn seal_with_tool(
+    env: &mut dyn Env,
+    sealed: &[(String, PathBuf)],
+    firsts: &[PathBuf],
+) -> Result<std::collections::HashMap<PathBuf, String>, String> {
+    let paths: Vec<PathBuf> = sealed.iter().map(|(_, f)| f.clone()).collect();
+    let mut digests = measure_all(env, &paths);
+    for ((rel, f), first) in sealed.iter().zip(firsts) {
+        if let Some(d) = digests.get(first).cloned() {
+            digests.insert(f.clone(), d);
+            continue;
+        }
+        let enabled = env
+            .exec(&seal::enable_argv(&f.to_string_lossy()))
+            .unwrap_or(1)
+            == 0;
+        // A failed enable on an inode that has verity already (EEXIST: sealed since it was
+        // measured, through a link not told apart above) is sealed: its digest stands.
+        let Some(d) = measure(env, f) else {
+            return Err(if enabled {
+                format!(
+                    "fs-verity measure gave no digest for {rel} (the tool failed or was stopped)"
+                )
+            } else {
+                format!("fs-verity could not be enabled on {rel}")
+            });
+        };
+        digests.insert(f.clone(), d);
+    }
+    Ok(digests)
+}
+
 /// `wol seal apply ROOT DIGESTFILE`: fs-verity on every file under the slot's
 /// [`seal::VERITY_DIRS`], a content hash of every file under [`seal::HASHED_DIRS`], symlinks with
 /// their targets, the complete manifest
@@ -140,38 +222,21 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
             (seal::Cover::Verity, false) => sealed.push((rel, f)),
         }
     }
-    let paths: Vec<PathBuf> = sealed.iter().map(|(_, f)| f.clone()).collect();
-    let mut digests = measure_all(env, &paths);
     // fs-verity belongs to the inode, not the path: hard links (perl's perlbug and perlthanks)
     // are one file, enabled once; enabling it again fails with EEXIST (IMG013-SEAL-HARDLINK).
-    let mut first_link: std::collections::HashMap<(u64, u64), PathBuf> =
-        std::collections::HashMap::new();
-    for (rel, f) in &sealed {
-        // The first path seen of this inode; a later link takes its digest.
-        let first = inode_of(f).map_or_else(
-            || f.clone(),
-            |i| first_link.entry(i).or_insert_with(|| f.clone()).clone(),
-        );
-        if let Some(d) = digests.get(&first).cloned() {
-            digests.insert(f.clone(), d);
-            continue;
+    // The first path seen of an inode does the work; a later link takes its digest.
+    let firsts = first_links(&sealed);
+    let digests = if env.verity_in_process() {
+        match seal_in_process(&sealed, &firsts) {
+            Ok(d) => d,
+            Err(why) => return fail(env, ErrorCode::Failed, &why),
         }
-        let enabled = env
-            .exec(&seal::enable_argv(&f.to_string_lossy()))
-            .unwrap_or(1)
-            == 0;
-        // A failed enable on an inode that has verity already (EEXIST: sealed since it was
-        // measured, through a link not told apart above) is sealed: its digest stands.
-        let Some(d) = measure(env, f) else {
-            let why = if enabled {
-                format!("no fs-verity digest for {rel}")
-            } else {
-                format!("fs-verity could not be enabled on {rel}")
-            };
-            return fail(env, ErrorCode::Failed, &why);
-        };
-        digests.insert(f.clone(), d);
-    }
+    } else {
+        match seal_with_tool(env, &sealed, &firsts) {
+            Ok(d) => d,
+            Err(why) => return fail(env, ErrorCode::Failed, &why),
+        }
+    };
     // Complete: every sealed path carries its digest, or nothing is sealed.
     for (rel, f) in sealed {
         let Some(d) = digests.get(&f) else {
