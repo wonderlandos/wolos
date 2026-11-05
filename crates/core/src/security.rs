@@ -323,6 +323,26 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "WolOS moves the file the app names to your Trash, as you, where you can put it back",
     ),
+    (
+        "media",
+        Enforcement::System,
+        "WolOS gives the player a name on the desktop so the media keys can pause or skip it, and shows only the title, artist and picture the app gives",
+    ),
+    (
+        "recents",
+        Enforcement::System,
+        "WolOS adds the file the app names to your recent files, as you, only if it exists and is not hidden",
+    ),
+    (
+        "print",
+        Enforcement::System,
+        "WolOS shows you the print dialog for the file the app names; nothing is printed until you choose a printer",
+    ),
+    (
+        "color-picker",
+        Enforcement::System,
+        "WolOS lets you click a colour on the screen and hands the app that colour alone, never a picture of the screen",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.

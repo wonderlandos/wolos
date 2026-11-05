@@ -39,7 +39,7 @@ extern "C" {
 /* ---- Version ---- */
 
 #define WOL_VERSION_MAJOR 1
-#define WOL_VERSION_MINOR 15
+#define WOL_VERSION_MINOR 16
 #define WOL_VERSION_PATCH 0
 
 /* Runtime version: major << 16 | minor << 8 | patch. */
@@ -537,6 +537,95 @@ wol_status wol_share_file(wol_context *context, const char *path, size_t len, wo
  */
 wol_status wol_open_with(wol_context *context, const char *path, size_t len, wol_string **out,
                          wol_error **error);
+
+/* ---- 1.16: a player, a recent file, a colour, a printed file (WOL_1.16) ---- */
+
+/*
+ * A player of your own. Permission: media. The desktop gives it the name
+ * org.mpris.MediaPlayer2.wol.<your program's name>.instance<process id> on the session bus, so the
+ * media keys, Control Center and playerctl (playerctl -p wol.<name>) see it and control it. The name and icon are the desktop's, from your
+ * program, never yours. One player per process; it lasts until its last reference is released or
+ * the process ends. `*out` starts stopped and empty: set the track and the state, then keep both
+ * true to what is playing. Send state when something changes (play, pause, seek, a new track),
+ * not on every tick: the desktop counts the seconds while it plays.
+ */
+typedef struct wol_media wol_media;
+typedef int32_t wol_media_status;
+#define WOL_MEDIA_STOPPED 0
+#define WOL_MEDIA_PLAYING 1
+#define WOL_MEDIA_PAUSED 2
+typedef int32_t wol_media_key;
+#define WOL_MEDIA_KEY_PLAY 0
+#define WOL_MEDIA_KEY_PAUSE 1
+#define WOL_MEDIA_KEY_TOGGLE 2
+#define WOL_MEDIA_KEY_STOP 3
+#define WOL_MEDIA_KEY_NEXT 4
+#define WOL_MEDIA_KEY_PREVIOUS 5
+/* `seconds` is how far to move (negative goes back). */
+#define WOL_MEDIA_KEY_SEEK 6
+/* `seconds` is the new position. */
+#define WOL_MEDIA_KEY_SET_POSITION 7
+/* What the player can do besides play and pause. The desktop sends only keys it allows. */
+#define WOL_MEDIA_CAN_NEXT 1
+#define WOL_MEDIA_CAN_PREVIOUS 2
+#define WOL_MEDIA_CAN_SEEK 4
+
+/* A remote control reached the player. Runs inside wol_context_dispatch. `seconds` is 0 unless
+ * the key is WOL_MEDIA_KEY_SEEK or WOL_MEDIA_KEY_SET_POSITION. */
+typedef void (*wol_media_fn)(wol_media *media, wol_media_key key, double seconds, void *user_data);
+
+/* One player per context. */
+wol_status wol_media_publish(wol_context *context, wol_media **out, wol_error **error);
+/* NULL takes the handler away: the keys are then ignored. */
+wol_status wol_media_set_handler(wol_media *media, wol_media_fn on_key, void *user_data,
+                                 wol_error **error);
+/* Title, artist and album are one line of up to 256 bytes each, and may be empty. `length_seconds`
+ * is 0 for a stream whose end is not known; at most 100 days. */
+wol_status wol_media_set_track(wol_media *media, const char *title, size_t title_len,
+                               const char *artist, size_t artist_len, const char *album,
+                               size_t album_len, double length_seconds, wol_error **error);
+/* The full path of a picture (from '/', no '.' or '..' part, at most 4096 bytes), or empty for
+ * none. The desktop shows it only if it is a PNG, JPEG, WebP or GIF file of at most 4 MiB inside
+ * the person's home folder, a mounted drive, /usr/share or $XDG_RUNTIME_DIR (a good place for a
+ * cover you write for now), with nothing hidden in its path (so not under ~/.cache), as you named
+ * it and after every link is followed. */
+wol_status wol_media_set_art(wol_media *media, const char *path, size_t len, wol_error **error);
+/* `position_seconds` is where the player is now. */
+wol_status wol_media_set_state(wol_media *media, wol_media_status status, double position_seconds,
+                               wol_error **error);
+/* Any of WOL_MEDIA_CAN_NEXT, _PREVIOUS and _SEEK. Play and pause always work. */
+wol_status wol_media_set_capabilities(wol_media *media, uint32_t flags, wol_error **error);
+wol_media *wol_media_retain(wol_media *media);
+void wol_media_release(wol_media *media);
+
+/*
+ * Add a file or folder to the person's recent files, so Files shows it under Recent and Open
+ * Recent menus list it, as this app opened it. Permission: recents. Takes a full path as 1.15
+ * does. The desktop adds it only if the file is in the person's home folder or on a mounted drive
+ * (/run/media, /media) and nothing in its path is hidden (no part starting with '.'), both as you
+ * named it and after every link in it is followed. Anything else, including a file that is not
+ * there, fails with the same sentence: this call cannot be used to ask what exists.
+ */
+wol_status wol_recent_add(wol_context *context, const char *path, size_t len, wol_error **error);
+
+/*
+ * Let the person click a colour anywhere on the screen. Permission: color-picker. Blocks until
+ * they click or press Escape. `*picked` is 1 and `*rgb` the colour (0xRRGGBB), or `*picked` is 0
+ * when they cancelled. The app never sees the screen, only that colour. Fails when this computer
+ * cannot pick a colour.
+ */
+wol_status wol_color_pick(wol_context *context, uint32_t *rgb, int32_t *picked, wol_error **error);
+
+/*
+ * Open the print dialog for a file (full path, as 1.15). Permission: print. A PDF, PostScript,
+ * plain text, PNG or JPEG file; any other kind fails. The file must be where wol_recent_add allows
+ * (the person's home folder or a mounted drive, nothing hidden, links followed) and fails with one
+ * sentence otherwise, whether it exists or not. The dialog shows the person the file's
+ * name; nothing prints until they choose a printer (or Save as PDF) and confirm. Blocks until
+ * they do. `out` is "printed" or "cancelled".
+ */
+wol_status wol_print_file(wol_context *context, const char *path, size_t len, wol_string **out,
+                          wol_error **error);
 
 #ifdef __cplusplus
 }

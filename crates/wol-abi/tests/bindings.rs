@@ -242,6 +242,7 @@ const EXEMPT: &[(&str, &str)] = &[
         "owned once, released by the wrapper",
     ),
     ("wol_endpoint_retain", "owned once, released by the wrapper"),
+    ("wol_media_retain", "owned once, released by the wrapper"),
     (
         "wolkit_engine_retain",
         "owned once, released by the wrapper",

@@ -11,7 +11,7 @@ public static unsafe class Native
     const string Lib = "libwol.so.1";
 
     public const int WOL_VERSION_MAJOR = 1;
-    public const int WOL_VERSION_MINOR = 15;
+    public const int WOL_VERSION_MINOR = 16;
     public const int WOL_VERSION_PATCH = 0;
     public const int WOL_OK = 0;
     public const int WOL_ERR_INVALID_ARGUMENT = 1;
@@ -20,6 +20,20 @@ public static unsafe class Native
     public const int WOL_ERR_INTERNAL = 4;
     public const int WOL_APPEARANCE_LIGHT = 0;
     public const int WOL_APPEARANCE_DARK = 1;
+    public const int WOL_MEDIA_STOPPED = 0;
+    public const int WOL_MEDIA_PLAYING = 1;
+    public const int WOL_MEDIA_PAUSED = 2;
+    public const int WOL_MEDIA_KEY_PLAY = 0;
+    public const int WOL_MEDIA_KEY_PAUSE = 1;
+    public const int WOL_MEDIA_KEY_TOGGLE = 2;
+    public const int WOL_MEDIA_KEY_STOP = 3;
+    public const int WOL_MEDIA_KEY_NEXT = 4;
+    public const int WOL_MEDIA_KEY_PREVIOUS = 5;
+    public const int WOL_MEDIA_KEY_SEEK = 6;
+    public const int WOL_MEDIA_KEY_SET_POSITION = 7;
+    public const int WOL_MEDIA_CAN_NEXT = 1;
+    public const int WOL_MEDIA_CAN_PREVIOUS = 2;
+    public const int WOL_MEDIA_CAN_SEEK = 4;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void wol_event_fn(IntPtr @event, IntPtr user_data);
@@ -41,6 +55,8 @@ public static unsafe class Native
     public delegate void wol_search_open_fn(IntPtr provider, IntPtr key, IntPtr user_data);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void wol_message_fn(IntPtr endpoint, IntPtr message, IntPtr user_data);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    public delegate void wol_media_fn(IntPtr media, int key, double seconds, IntPtr user_data);
 
     [DllImport(Lib)] public static extern uint wol_version();
     [DllImport(Lib)] public static extern byte* wol_version_string();
@@ -176,4 +192,15 @@ public static unsafe class Native
     [DllImport(Lib)] public static extern int wol_file_trash(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_share_file(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
     [DllImport(Lib)] public static extern int wol_open_with(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_media_publish(IntPtr context, IntPtr* @out, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_media_set_handler(IntPtr media, wol_media_fn on_key, IntPtr user_data, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_media_set_track(IntPtr media, byte* title, nuint title_len, byte* artist, nuint artist_len, byte* album, nuint album_len, double length_seconds, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_media_set_art(IntPtr media, byte* path, nuint len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_media_set_state(IntPtr media, int status, double position_seconds, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_media_set_capabilities(IntPtr media, uint flags, IntPtr* error);
+    [DllImport(Lib)] public static extern IntPtr wol_media_retain(IntPtr media);
+    [DllImport(Lib)] public static extern void wol_media_release(IntPtr media);
+    [DllImport(Lib)] public static extern int wol_recent_add(IntPtr context, byte* path, nuint len, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_color_pick(IntPtr context, uint* rgb, int* picked, IntPtr* error);
+    [DllImport(Lib)] public static extern int wol_print_file(IntPtr context, byte* path, nuint len, IntPtr* @out, IntPtr* error);
 }

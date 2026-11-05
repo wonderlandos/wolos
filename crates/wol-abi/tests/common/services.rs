@@ -44,6 +44,8 @@ fn answer(c: &Call) -> Answer {
         Call::FileTrash { .. } => Answer::with(json!({"name": "a.jpg"})),
         Call::ShareFile { .. } => Answer::with(json!({"done": "saved"})),
         Call::OpenWith { .. } => Answer::with(json!({"done": "opened"})),
+        Call::ColorPick {} => Answer::with(json!({"color": "#336699"})),
+        Call::PrintFile { .. } => Answer::with(json!({"done": "printed"})),
         _ => Answer::ok(),
     }
 }
@@ -56,6 +58,19 @@ pub fn search_event(c: &Call) -> Option<Event> {
             pid: 1,
             id: 5,
             text: "term".into(),
+        }),
+        // The desktop's remote controls for the player: a seek back, then a toggle.
+        Call::MediaPublish {} => Some(Event::MediaKey {
+            uid: 1000,
+            pid: 1,
+            key: shared::portal::MediaKey::Seek,
+            value_us: -5_000_000,
+        }),
+        Call::MediaState { state } if state.position_us == 12_500_000 => Some(Event::MediaKey {
+            uid: 1000,
+            pid: 1,
+            key: shared::portal::MediaKey::Toggle,
+            value_us: 0,
         }),
         Call::SearchReply { results, .. } => results.first().map(|r| Event::SearchOpen {
             uid: 1000,
@@ -152,6 +167,10 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "trashed: a.jpg",
             "shared file: saved",
             "open with: opened",
+            "player: published",
+            "recent: added",
+            "color: 3368601 1",
+            "print: printed",
         ]
     );
     let names: Vec<String> = calls
@@ -200,6 +219,15 @@ pub fn run_services(mut cmd: Command, dir: &Path) {
             "file.trash",
             "share.file",
             "open.with",
+            "media.publish",
+            "media.state",
+            "media.state",
+            "media.state",
+            "media.state",
+            "media.state",
+            "recent.add",
+            "color.pick",
+            "print.file",
         ]
     );
 }

@@ -104,6 +104,7 @@ pub struct wol_context {
     windows: Mutex<HashMap<u32, Weak<wol_window>>>,
     notes: Mutex<HashMap<u32, Weak<wol_notification>>>,
     search: Mutex<Weak<crate::search::wol_search_provider>>,
+    media: Mutex<Weak<crate::media::wol_media>>,
     endpoints: Mutex<HashMap<String, Weak<crate::message::wol_endpoint>>>,
     next_id: AtomicU32,
 }
@@ -182,6 +183,7 @@ impl wol_context {
             windows: Mutex::default(),
             notes: Mutex::default(),
             search: Mutex::default(),
+            media: Mutex::default(),
             endpoints: Mutex::default(),
             next_id: AtomicU32::new(1),
         })
@@ -224,6 +226,14 @@ impl wol_context {
 
     pub(crate) fn set_search_provider(&self, p: &Arc<crate::search::wol_search_provider>) {
         *lock(&self.search) = Arc::downgrade(p);
+    }
+
+    pub(crate) fn media(&self) -> Option<Arc<crate::media::wol_media>> {
+        lock(&self.media).upgrade()
+    }
+
+    pub(crate) fn set_media(&self, m: &Arc<crate::media::wol_media>) {
+        *lock(&self.media) = Arc::downgrade(m);
     }
 
     pub(crate) fn register_endpoint(&self, name: String, e: &Arc<crate::message::wol_endpoint>) {
@@ -368,6 +378,13 @@ impl wol_context {
                         (Event::parse(e.json.as_str()), self.search_provider())
                     {
                         crate::search::opened(&p, &key);
+                    }
+                }
+                Incoming::Event(e) if e.topic.as_str() == "media-key" => {
+                    if let (Some(Event::MediaKey { key, value_us, .. }), Some(m)) =
+                        (Event::parse(e.json.as_str()), self.media())
+                    {
+                        crate::media::pressed(&m, key, value_us);
                     }
                 }
                 Incoming::Event(e) if e.topic.as_str() == "notification-action" => {

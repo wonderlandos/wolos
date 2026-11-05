@@ -141,8 +141,19 @@ describe "LibWol" do
       (->LibWol.wol_file_trash(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
       (->LibWol.wol_share_file(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
       (->LibWol.wol_open_with(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_publish(LibWol::Context*, LibWol::Media**, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_set_handler(LibWol::Media*, LibWol::MediaFn, Void*, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_set_track(LibWol::Media*, UInt8*, LibC::SizeT, UInt8*, LibC::SizeT, UInt8*, LibC::SizeT, Float64, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_set_art(LibWol::Media*, UInt8*, LibC::SizeT, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_set_state(LibWol::Media*, LibWol::MediaStatus, Float64, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_set_capabilities(LibWol::Media*, UInt32, LibWol::Error**)).pointer,
+      (->LibWol.wol_media_retain(LibWol::Media*)).pointer,
+      (->LibWol.wol_media_release(LibWol::Media*)).pointer,
+      (->LibWol.wol_recent_add(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::Error**)).pointer,
+      (->LibWol.wol_color_pick(LibWol::Context*, UInt32*, Int32*, LibWol::Error**)).pointer,
+      (->LibWol.wol_print_file(LibWol::Context*, UInt8*, LibC::SizeT, LibWol::String**, LibWol::Error**)).pointer,
     ]
-    pointers.size.should eq 134
+    pointers.size.should eq 145
     pointers.each(&.null?.should(be_false))
   end
 end

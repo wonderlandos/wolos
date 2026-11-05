@@ -312,6 +312,8 @@ impl Holds {
 pub struct Held {
     pub uid: u32,
     _guard: Box<dyn Send>,
+    /// Published (by wold) once the connection has closed and the guard is gone.
+    pub gone: Option<Event>,
 }
 
 /// What the portal keeps between calls.
@@ -319,6 +321,7 @@ pub struct State {
     pub notes: Notes,
     pub prefs: crate::prefs::Prefs,
     pub searches: crate::search::Searches,
+    pub players: crate::media::Players,
     pub endpoints: crate::ipc::Endpoints,
     pub background: Box<dyn crate::services::Background>,
     pub asks: Asks,
@@ -332,6 +335,7 @@ impl Default for State {
         Self {
             prefs: Default::default(),
             searches: Default::default(),
+            players: Default::default(),
             background: Box::new(crate::services::NoBackground),
             endpoints: Default::default(),
             notes: Default::default(),
@@ -454,6 +458,10 @@ fn doing(capability: &str) -> Option<&'static str> {
         "devices" => "use connected devices",
         "share" => "share text and files",
         "trash" => "move files to the Trash",
+        "media" => "show a player for the media keys",
+        "recents" => "add to your recent files",
+        "print" => "print files",
+        "color-picker" => "pick a color from the screen",
         "background" => "run in the background",
         _ => return None,
     })
@@ -661,6 +669,7 @@ fn decide<W: Write + Send>(
                     extra.hold = Some(Held {
                         uid: caller.uid,
                         _guard: guard,
+                        gone: None,
                     });
                     Answer::ok()
                 }
@@ -691,6 +700,7 @@ fn decide<W: Write + Send>(
             extra.hold = Some(Held {
                 uid: caller.uid,
                 _guard: Box::new(st.searches.register(caller)),
+                gone: None,
             });
             Answer::ok()
         }
@@ -734,6 +744,7 @@ fn decide<W: Write + Send>(
             extra.hold = Some(Held {
                 uid: caller.uid,
                 _guard: Box::new(l),
+                gone: None,
             });
             Answer::ok()
         }
@@ -786,6 +797,66 @@ fn decide<W: Write + Send>(
         Call::OpenWith { path } => {
             st.asks
                 .ask_from(bus, caller, Ask::OpenWith { path }, PANEL_TIMEOUT)
+        }
+        Call::MediaPublish {} => {
+            if !st.holds.take(caller.uid) {
+                return Answer::err(Code::Unavailable, "Too many players are published.");
+            }
+            let Some(player) = st.players.register(caller.uid, caller.pid) else {
+                st.holds.give(caller.uid);
+                return Answer::err(
+                    Code::InvalidArgument,
+                    "This app already publishes a player.",
+                );
+            };
+            extra.hold = Some(Held {
+                uid: caller.uid,
+                _guard: Box::new(player),
+                gone: Some(Event::MediaGone {
+                    uid: caller.uid,
+                    pid: caller.pid,
+                }),
+            });
+            Answer::ok()
+        }
+        Call::MediaState { state } => {
+            if !st.players.is_player(caller.uid, caller.pid) {
+                return Answer::err(Code::InvalidArgument, "Publish a player first.");
+            }
+            // `app` is the executable the kernel reported: the desktop names the player by it.
+            bus.publish(&Event::MediaState {
+                uid: caller.uid,
+                pid: caller.pid,
+                app: caller.app.clone(),
+                state,
+            });
+            Answer::ok()
+        }
+        Call::MediaKey {
+            player,
+            key,
+            value_us,
+        } => {
+            if !st.players.is_player(caller.uid, player) {
+                return Answer::err(Code::InvalidArgument, "That player stopped.");
+            }
+            bus.publish(&Event::MediaKey {
+                uid: caller.uid,
+                pid: player,
+                key,
+                value_us,
+            });
+            Answer::ok()
+        }
+        Call::RecentAdd { path } => {
+            let app = caller.app.clone();
+            st.asks
+                .ask_from(bus, caller, Ask::RecentAdd { path, app }, ASK_TIMEOUT)
+        }
+        Call::ColorPick {} => st.asks.ask_from(bus, caller, Ask::ColorPick, PANEL_TIMEOUT),
+        Call::PrintFile { path } => {
+            st.asks
+                .ask_from(bus, caller, Ask::PrintFile { path }, PANEL_TIMEOUT)
         }
         Call::ServiceStart { name } => match st.background.start(caller, &name) {
             Ok(()) => Answer::ok(),

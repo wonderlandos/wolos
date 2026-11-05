@@ -19,7 +19,19 @@ impl Rng {
     }
 }
 
-const SEEDS: [&str; 43] = [
+const SEEDS: [&str; 51] = [
+    r#"{"call":"media.publish"}"#,
+    concat!(
+        r#"{"call":"media.state","state":{"status":"playing","title":"Song","artist":"Band","#,
+        r#""album":"Record","art":"/home/a/cover.png","length_us":215000000,"#,
+        r#""position_us":3000000,"can":5}}"#
+    ),
+    r#"{"call":"media.state","state":{"status":"stopped"}}"#,
+    r#"{"call":"media.key","player":4242,"key":"seek","value_us":-5000000}"#,
+    r#"{"call":"media.key","player":4242,"key":"toggle"}"#,
+    r#"{"call":"recent.add","path":"/home/a/Documents/report.pdf"}"#,
+    r#"{"call":"color.pick"}"#,
+    r#"{"call":"print.file","path":"/home/a/Documents/report.pdf"}"#,
     r#"{"call":"file.trash","path":"/home/a/Pictures/a.jpg"}"#,
     r#"{"call":"share.file","path":"/home/a/Pictures/a.jpg"}"#,
     r#"{"call":"open.with","path":"/home/a/Pictures/a.jpg"}"#,

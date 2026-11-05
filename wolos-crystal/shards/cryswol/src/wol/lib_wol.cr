@@ -3,19 +3,35 @@
 # Regenerate: WOL_BLESS=1 cargo test -p wol-abi --test bindings
 @[Link("wol")]
 lib LibWol
-  WOL_VERSION_MAJOR         =  1
-  WOL_VERSION_MINOR         = 15
-  WOL_VERSION_PATCH         =  0
-  WOL_OK                    =  0
-  WOL_ERR_INVALID_ARGUMENT  =  1
-  WOL_ERR_PERMISSION_DENIED =  2
-  WOL_ERR_UNAVAILABLE       =  3
-  WOL_ERR_INTERNAL          =  4
-  WOL_APPEARANCE_LIGHT      =  0
-  WOL_APPEARANCE_DARK       =  1
+  WOL_VERSION_MAJOR          =  1
+  WOL_VERSION_MINOR          = 16
+  WOL_VERSION_PATCH          =  0
+  WOL_OK                     =  0
+  WOL_ERR_INVALID_ARGUMENT   =  1
+  WOL_ERR_PERMISSION_DENIED  =  2
+  WOL_ERR_UNAVAILABLE        =  3
+  WOL_ERR_INTERNAL           =  4
+  WOL_APPEARANCE_LIGHT       =  0
+  WOL_APPEARANCE_DARK        =  1
+  WOL_MEDIA_STOPPED          =  0
+  WOL_MEDIA_PLAYING          =  1
+  WOL_MEDIA_PAUSED           =  2
+  WOL_MEDIA_KEY_PLAY         =  0
+  WOL_MEDIA_KEY_PAUSE        =  1
+  WOL_MEDIA_KEY_TOGGLE       =  2
+  WOL_MEDIA_KEY_STOP         =  3
+  WOL_MEDIA_KEY_NEXT         =  4
+  WOL_MEDIA_KEY_PREVIOUS     =  5
+  WOL_MEDIA_KEY_SEEK         =  6
+  WOL_MEDIA_KEY_SET_POSITION =  7
+  WOL_MEDIA_CAN_NEXT         =  1
+  WOL_MEDIA_CAN_PREVIOUS     =  2
+  WOL_MEDIA_CAN_SEEK         =  4
 
   alias Status = Int32
   alias Appearance = Int32
+  alias MediaStatus = Int32
+  alias MediaKey = Int32
 
   # Handles are opaque: the field exists only because a Crystal struct cannot be empty.
   struct Error
@@ -90,6 +106,10 @@ lib LibWol
     opaque : UInt8
   end
 
+  struct Media
+    opaque : UInt8
+  end
+
   alias EventFn = Event*, Void* -> Void
   alias ClickFn = Widget*, Void* -> Void
   alias ChangeFn = Widget*, Void* -> Void
@@ -100,6 +120,7 @@ lib LibWol
   alias SearchFn = SearchProvider*, SearchReply*, String*, Void* -> Void
   alias SearchOpenFn = SearchProvider*, String*, Void* -> Void
   alias MessageFn = Endpoint*, Message*, Void* -> Void
+  alias MediaFn = Media*, MediaKey, Float64, Void* -> Void
 
   fun wol_version : UInt32
   fun wol_version_string : UInt8*
@@ -235,4 +256,15 @@ lib LibWol
   fun wol_file_trash(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
   fun wol_share_file(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
   fun wol_open_with(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
+  fun wol_media_publish(context : Context*, out_ : Media**, error : Error**) : Status
+  fun wol_media_set_handler(media : Media*, on_key : MediaFn, user_data : Void*, error : Error**) : Status
+  fun wol_media_set_track(media : Media*, title : UInt8*, title_len : LibC::SizeT, artist : UInt8*, artist_len : LibC::SizeT, album : UInt8*, album_len : LibC::SizeT, length_seconds : Float64, error : Error**) : Status
+  fun wol_media_set_art(media : Media*, path : UInt8*, len : LibC::SizeT, error : Error**) : Status
+  fun wol_media_set_state(media : Media*, status : MediaStatus, position_seconds : Float64, error : Error**) : Status
+  fun wol_media_set_capabilities(media : Media*, flags : UInt32, error : Error**) : Status
+  fun wol_media_retain(media : Media*) : Media*
+  fun wol_media_release(media : Media*)
+  fun wol_recent_add(context : Context*, path : UInt8*, len : LibC::SizeT, error : Error**) : Status
+  fun wol_color_pick(context : Context*, rgb : UInt32*, picked : Int32*, error : Error**) : Status
+  fun wol_print_file(context : Context*, path : UInt8*, len : LibC::SizeT, out_ : String**, error : Error**) : Status
 end

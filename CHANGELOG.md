@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- libwol 1.16: an app can publish a player (`wol_media_publish`, grant `media`): the desktop gives it the name `org.mpris.MediaPlayer2.wol.<program>.instance<pid>` on the session bus, so the media keys, Control Center and `playerctl` see and control it, and only its owner gets the keys. Apps can also add a file to the recent files (`wol_recent_add`, grant `recents`), let the person pick a colour on the screen (`wol_color_pick`, grant `color-picker`; the app gets that colour only) and open the print dialog for a file (`wol_print_file`, grant `print`). Cryswol has `Wol::Media`, `Wol::Recents`, `Wol::Colors` and `Wol::Print`; Wolkit apps have `Wolkit::Services.publish_media`, `.recent`, `.pick_color` and `.print_file`. Settings > Privacy & Security lists the four new switches.
 - libwol 1.15: apps move a file to the shared Trash (with the standard information file, so the Files Trash lists it and puts it back; the answer is its name there for Undo, grant `trash`), offer a file on the share sheet (copy a link, save a copy, open with another app) and ask the person which app opens a file (grant `share`). The desktop acts as the person; Cryswol has `Wol::Trash.move`, `Wol::Share.file` and `Wol::Share.open_with`.
 - PowerShell is a terminal shell beside zsh: the Developer module ships pwsh with the WolOS profile and completions, `wol-term-shell` starts it from foot, ghostty and kitty, and Settings > General has a Shells row.
 
