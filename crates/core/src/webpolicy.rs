@@ -282,7 +282,7 @@ pub fn hook(targets: &[&str]) -> String {
 }
 
 /// The browser's policy as shipped: the only source of its managed-policy rows.
-pub const HELIUM_JSON: &str = include_str!("../../../files/usr/share/wolos/webpolicy/helium.json");
+pub const ATLAS_JSON: &str = include_str!("../../../files/usr/share/wolos/webpolicy/atlas.json");
 
 /// Managed browser policies: shipped table rows the browser's policy allows.
 pub fn browser_policies(p: &Policy) -> serde_json::Map<String, serde_json::Value> {
@@ -344,7 +344,7 @@ pub fn role_id(r: Role) -> &'static str {
     match r {
         Role::App => "electron",
         Role::Editor => "code",
-        Role::Browser => "helium",
+        Role::Browser => "atlas",
     }
 }
 
@@ -669,11 +669,11 @@ mod tests {
         assert!(matches!(&s[2], StateLine::Refused { found: None, .. }));
     }
 
-    /// The browser's managed-policy rows come from helium.json alone: throttling only with
+    /// The browser's managed-policy rows come from atlas.json alone: throttling only with
     /// `background_throttle`, and a shipped row the policy refuses never reaches the file.
     #[test]
     fn browser_rows_come_from_the_browser_policy() {
-        let p = parse(HELIUM_JSON.as_bytes()).unwrap();
+        let p = parse(ATLAS_JSON.as_bytes()).unwrap();
         assert_eq!(
             browser_policies(&p),
             webruntime::browser_policies(&|row| allows(&p, row))
@@ -686,7 +686,7 @@ mod tests {
                 assert!(!allows(&off, row), "{}", row.id);
             }
         }
-        assert!(crate::theme::helium::policies().contains("MetricsReportingEnabled"));
+        assert!(crate::browser::policies().contains("MetricsReportingEnabled"));
     }
 
     #[test]

@@ -90,7 +90,7 @@ Each module document names its ADR and its code by crate and path.
 | Document | Content | ADR |
 |---|---|---|
 | [modules/abi.md](modules/abi.md) | libwol: the app API (`wol.h`, `libwol.so.1`), ABI rules, planned families, Lua widgets | [0020](adr/0020-libwol-stable-abi.md) |
-| [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
+| [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Atlas, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
 | [modules/search.md](modules/search.md) | search by meaning on the device: the `.wst` table and its reader (`wolsem`), the hybrid rank, Settings search, the Search bar's manual and "Did you mean", `wol help <words>` | [0057](adr/0057-search-by-meaning.md) |
 | [modules/tor.md](modules/tor.md) | Tor as a layer of the OS (`wol-tor`): Atlas tabs, one app, the whole computer; switches, status, doctor, Keep Tor ready | [0053](adr/0053-atlas-private-and-tor-tabs.md), [0056](adr/0056-wol-tor-system-tor-layer.md) |

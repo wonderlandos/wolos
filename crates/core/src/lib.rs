@@ -7,6 +7,7 @@ pub mod automation;
 pub mod base;
 pub mod bluetooth;
 pub mod boot;
+pub mod browser;
 pub mod bundle;
 pub mod cdn;
 pub mod clock;

@@ -3,7 +3,7 @@
 # Run the web-app benchmark (webapps.py) in an installed WolOS VM driven by wolvm, from the build
 # host: builds the input probe (`vk`), ships them with the runner into the guest, runs it as a transient
 # unit (it takes about an hour per mode), and writes $OUT/result.json and $OUT/result.md.
-# Usage: sh run.sh VM [runner args...], for example `sh run.sh ms --only helium,code --idle 30`.
+# Usage: sh run.sh VM [runner args...], for example `sh run.sh ms --only atlas,code --idle 30`.
 # Env: WOLVM (the wolvm script), WOLVM_HOME (its VM home), OUT (default ./webapps-out),
 # WOLBENCH_PASSWORD (unlocks a locked test session), WOLKIT_TODOS + WOLKIT_LIB (optional: a
 # release build of the Wolkit todos example and the directory with libwolkit.so.1 and
