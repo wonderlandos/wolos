@@ -230,7 +230,9 @@ fn every_tool_parses_has_help_and_a_handler() {
         assert!(!v.cmd.help.is_empty());
         let help =
             controller::cli::help(&v.cmd.path.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        assert!(help.contains(v.cmd.help), "{}", v.tool());
+        // Folded to 120 columns (QA-PWR-6): the sentence is there word for word.
+        let flat = |t: &str| t.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat(&help).contains(&flat(v.cmd.help)), "{}", v.tool());
         let mut e = FakeEnv {
             home: temp_home("parity"),
             ..Default::default()

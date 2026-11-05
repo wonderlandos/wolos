@@ -4,7 +4,7 @@
 //! manifest. Scripts run against fakes; nothing here needs root or the network.
 #[path = "support/repo.rs"]
 mod repo;
-use repo::read;
+use repo::{read, repo};
 
 #[test]
 fn every_hyprland_session_runs_at_scale_one() {
@@ -39,6 +39,71 @@ fn every_greeter_compositor_turns_the_output_off_before_it_exits() {
             "{c}.lua: dpms off before exit"
         );
     }
+}
+
+/// Dry run 0.13.0 live-logout (QA-LIVE-32 class): a compositor that starts hypridle stops it
+/// before it exits. hypridle aborts (SIGABRT, a core dump in the journal) when its display goes;
+/// the desktop's Log Out stops it first (`shell::clipboard::before_end`), the login window did
+/// not, so every sign-in left an abort from the login window's own hypridle. Only its own
+/// (`-u` the compositor's account): never another account's.
+#[test]
+fn a_compositor_stops_its_hypridle_before_it_exits() {
+    // The desktop's Log Out stops the unit (a pkill came back: Restart=on-failure, 2 s).
+    let unit = read("files/usr/lib/systemd/user/wolos-hypridle.service");
+    assert!(unit.contains("Restart=on-failure"), "{unit}");
+    let shell = read("crates/shell/src/clipboard.rs");
+    assert!(
+        shell.contains(r#"["systemctl", "--user", "stop", "wolos-hypridle.service"]"#),
+        "Log Out stops wolos-hypridle.service through systemd"
+    );
+    let stop = r#"pkill -x -u "$(id -u)" hypridle"#;
+    for c in ["installer", "setup", "login"] {
+        for (ext, exit) in [("conf", "hyprctl dispatch exit"), ("lua", "hl.dsp.exit()")] {
+            let f = format!("desktop/overlay/usr/share/wolos/hypr/{c}.{ext}");
+            let text = read(&f);
+            if !text.contains("hypridle -c") {
+                continue;
+            }
+            let line = text
+                .lines()
+                .find(|l| l.contains("/usr/bin/wol-") && l.contains(exit))
+                .unwrap_or_else(|| panic!("{f}: no exit line"));
+            let (at_stop, at_exit) = (line.find(stop), line.find(exit));
+            assert!(
+                matches!((at_stop, at_exit), (Some(s), Some(e)) if s < e),
+                "{f}: hypridle stopped before the exit: {line}"
+            );
+        }
+    }
+}
+
+/// QA-FDAY-1 (dry run 0.13.0, p1-live-try): the Try word went to the screen's VT only, so a
+/// computer whose console is a serial port (a VM, a headless box: where wol-login's boot marks
+/// already go, `wol-login` `emit`) never showed it. It goes to /dev/console too when that is a
+/// serial port (the last name in the kernel's active consoles), after the compositor ended.
+#[test]
+fn the_try_word_reaches_a_serial_console_too() {
+    let s = read("files/usr/lib/wolos/installer-session");
+    let code: Vec<&str> = s
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    let at = |needle: &str| {
+        code.iter()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("installer-session has no line with {needle}"))
+    };
+    let console = at(r#"> /dev/console"#);
+    assert!(code[console].contains("$msg"), "{}", code[console]);
+    assert!(at("/sys/class/tty/console/active") < console);
+    assert!(at("Hyprland -c") < console && console < at("systemctl start --no-block wold.service"));
+    let ok = std::process::Command::new("sh")
+        .arg("-n")
+        .arg(repo("files/usr/lib/wolos/installer-session"))
+        .status()
+        .unwrap();
+    assert!(ok.success());
 }
 
 /// QA-SHEET-2, QA-VIS2-4 (the installer hand-off): the installer's compositor leaves the console

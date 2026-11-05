@@ -515,3 +515,31 @@ fn memory_saver_reports_fault_around_sharing_and_the_page_out() {
         "{d}"
     );
 }
+
+/// QA-DOC-5 / doctor-check: as root (ssh, a script) there is no person's PipeWire or WirePlumber
+/// to ask, so those rows are Skipped with a sentence and no fix, never a Fail on a fresh install;
+/// as the person they still fail when stopped.
+#[test]
+fn sound_services_are_a_person_s_not_root_s() {
+    for (root, want) in [(true, "skipped"), (false, "fail")] {
+        let mut env = FakeEnv {
+            root,
+            ..Default::default()
+        };
+        run("doctor sound --json", &mut env);
+        let v = json(&env);
+        for id in ["sound.pipewire", "sound.wireplumber"] {
+            let c = v["checks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == id)
+                .unwrap_or_else(|| panic!("{id}: {v}"));
+            assert_eq!(c["status"], want, "{id} root={root}: {c}");
+            if root {
+                assert!(c.get("fix").is_none(), "{c}");
+                assert!(c["detail"].as_str().unwrap().contains("as yourself"), "{c}");
+            }
+        }
+    }
+}

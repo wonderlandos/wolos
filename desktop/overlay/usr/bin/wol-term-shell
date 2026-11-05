@@ -17,6 +17,7 @@ case $id in
 	bash) p=$root/usr/bin/bash ;;
 	fish) p=$root/usr/bin/fish ;;
 	nu) p=$root/usr/bin/nu ;;
+	rsh) p=$root/usr/bin/rsh ;;
 	pwsh) p=$HOME/.local/bin/pwsh ;;
 	*) p= ;;
 esac

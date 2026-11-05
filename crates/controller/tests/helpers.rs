@@ -687,3 +687,29 @@ fn undoing_larger_text_sets_the_text_scale() {
         e.captured_argvs
     );
 }
+
+/// QA-DEV-19: no adapter (`/sys/class/bluetooth` empty) is one sentence at once, never a wait for
+/// org.bluez; `--json` keeps `"on": null`.
+#[test]
+fn bluetooth_without_adapter_says_so_at_once() {
+    let host = Arc::new(wol_core::system::fake::FakeHost::linux());
+    host.command("bluetoothctl show", "Controller x\n\tPowered: yes\n")
+        .command_delay(std::time::Duration::from_secs(5));
+    let mut e = FakeEnv {
+        home: temp_home("bt-none"),
+        host: Some(host.clone()),
+        tty: true,
+        ..Default::default()
+    };
+    let t = std::time::Instant::now();
+    assert_eq!(run("bluetooth", &mut e), 0, "{}", e.err);
+    assert!(t.elapsed() < std::time::Duration::from_secs(1));
+    assert!(
+        e.out.contains("This computer has no Bluetooth adapter."),
+        "{}",
+        e.out
+    );
+    assert_eq!(run("bluetooth --json", &mut e), 0, "{}", e.err);
+    assert_eq!(json_out(&e)["on"], Value::Null);
+    assert!(host.ran().iter().all(|c| !c.contains("bluetoothctl")));
+}

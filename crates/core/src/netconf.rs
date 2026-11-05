@@ -904,6 +904,33 @@ mod tests {
         assert!(device_connected("100 (connected)\n") && !device_connected("70 (connecting)"));
     }
 
+    /// net3-proxy-dns: the arguments wol-admind gets pass the wire's decoder (a manual proxy is 5,
+    /// DNS over TLS with every server 1 + [`MAX_DOT_SERVERS`]); `MAX_ARGS` 4 refused them as
+    /// "invalid request" before admind looked.
+    #[test]
+    fn admind_arguments_fit_the_wire() {
+        use shared::admin::{AdminAction, AdminRequest, decode, encode};
+        let proxy = ProxyConfig {
+            mode: ProxyMode::Manual,
+            http: "10.0.2.2:3128".into(),
+            https: "10.0.2.2:3128".into(),
+            no_proxy: vec![".lan".into(), "10.0.0.0/8".into()],
+            ..Default::default()
+        };
+        let dot = DotConfig {
+            mode: DotMode::Strict,
+            servers: vec!["9.9.9.9#dns.quad9.net".into(); MAX_DOT_SERVERS],
+        };
+        for (action, args) in [
+            (AdminAction::Proxy, proxy_args(&proxy)),
+            (AdminAction::DnsOverTls, dot_args(&dot)),
+        ] {
+            let req = AdminRequest { action, args };
+            let (back, _) = decode(&encode(&req, b"pw")).expect("decodes");
+            assert_eq!(back.args, req.args, "{action:?}");
+        }
+    }
+
     #[test]
     fn proxy_args_round_trip_and_files() {
         let m = ProxyConfig {

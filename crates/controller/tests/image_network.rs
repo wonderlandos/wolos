@@ -16,7 +16,10 @@ fn read(p: &str) -> String {
 /// QA-NET-4: `.local` names never resolved: Arch's hosts line `resolve [!UNAVAIL=return]` ends the
 /// lookup at systemd-resolved, whose mDNS is off (avahi owns it). Either nss-mdns is asked first
 /// or resolved does mDNS; WolOS does the first. The shipped script turns Arch's default hosts
-/// line into one with `mdns_minimal [NOTFOUND=return]` in front of `resolve`, once.
+/// line into one with `mdns4_minimal [NOTFOUND=return]` in front of `resolve`, once. IPv4 only
+/// (dry run 0.13.0, net-firewall-state): with `mdns_minimal` every lookup of a name with no IPv6
+/// address waited 5 s for avahi's AAAA answer (getaddrinfo too; measured 5.0 s against 0.01 s),
+/// and a 0.12 line with `mdns_minimal` is moved to `mdns4_minimal`.
 #[test]
 fn nsswitch_has_mdns_or_resolved_off() {
     let resolved = read("files/usr/lib/systemd/resolved.conf.d/wolos.conf");
@@ -25,26 +28,34 @@ fn nsswitch_has_mdns_or_resolved_off() {
     let d = std::env::temp_dir().join(format!("b7-nss-{}", std::process::id()));
     fs::create_dir_all(&d).unwrap();
     let ns = d.join("nsswitch.conf");
-    fs::write(
-        &ns,
-        "passwd: files systemd\nhosts: mymachines resolve [!UNAVAIL=return] files myhostname dns\n",
-    )
-    .unwrap();
-    for _ in 0..2 {
-        let o = Command::new("sh").arg(&script).arg(&ns).output().unwrap();
-        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    }
-    let hosts = fs::read_to_string(&ns).unwrap();
+    let run = |hosts: &str| {
+        fs::write(&ns, format!("passwd: files systemd\nhosts: {hosts}\n")).unwrap();
+        for _ in 0..2 {
+            let o = Command::new("sh").arg(&script).arg(&ns).output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        }
+        let text = fs::read_to_string(&ns).unwrap();
+        text.lines()
+            .find(|l| l.starts_with("hosts:"))
+            .unwrap()
+            .to_owned()
+    };
+    let arch = "mymachines resolve [!UNAVAIL=return] files myhostname dns";
+    let line = run(arch);
+    // An installed 0.12 or 0.13 computer: its line moves to IPv4-only mDNS on the upgrade.
+    let old = run(&arch.replace("resolve", "mdns_minimal [NOTFOUND=return] resolve"));
+    assert_eq!(old, line, "the 0.12 line is moved");
     let _ = fs::remove_dir_all(&d);
-    let line = hosts.lines().find(|l| l.starts_with("hosts:")).unwrap();
-    let mdns = line.find("mdns_minimal [NOTFOUND=return]");
+    let line = line.as_str();
+    assert!(!line.contains(" mdns_minimal"), "a 5 s AAAA wait: {line}");
+    let mdns = line.find("mdns4_minimal [NOTFOUND=return]");
     let resolve = line.find(" resolve");
     let mdns_first = matches!((mdns, resolve), (Some(m), Some(r)) if m < r);
     let resolved_mdns =
         resolved.contains("MulticastDNS=yes") || resolved.contains("MulticastDNS=resolve");
     assert!(mdns_first || resolved_mdns, "{line}");
     assert_eq!(
-        line.matches("mdns_minimal").count(),
+        line.matches("mdns4_minimal").count(),
         1,
         "idempotent: {line}"
     );

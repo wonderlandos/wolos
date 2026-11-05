@@ -197,6 +197,9 @@ fn fix_of(line: &str, title: &str) -> Option<Fix> {
 /// `wol audio doctor`'s checks, worded for a person.
 fn sound(env: &mut dyn Env) -> Vec<Check> {
     use crate::audio_doctor::Status as S;
+    // PipeWire and WirePlumber run in each person's session: root (ssh, a script) has none to ask,
+    // and a Fail there was a false one on every fresh install (QA-DOC-5, doctor-check).
+    let root = env.is_root();
     let mut v: Vec<Check> = crate::audio_doctor::checks(env)
         .into_iter()
         .map(|c| {
@@ -306,12 +309,21 @@ fn sound(env: &mut dyn Env) -> Vec<Check> {
                 ),
                 _ => ("Sound", c.detail.clone(), "Fix it"),
             };
+            let not_here = root && st != Status::Ok && matches!(c.id, "pipewire" | "wireplumber");
+            let (st, detail) = if not_here {
+                (
+                    Status::Skipped,
+                    "Sound runs in each person's own session, and this check ran as root. Run wol doctor as yourself to check it.".to_string(),
+                )
+            } else {
+                (st, detail)
+            };
             let st = if c.id == "obs" && c.detail.ends_with("not installed") {
                 Status::Skipped
             } else {
                 st
             };
-            let fix = if st == Status::Ok || button.is_empty() {
+            let fix = if st == Status::Ok || not_here || button.is_empty() {
                 None
             } else {
                 fix_of(&c.fix, button)

@@ -269,6 +269,41 @@ pub fn classify_import_error(stderr: &str) -> ImportFailure {
     }
 }
 
+/// nmcli's own words from a failed import: what follows "failed to import '<file>': ", else its
+/// last line, without "Error: " and the full stop. Every failure starts "Error: failed to import",
+/// so the sentence alone hid why (net3-vpn: a minimal `.ovpn` "is not a file NetworkManager can
+/// read" whatever nmcli said).
+pub fn import_reason(stderr: &str) -> Option<String> {
+    let line = stderr.lines().map(str::trim).rfind(|l| !l.is_empty())?;
+    let line = line.strip_prefix("Error: ").unwrap_or(line);
+    let r = match line.find("failed to import '") {
+        Some(i) => {
+            let rest = &line[i + "failed to import '".len()..];
+            rest.find("': ").map_or(line, |j| &rest[j + 3..])
+        }
+        None => line,
+    };
+    let r = r.trim().trim_end_matches('.').trim();
+    (!r.is_empty()).then(|| r.chars().take(300).collect())
+}
+
+/// The reason of the last failed import in this process ([`import_reason`]), taken once by the
+/// surface that shows it ([`take_import_reason`]).
+static IMPORT_REASON: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Records (or, with None, clears) the reason of the last import.
+pub fn note_import_reason(reason: Option<String>) {
+    *IMPORT_REASON.lock().unwrap_or_else(|p| p.into_inner()) = reason;
+}
+
+/// nmcli's reason for the last failed import; None when it gave none or it was taken already.
+pub fn take_import_reason() -> Option<String> {
+    IMPORT_REASON
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .take()
+}
+
 fn sv(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| (*s).to_owned()).collect()
 }
@@ -350,6 +385,15 @@ mod tests {
             classify_import_error("Error: failed to import '/x': Invalid argument"),
             ImportFailure::BadFile
         );
+        assert_eq!(
+            import_reason("Error: failed to import '/tmp/a b.ovpn': no remote.\n").as_deref(),
+            Some("no remote")
+        );
+        assert_eq!(
+            import_reason("warning\nError: Insufficient privileges.\n").as_deref(),
+            Some("Insufficient privileges")
+        );
+        assert_eq!(import_reason(" \n"), None);
     }
 
     #[test]

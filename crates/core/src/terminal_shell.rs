@@ -15,11 +15,13 @@ pub const DEFAULT: &str = "zsh";
 /// The programs, in menu order; a shell's word in [`FILE`] is its file name ([`id`]). `~/` is the
 /// person's home: pwsh is installed per person by the Console module's recipe. [`LAUNCHER`] has
 /// the same table (a test keeps the two equal).
-pub const SHELLS: [&str; 5] = [
+pub const SHELLS: [&str; 6] = [
     "/usr/bin/zsh",
     "/usr/bin/bash",
     "/usr/bin/fish",
     "/usr/bin/nu",
+    // The image ships rsh (QA-PWR-1: it was missing here, so the word fell back to zsh).
+    "/usr/bin/rsh",
     "~/.local/bin/pwsh",
 ];
 
@@ -93,6 +95,9 @@ mod tests {
         assert_eq!(effective(None, &have), "zsh");
         assert_eq!(render("nu"), "nu\n");
         assert_eq!(id(SHELLS[0]), DEFAULT);
+        // QA-PWR-1: rsh ships on the image (rsh 1.0.0-1, /usr/bin/rsh); its word is a shell.
+        assert_eq!(program("rsh", home).unwrap(), Path::new("/usr/bin/rsh"));
+        assert_eq!(effective(Some("rsh\n"), &["zsh", "rsh"]), "rsh");
     }
 
     #[test]
@@ -104,7 +109,7 @@ mod tests {
         assert_eq!(have, ["zsh", "pwsh"]);
         assert_eq!(
             ids().collect::<Vec<_>>(),
-            ["zsh", "bash", "fish", "nu", "pwsh"]
+            ["zsh", "bash", "fish", "nu", "rsh", "pwsh"]
         );
     }
 }

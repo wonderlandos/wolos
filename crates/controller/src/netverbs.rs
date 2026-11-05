@@ -159,6 +159,21 @@ fn vpn_import(env: &mut dyn Env, file: &str, json: bool) -> i32 {
     let p = std::path::absolute(&p).unwrap_or(p);
     match env.controls().vpn_import(&p) {
         Ok(v) => show(env, json!({ "imported": v }), json),
+        // nmcli's own reason after the sentence (net3-vpn: it was dropped).
+        Err(e @ (ControlError::Invalid | ControlError::Failed)) => {
+            match wol_core::vpn::take_import_reason() {
+                Some(why) => fail(
+                    env,
+                    if e == ControlError::Invalid {
+                        ErrorCode::Invalid
+                    } else {
+                        ErrorCode::Failed
+                    },
+                    &format!("NetworkManager could not import {file}: {why}"),
+                ),
+                None => vpn_error(env, e),
+            }
+        }
         Err(e) => vpn_error(env, e),
     }
 }
