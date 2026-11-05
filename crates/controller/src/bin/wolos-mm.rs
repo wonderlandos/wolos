@@ -25,7 +25,7 @@ use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 use wol_core::jsruntime::{
-    KSM_RUN, MM_WRITES, Pageout, Refusal, ksm_policy, pageout_allowed, pageout_ranges,
+    KSM_RUN, MM_WRITES, Pageout, Refusal, ksm_policy, pageout_allowed, pageout_ranges, pidfd_names,
 };
 
 /// `PR_SET_MEMORY_MERGE` (Linux 6.4; not in the libc crate).
@@ -72,22 +72,15 @@ impl From<io::Error> for Error {
     }
 }
 
-/// Whether the pidfd still names `pid`: its fdinfo says `Pid: -1` once the process is gone.
+/// Whether the pidfd still names `pid` (`jsruntime::pidfd_names` over its fdinfo).
 fn still_target(fd: libc::c_int, pid: u32) -> bool {
-    std::fs::read_to_string(format!("/proc/self/fdinfo/{fd}"))
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find_map(|l| l.strip_prefix("Pid:"))
-                .and_then(|v| v.trim().parse::<i64>().ok())
-        })
-        == Some(i64::from(pid))
+    std::fs::read_to_string(format!("/proc/self/fdinfo/{fd}")).is_ok_and(|s| pidfd_names(&s, pid))
 }
 
 /// `process_madvise(MADV_PAGEOUT)` over the mappings of `pid` (`pageout_ranges`), one call per
 /// range (a call with several stops at the first one the kernel refuses). The pid is pinned with
 /// `pidfd_open` first; its cgroup, owner and maps are read only after, and the pidfd is asked
-/// again that it still names the process before the first call. The call does not depend on
+/// again that it still names the process before every call. The call does not depend on
 /// which cgroup the pages are charged to.
 fn pageout(pid: u32, what: Pageout, rule: Rule) -> Result<Report, Error> {
     let pid_t =
@@ -120,6 +113,10 @@ fn pageout(pid: u32, what: Pageout, rule: Rule) -> Result<Report, Error> {
             }
             let mut rep = Report::default();
             for (start, len) in pageout_ranges(&maps, what) {
+                // Asked again before every call: a process that exits halfway is left at once.
+                if !still_target(fd, pid) {
+                    break;
+                }
                 let iov = libc::iovec {
                     iov_base: start as *mut libc::c_void,
                     iov_len: len,

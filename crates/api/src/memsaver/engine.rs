@@ -11,6 +11,10 @@ use wol_core::memsaver::budget::{self, Budget, Cycle, Gate, Place};
 
 /// Ask systemd again after this long if the scope did not show up.
 const ADOPT_RETRY_MS: u64 = 10_000;
+/// A budgeted app behind is paged out this often (`Sys::page_out`, every private mapping): what
+/// held Discord at 96-104 MiB of PSS through ten minutes behind (docs/bench/js-runtime-x.md, F2).
+/// Between two, the app faults back in only what it touches.
+pub const PAGEOUT_EVERY_MS: u64 = 30_000;
 /// App Nap: idle means under 1 % of a core for a minute.
 const IDLE_CPU: f32 = 1.0;
 const IDLE_MS: u64 = 60_000;
@@ -32,6 +36,9 @@ struct App {
     cycle: Cycle,
     /// When its window was first seen (the budget waits `start_ms` from here).
     shown: Option<u64>,
+    /// When the budget's page-out behind last ran (None: not behind), and how many ran.
+    paged: Option<u64>,
+    pageouts: u32,
 }
 
 struct Session {
@@ -245,6 +252,8 @@ impl<S: Sys> Engine<S> {
                     high: None,
                     cycle: Cycle::Off,
                     shown: None,
+                    paged: None,
+                    pageouts: 0,
                 }
             });
             if windowed && !app.windowed {
@@ -316,8 +325,10 @@ impl<S: Sys> Engine<S> {
 
     /// A budgeted app (`budget::TABLE`): from `start_ms` after its window first showed, its
     /// scope's memory.high is the front limit, and the background one once the saver's delay has
-    /// passed; behind it runs the freeze duty cycle. Saver off, excluded or a game: no limit and
-    /// never frozen by the cycle. Playing (a call): never frozen, the limit stays.
+    /// passed; behind it is paged out every [`PAGEOUT_EVERY_MS`] and runs the freeze duty cycle
+    /// when its row has one. Saver off, excluded or a game: no limit, no page-out and never frozen
+    /// by the cycle. Playing (sound, or a call: a capture stream counts as playing): never paged
+    /// out and never frozen, the limit stays.
     fn run_budget(&mut self, scope: &str, app: &mut App, b: &'static Budget, f: &Facts, now: u64) {
         let shown = *app.shown.get_or_insert(now);
         let on = f.enabled && !f.excluded && !f.game;
@@ -333,6 +344,9 @@ impl<S: Sys> Engine<S> {
         if want != app.high && self.sys.set_high(scope, want) {
             app.high = want;
         }
+        // Napping is frozen: it touches nothing between two looks, and the Nap gave back once.
+        let paging = at == Place::Back && !f.playing && matches!(app.phase, Phase::Saving { .. });
+        self.run_pageout(scope, app, paging, now);
         let cycling = on && !f.playing && matches!(app.phase, Phase::Saving { .. });
         if let Some(d) = &b.duty {
             let (c, gate) = app.cycle.step(cycling, now, d);
@@ -346,6 +360,26 @@ impl<S: Sys> Engine<S> {
                     self.sys.freeze(scope, false);
                 }
             }
+        }
+    }
+
+    /// The page-out behind: none while `behind` is false. On the tick the app goes behind the
+    /// saver's own give-back (`Action::Save`, this same tick or earlier) is the first page-out, so
+    /// the next one is due [`PAGEOUT_EVERY_MS`] later; each one is a fresh look at the scope's
+    /// processes (`Sys::procs`), and the pidfd of each is asked again before every call.
+    fn run_pageout(&mut self, scope: &str, app: &mut App, behind: bool, now: u64) {
+        if !behind {
+            app.paged = None;
+            return;
+        }
+        match app.paged {
+            None => app.paged = Some(now),
+            Some(t) if now.saturating_sub(t) >= PAGEOUT_EVERY_MS => {
+                self.sys.page_out(scope, self.sys.procs(scope));
+                app.paged = Some(now);
+                app.pageouts = app.pageouts.saturating_add(1);
+            }
+            Some(_) => {}
         }
     }
 
@@ -418,6 +452,7 @@ impl<S: Sys> Engine<S> {
                 saved,
                 memory,
                 swap,
+                pageouts: app.pageouts,
             });
         }
         st

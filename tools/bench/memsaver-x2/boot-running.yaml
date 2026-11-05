@@ -1,0 +1,10 @@
+name: x2 boot of a running guest to an unlocked session
+steps:
+- wait-agent:
+    timeout: 600
+- sleep: 40
+- type: curiouser
+- key: ret
+- sleep: 15
+- ssh: "loginctl list-sessions --no-legend | grep -q alice && pgrep -x Hyprland >/dev/null && echo session-up"
+  expect: "session-up"

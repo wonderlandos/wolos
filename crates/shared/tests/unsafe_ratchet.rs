@@ -129,6 +129,8 @@ use std::path::{Path, PathBuf};
 /// `security.capability` and other xattrs, QA-A9-CORE-1; std has no xattr call; and the two calls
 /// of the test that reads them back); core 14 -> 16 (`src/system/mod.rs` `stop_tree`: `getpgid`
 /// and `kill` on a process group the runner spawned, SAFETY lines, QA-A9-CORE-3).
+/// api 33 -> 32 (MEMSAVER-X2): `memsaver/pageout.rs` owns its pidfd as an `OwnedFd` (closed on drop, so the
+/// explicit `close` block is gone) and makes one `process_madvise` call per range.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 513),
@@ -137,7 +139,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("realtime", 49),
     ("xguard", 65),
     ("controller", 68),
-    ("api", 33),
+    ("api", 32),
     ("audio", 0),
     ("aurlaws", 0),
     ("core", 16),

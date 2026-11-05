@@ -1,0 +1,8 @@
+-rwxr-xr-x 1 aliceliddell aliceliddell  4467304 Nov  5 01:47 /usr/bin/wol-search
+-rwxr-xr-x 1 aliceliddell aliceliddell 18490808 Nov  5 01:47 /usr/bin/wol-shell
+-rwxr-xr-x 1 aliceliddell aliceliddell  3340944 Nov  5 01:47 /usr/bin/wold
+4096
+1
+12999 /usr/bin/wold /etc/wolos/jobs
+13178 wol-realtime
+wolos-system 0.12.1-1

@@ -98,6 +98,11 @@ tools/bench/discord/summary.py
 tools/bench/js-runtime-x/bun-run.sh
 tools/bench/js-runtime-x/jsx.py
 tools/bench/js-runtime-x/vma.py
+tools/bench/memsaver-x2/x2drive.py
+tools/bench/memsaver-x2/x2g.py
+tools/bench/memsaver-x2/x2plan.py
+tools/bench/memsaver-x2/x2report.py
+tools/bench/memsaver-x2/x2showcase.py
 tools/build-rust.sh
 tools/check-adrs.sh
 tools/check-headers.sh

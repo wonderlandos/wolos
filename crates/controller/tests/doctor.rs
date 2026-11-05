@@ -391,4 +391,126 @@ fn a_classical_system_shows_in_plain_doctor_and_probes_only_when_asked() {
         .map(|c| c["id"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(ids, ["tls.openssl", "tls.gnutls", "tls.wolos"]);
+
+/// `memory.saver` (ADR 0061): fault-around, the sharing rule and why, and the page-out state of
+/// the apps with a budget, in plain words; a second account with sharing still on is worth a look.
+#[test]
+fn memory_saver_reports_fault_around_sharing_and_the_page_out() {
+    const ONE: &str = "root:x:0:0::/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/zsh\n";
+    const TWO: &str = "root:x:0:0::/root:/bin/bash\nalice:x:1000:1000::/home/alice:/bin/zsh\nbob:x:1001:1001::/home/bob:/bin/zsh\n";
+    let status = concat!(
+        r#"{"enabled":true,"saved":0,"apps":["#,
+        r#"{"app":"discord","state":"saving","saved":1,"memory":2,"swap":0,"pageouts":3},"#,
+        r#"{"app":"code","state":"saving","saved":1,"memory":2,"swap":0}]}"#
+    );
+    let files = |passwd: &str, run: &str| -> Vec<(PathBuf, String)> {
+        vec![
+            (
+                "/sys/kernel/debug/fault_around_bytes".into(),
+                "4096\n".into(),
+            ),
+            ("/sys/kernel/mm/ksm/run".into(), run.into()),
+            ("/sys/kernel/mm/ksm/pages_sharing".into(), "5000\n".into()),
+            ("/etc/passwd".into(), passwd.into()),
+            ("/var/run/wol-memsaver.json".into(), status.into()),
+        ]
+    };
+    let saver = |env: &mut FakeEnv| {
+        run("doctor memory --json", env);
+        let v = json(env);
+        let c = v["checks"].as_array().unwrap();
+        assert_eq!(c.len(), 1, "{v}");
+        assert_eq!(c[0]["id"], "memory.saver");
+        (
+            c[0]["status"].as_str().unwrap().to_owned(),
+            c[0]["detail"].as_str().unwrap().to_owned(),
+        )
+    };
+    let mut env = FakeEnv {
+        files: files(ONE, "1\n"),
+        ..Default::default()
+    };
+    let (st, d) = saver(&mut env);
+    assert_eq!(st, "ok", "{d}");
+    assert!(d.contains("file pages they touch (4 KB at a time)"), "{d}");
+    assert!(
+        d.contains("shared (20 MB now), because this computer has one account"),
+        "{d}"
+    );
+    assert!(
+        d.contains("Discord is in the background and gave its memory back 4 times."),
+        "{d}"
+    );
+    assert!(
+        !d.contains("Code"),
+        "only apps with a budget are named: {d}"
+    );
+
+    // A second account since the boot: sharing is still on, a restart turns it off.
+    let mut env = FakeEnv {
+        files: files(TWO, "1\n"),
+        ..Default::default()
+    };
+    let (st, d) = saver(&mut env);
+    assert_eq!(st, "warn", "{d}");
+    assert!(
+        d.contains("still shared though this computer now has 2 accounts. Restart"),
+        "{d}"
+    );
+    // Two accounts, off as the rule says: fine, and the reason is said.
+    let mut env = FakeEnv {
+        files: files(TWO, "0\n"),
+        ..Default::default()
+    };
+    let (st, d) = saver(&mut env);
+    assert_eq!(st, "ok", "{d}");
+    assert!(
+        d.contains("has 2 accounts, and sharing would let one person learn"),
+        "{d}"
+    );
+
+    // As a person: debugfs is unreadable, the boot step's result is read instead.
+    let mut f = files(ONE, "1\n");
+    f.remove(0);
+    let show = "systemctl show wolos-mm.service -p LoadState -p ActiveState -p Result";
+    let mut env = FakeEnv {
+        files: f.clone(),
+        captures: vec![(
+            show.into(),
+            "LoadState=loaded\nActiveState=failed\nResult=exit-code\n".into(),
+        )],
+        ..Default::default()
+    };
+    let (st, d) = saver(&mut env);
+    assert_eq!(st, "warn", "{d}");
+    assert!(
+        d.contains("weren’t applied when the computer started"),
+        "{d}"
+    );
+    let mut env = FakeEnv {
+        files: f,
+        captures: vec![(
+            show.into(),
+            "LoadState=loaded\nActiveState=active\nResult=success\n".into(),
+        )],
+        ..Default::default()
+    };
+    assert_eq!(saver(&mut env).0, "ok");
+
+    // Memory Saver switched off: said, not a problem.
+    let mut f = files(ONE, "1\n");
+    f.push((
+        env.home.join("wolos/memory-saver.json"),
+        r#"{"enabled":false,"nap":false,"exclude":[]}"#.into(),
+    ));
+    let mut env = FakeEnv {
+        files: f,
+        ..Default::default()
+    };
+    let (st, d) = saver(&mut env);
+    assert_eq!(st, "ok", "{d}");
+    assert!(
+        d.contains("Memory Saver is off, so apps keep their memory."),
+        "{d}"
+    );
 }

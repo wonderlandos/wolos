@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol doctor [area]` and `wol doctor fix <id>` (docs/modules/doctor.md): every area of the
-//! computer (sound, games, updates, security, storage, network, power, display, hardware) as one list of
+//! computer (sound, games, updates, security, storage, network, power, display, hardware, memory) as one list of
 //! [`Check`]s in plain words, each with the fix it can run. The facts and rules stay where they
 //! live (`audio_doctor`, `wol_core::games::doctor`, `wol_core::security`, `wol_core::storage`,
 //! `wol_core::netinfo`, `wol_core::power`, `wol_core::hardware`); this module only words them for
@@ -21,14 +21,14 @@ pub mod tls;
 
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware", "memory",
 ];
 /// Areas run only when asked for by name (`wol doctor tls` connects to servers outside the
 /// computer, so neither plain `wol doctor` nor the Doctor app runs it).
 pub const ON_ASK: &[&str] = &[tls::AREA];
 /// What `wol doctor <area>` accepts: [`AREAS`], then [`ON_ASK`].
 pub const CHOICES: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware", "memory",
     "tls",
 ];
 
@@ -1156,6 +1156,188 @@ fn device_steps(bad: &[&&shared::hardware::Device]) -> (Vec<AdminRequest>, Later
     (pkgs, Later::More(more))
 }
 
+// ---------------------------------------------------------------- memory
+
+/// What the memory tuning for apps' engines is doing (ADR 0061, docs/modules/runtime-tuning.md):
+/// file fault-around, sharing of identical memory (KSM) with the account rule, and Memory Saver's
+/// page-out of apps with a budget. One row, `memory.saver`; the worst of the three is its status.
+fn memory(env: &mut dyn Env) -> Vec<Check> {
+    use wol_core::jsruntime::{self, KsmPolicy};
+    let mut status = Status::Ok;
+    let mut worse = |s: Status| {
+        if matches!((status, s), (Status::Ok, Status::Warn | Status::Fail))
+            || matches!((status, s), (Status::Warn, Status::Fail))
+        {
+            status = s;
+        }
+    };
+    let mut parts: Vec<String> = Vec::new();
+
+    // Fault-around: debugfs is root's; a person reads whether the boot step that writes it ran.
+    let want = jsruntime::FAULT_AROUND_BYTES.to_string();
+    let fault = env
+        .read_file(Path::new(jsruntime::MM_WRITES[0].path))
+        .map(|v| v.trim().to_owned());
+    match fault {
+        Some(v) if v == want => {
+            parts.push("Apps map only the file pages they touch (4 KB at a time).".into())
+        }
+        Some(v) => {
+            worse(Status::Warn);
+            parts.push(format!(
+                "Apps map file pages {v} bytes at a time instead of {want}, so each is charged more memory than it uses."
+            ));
+        }
+        None => match env
+            .capture(&[
+                "systemctl",
+                "show",
+                "wolos-mm.service",
+                "-p",
+                "LoadState",
+                "-p",
+                "ActiveState",
+                "-p",
+                "Result",
+            ])
+            .as_deref()
+            .map(unit_ran)
+        {
+            Some(Some(true)) => parts.push(
+                "Apps map only the file pages they touch, as set when the computer started.".into(),
+            ),
+            Some(Some(false)) => {
+                worse(Status::Warn);
+                parts.push(
+                    "The memory settings for apps weren’t applied when the computer started. Restart to apply them."
+                        .into(),
+                );
+            }
+            _ => {
+                parts.push("The memory settings for apps aren’t installed on this computer.".into())
+            }
+        },
+    }
+
+    // KSM: what runs, and why, by the same rule wolos-mm applies at boot.
+    let policy =
+        jsruntime::ksm_policy(&env.read_file(Path::new("/etc/passwd")).unwrap_or_default());
+    match env.read_file(Path::new(jsruntime::KSM_RUN)).map(|v| v.trim().to_owned()) {
+        None => parts.push("This kernel can’t share identical memory between apps.".into()),
+        Some(run) if run == policy.run_value() => parts.push(match policy {
+            KsmPolicy::On => {
+                let pages = env
+                    .read_file(Path::new("/sys/kernel/mm/ksm/pages_sharing"))
+                    .and_then(|v| v.trim().parse::<u64>().ok())
+                    .unwrap_or(0);
+                format!(
+                    "Identical memory of apps is shared ({} now), because this computer has one account.",
+                    wol_core::memsaver::size(pages * 4096)
+                )
+            }
+            KsmPolicy::Off { accounts: 0 } => {
+                "Identical memory isn’t shared: no account was found on this computer.".into()
+            }
+            KsmPolicy::Off { accounts } => format!(
+                "Identical memory isn’t shared: this computer has {accounts} accounts, and sharing would let one person learn what another’s apps hold."
+            ),
+        }),
+        Some(_) => {
+            worse(Status::Warn);
+            parts.push(match policy {
+                KsmPolicy::On => "Identical memory isn’t shared yet. Restart to turn sharing on.".into(),
+                KsmPolicy::Off { accounts } => format!(
+                    "Identical memory is still shared though this computer now has {accounts} accounts. Restart to turn sharing off."
+                ),
+            });
+        }
+    }
+
+    // Page-out: Memory Saver's own state, from the session's switch and wold's status file.
+    let prefs = env
+        .read_file(&wol_core::memsaver::path(&env.config_home()))
+        .and_then(|t| serde_json::from_str::<wol_core::memsaver::Prefs>(&t).ok())
+        .unwrap_or_default();
+    let st = env
+        .read_file(Path::new(shared::memsaver::STATUS))
+        .and_then(|t| serde_json::from_str::<shared::memsaver::Status>(&t).ok());
+    parts.push(pageout_line(prefs.enabled, st.as_ref()));
+    if prefs.enabled && st.is_none() {
+        worse(Status::Warn);
+    }
+    vec![check(
+        "memory",
+        "saver",
+        "Memory Saver",
+        status,
+        &parts.join(" "),
+    )]
+}
+
+/// `ActiveState=` and `Result=` of a oneshot: Some(true) it ran and succeeded, Some(false) it
+/// failed or never ran, None when systemd does not know the unit.
+fn unit_ran(show: &str) -> Option<bool> {
+    let get = |k: &str| {
+        show.lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+            .map(str::trim)
+    };
+    if get("LoadState")? == "not-found" {
+        return None;
+    }
+    Some(get("ActiveState")? == "active" && get("Result")? == "success")
+}
+
+/// The page-out part of `memory.saver`, in plain words: off, not running, or what each app with a
+/// memory budget is going through.
+fn pageout_line(enabled: bool, st: Option<&shared::memsaver::Status>) -> String {
+    use shared::memsaver::AppState;
+    if !enabled {
+        return "Memory Saver is off, so apps keep their memory.".into();
+    }
+    let Some(st) = st else {
+        return "Memory Saver is on but isn’t running yet.".into();
+    };
+    let budgeted: Vec<String> = st
+        .apps
+        .iter()
+        .filter(|a| wol_core::memsaver::budget::of(&a.app).is_some())
+        .map(|a| {
+            let name = title_of(&a.app);
+            match a.state {
+                AppState::Saving => {
+                    // The saver's own give-back, then one per page-out.
+                    let n = a.pageouts.saturating_add(1);
+                    let times = if n == 1 { "time" } else { "times" };
+                    format!("{name} is in the background and gave its memory back {n} {times}.")
+                }
+                AppState::Playing => {
+                    format!("{name} is in a call or playing sound, so it keeps its memory.")
+                }
+                AppState::Napping => format!("{name} is paused."),
+                AppState::Excluded => format!("{name} always keeps its memory."),
+                AppState::Waiting => format!("{name} went to the background a moment ago."),
+                AppState::Active | AppState::Game => {
+                    format!("{name} is in use and keeps to its limit.")
+                }
+            }
+        })
+        .collect();
+    if budgeted.is_empty() {
+        "Memory Saver is on. No app with a memory limit is open.".into()
+    } else {
+        format!("Memory Saver is on. {}", budgeted.join(" "))
+    }
+}
+
+/// "discord" -> "Discord".
+fn title_of(id: &str) -> String {
+    let mut c = id.chars();
+    c.next()
+        .map(|f| f.to_uppercase().chain(c).collect())
+        .unwrap_or_default()
+}
+
 // ---------------------------------------------------------------- run
 
 /// The checks of one area; unknown areas give none. An area whose checks crash, or find nothing to
@@ -1175,6 +1357,7 @@ pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
         "power" => power(env),
         tls::AREA => tls::checks(env),
         "hardware" => hw::checks(env),
+        "memory" => memory(env),
         _ => display(env),
     })
 }
@@ -1190,6 +1373,7 @@ fn area_name(area: &str) -> &'static str {
         "network" => "Network",
         "power" => "Power",
         "hardware" => "Hardware",
+        "memory" => "Memory",
         tls::AREA => "Secure connections",
         _ => "Displays",
     }

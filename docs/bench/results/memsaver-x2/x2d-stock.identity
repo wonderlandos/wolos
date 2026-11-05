@@ -1,0 +1,8 @@
+-rwxr-xr-x 1 root root  2741288 Nov  4 01:58 /usr/bin/wol-search
+-rwxr-xr-x 1 root root 12082416 Nov  4 01:58 /usr/bin/wol-shell
+-rwxr-xr-x 1 root root  2131296 Nov  4 01:58 /usr/bin/wold
+65536
+0
+12997 /usr/bin/wold /etc/wolos/jobs
+13179 wol-realtime
+wolos-system 0.12.1-1
