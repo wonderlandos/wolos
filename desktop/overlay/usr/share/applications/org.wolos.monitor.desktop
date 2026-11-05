@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=System Monitor
+Comment=See what your computer is doing: apps, processes, memory, disks and network
+Icon=wolos-system-monitor
+Exec=wol-monitor
+Categories=System;Monitor;
+Keywords=task manager;activity;process;cpu;memory;ram;disk;network;temperature;
+StartupNotify=true
+StartupWMClass=org.wolos.monitor

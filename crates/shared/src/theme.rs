@@ -58,6 +58,11 @@ pub mod scaffold {
     pub const LIST_ROW: i32 = 40;
     /// Buttons, entries, menu items.
     pub const CONTROL_HEIGHT: i32 = 24;
+    /// Every height a control (button, field, menu, switch) may have, the one list the layout lint
+    /// (RU-702, `crates/shell/tests/support/layout_lint.rs`) holds every golden to: the control
+    /// (24), the menu item and sidebar pitch (28), the large control of setup and the installer
+    /// (36) and a whole row or bar (40).
+    pub const CONTROL_HEIGHTS: [i32; 4] = [CONTROL_HEIGHT, 28, 36, LIST_ROW];
     pub const RADIUS_CONTROL: i32 = 8;
     pub const RADIUS_CARD: i32 = 12;
     /// Window corners (compositor `decoration:rounding`).

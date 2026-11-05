@@ -76,7 +76,7 @@ pub mod table {
             }
         }
         let tck = tck.max(1);
-        let us = |t: i64| t * 1_000_000 / tck;
+        let us = |t: i64| t.max(0).saturating_mul(1_000_000) / tck;
         Some(Rec::new(
             Row {
                 pid: pid as i32,
@@ -85,7 +85,7 @@ pub mod table {
                 stat: state,
                 rss_pages: f[21],
                 vsize: f[20],
-                runtime_us: us(f[11] + f[12]),
+                runtime_us: us(f[11].saturating_add(f[12])),
                 start_us: us(f[19]),
                 nice: f[16] as i8,
                 threads: f[17] as i32,
@@ -277,7 +277,7 @@ impl<S: ProcSource> ProcessSampler<S> {
             self.ppid[i] = r.ppid;
             self.uid[i] = r.uid;
             self.threads[i] = r.threads;
-            self.rss_bytes[i] = r.rss_pages * page;
+            self.rss_bytes[i] = r.rss_pages.max(0).saturating_mul(page);
             self.vsize[i] = r.vsize;
             self.runtime_us[i] = r.runtime_us;
             self.start_us[i] = r.start_us;
@@ -287,7 +287,7 @@ impl<S: ProcSource> ProcessSampler<S> {
             let prev = self.prev.remove(&r.pid).filter(|p| p.start == r.start_us);
             self.cpu_percent[i] = match &prev {
                 Some(p) if wall > 0 => {
-                    (100.0 * (r.runtime_us - p.runtime) as f32 / wall as f32).max(0.0)
+                    (100.0 * r.runtime_us.saturating_sub(p.runtime) as f32 / wall as f32).max(0.0)
                 }
                 _ => 0.0,
             };
@@ -357,18 +357,37 @@ pub struct LinuxProcSource {
     text: Vec<u8>,
 }
 
+/// (clock ticks per second, page size in bytes) of this machine; 100 and 4096 when unknown.
+fn ticks_and_page() -> (i64, i64) {
+    // SAFETY: sysconf has no preconditions.
+    let (tck, page) = unsafe {
+        (
+            libc::sysconf(libc::_SC_CLK_TCK),
+            libc::sysconf(libc::_SC_PAGESIZE),
+        )
+    };
+    (
+        if tck > 0 { tck } else { 100 },
+        if page > 0 { page } else { 4096 },
+    )
+}
+
+/// Clock ticks per second (`/proc/[pid]/stat` times).
+pub fn clock_ticks() -> i64 {
+    ticks_and_page().0
+}
+
+/// Bytes per page (`/proc/[pid]/stat` rss).
+pub fn page_size() -> i64 {
+    ticks_and_page().1
+}
+
 impl Default for LinuxProcSource {
     fn default() -> Self {
-        // SAFETY: sysconf has no preconditions.
-        let (tck, page) = unsafe {
-            (
-                libc::sysconf(libc::_SC_CLK_TCK),
-                libc::sysconf(libc::_SC_PAGESIZE),
-            )
-        };
+        let (tck, page) = ticks_and_page();
         Self {
-            tck: if tck > 0 { tck } else { 100 },
-            page: if page > 0 { page } else { 4096 },
+            tck,
+            page,
             passwd: None,
             start: std::time::Instant::now(),
             path: String::with_capacity(32),
