@@ -331,13 +331,15 @@ pub fn enforcement(capability: &str) -> Option<Enforcement> {
 }
 
 /// Programs that may copy the screen (and see the pointer in it) directly: the portal (it asks
-/// which screen to share), the shell and its screenshot, recording and Overview tools.
+/// which screen to share), the shell and its screenshot, recording and Overview tools, and the colour
+/// picker (Ctrl+Super+P reads one pixel under the pointer; it needs the pointer position too).
 pub const SCREENCOPY_SYSTEM: &[&str] = &[
     "/usr/lib/xdg-desktop-portal-hyprland",
     "/usr/bin/grim",
     "/usr/bin/wf-recorder",
     "/usr/bin/wol-window-shot",
     "/usr/bin/wol-shell",
+    "/usr/bin/hyprpicker",
 ];
 
 /// Compositor plugins load only from the root-owned plugin folder (hyprbars, wol-hypr).
@@ -569,6 +571,7 @@ mod tests {
                 "^/usr/bin/wf-recorder$",
                 "^/usr/bin/wol-window-shot$",
                 "^/usr/bin/wol-shell$",
+                "^/usr/bin/hyprpicker$",
             ]
         );
         let tail = &rules[rules.len() - 5..];

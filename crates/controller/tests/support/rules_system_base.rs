@@ -461,6 +461,7 @@ pub(crate) const EXTERNAL: &[&str] = &[
     "rm",
     "touch",
     "flatpak",
+    "hyprpicker",
 ];
 
 /// `/usr/bin/x`, `/usr/lib/wolos/x` or a bare name resolves to something shipped or packaged.

@@ -12,14 +12,14 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Browser | helium-browser (`wol_core::theme::helium::HELIUM.bin`) | `helium` |
 | Mail | geary | `org.gnome.Geary` |
 | Music | amberol | `io.bassi.Amberol` |
-| Photos | shotwell | `org.gnome.Shotwell` |
+| Photos | wolos-app-gallery (Gallery; Shotwell is in the Store) | `org.wolos.gallery` |
 | Calendar | gnome-calendar | `org.gnome.Calendar` |
 | Notes | gnote | `org.gnome.Gnote` |
 | Terminal | foot | `foot` |
 | App Store, System Settings | wolos-shell | `org.wolos.store`, `org.wolos.settings` |
 
 Apps also lists Calculator, Clocks, Papers, Celluloid (+ mpv), File Roller, Disk Usage, Text Editor, Image Viewer (eog) from their `.desktop` files; a pinned app appears once, under its WolOS name.
-Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins); the web opens in Helium (`helium.desktop`).
+Default apps: `/usr/share/applications/mimeapps.list` (`~/.config/mimeapps.list` wins); the web opens in Helium (`helium.desktop`). Pictures: PNG and JPEG open in Gallery; GIF, WebP and SVG in the image viewer (`eog`, on the image), then the browser. The image has no size limit, so no app is dropped for room (ISO-GATE).
 
 ## System
 

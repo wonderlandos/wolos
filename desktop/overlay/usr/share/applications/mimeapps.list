@@ -9,11 +9,13 @@ x-scheme-handler/mailto=org.gnome.Geary.desktop;
 inode/directory=org.gnome.Nautilus.desktop;
 application/pdf=org.gnome.Papers.desktop;
 text/plain=org.gnome.TextEditor.desktop;
-image/png=org.gnome.eog.desktop;
-image/jpeg=org.gnome.eog.desktop;
-image/gif=org.gnome.eog.desktop;
-image/webp=org.gnome.eog.desktop;
-image/svg+xml=org.gnome.eog.desktop;
+# Gallery opens PNG and JPEG (its entry's MimeType); the image viewer (eog) opens the types Gallery cannot
+# (GIF, WebP, SVG) until Gallery decodes them, and the browser is the second choice for those.
+image/png=org.wolos.gallery.desktop;
+image/jpeg=org.wolos.gallery.desktop;
+image/gif=org.gnome.eog.desktop;atlas.desktop;
+image/webp=org.gnome.eog.desktop;atlas.desktop;
+image/svg+xml=org.gnome.eog.desktop;atlas.desktop;
 audio/mpeg=io.bassi.Amberol.desktop;
 audio/flac=io.bassi.Amberol.desktop;
 audio/ogg=io.bassi.Amberol.desktop;
