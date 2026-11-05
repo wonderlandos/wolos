@@ -20,6 +20,10 @@ pub struct Caller {
     pub pid: i32,
     /// Canonical executable path.
     pub app: String,
+    /// The web app scope of a web app host (`wol-webhost`), read through the pinned `/proc/<pid>`
+    /// at accept ([`crate::peer::PeerIdentity::caller`]); None for every other program. wold never
+    /// looks a pid up again by number (QA-A9-SEC-6).
+    pub scope: Option<String>,
 }
 
 /// Where `uid`'s Timeouts setting is: its home from `/etc/passwd`, `.config/wol/timeouts`
@@ -106,20 +110,13 @@ pub const ASKS_PER_UID: usize = 8;
 /// Approval sheets (package and system changes) of one account waiting at once (R2C-9).
 pub const APPROVALS_PER_UID: usize = 2;
 /// Who a call counts as for [`ASKS_PER_APP`]: the executable, except for web app hosts, which all
-/// run `/usr/bin/wol-webhost` and are told apart by their app scope (`cgroup` reads a process's
-/// cgroup text): one parked web app must not use up the others' places.
-fn app_key(caller: &Caller, cgroup: &dyn Fn(i32) -> Option<String>) -> String {
-    if caller.app == crate::webapp::HOST
-        && let Some(id) =
-            cgroup(caller.pid).and_then(|text| wol_core::sysapp::app_of_cgroup(&text, caller.pid))
-    {
-        return format!("webapp:{id}");
+/// run `/usr/bin/wol-webhost` and are told apart by their app scope (`Caller::scope`, read through
+/// the pinned process): one parked web app must not use up the others' places.
+fn app_key(caller: &Caller) -> String {
+    match &caller.scope {
+        Some(id) if caller.app == crate::webapp::HOST => format!("webapp:{id}"),
+        _ => caller.app.clone(),
     }
-    caller.app.clone()
-}
-
-fn cgroup_of(pid: i32) -> Option<String> {
-    std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()
 }
 
 /// Calls of one app (one executable of one account) waiting at once (QA-100 API-6): a file panel
@@ -192,7 +189,7 @@ impl Asks {
         ask: Ask,
         timeout: Duration,
     ) -> Answer {
-        let key = app_key(caller, &cgroup_of);
+        let key = app_key(caller);
         self.ask_inner(bus, caller.uid, Some(&key), ask, timeout).0
     }
 
@@ -204,7 +201,7 @@ impl Asks {
         ask: Ask,
         timeout: Duration,
     ) -> (Answer, Option<OwnedFd>) {
-        let key = app_key(caller, &cgroup_of);
+        let key = app_key(caller);
         self.ask_inner(bus, caller.uid, Some(&key), ask, timeout)
     }
 
@@ -990,6 +987,7 @@ mod tests {
             uid: 1000,
             pid: 4242,
             app: app.into(),
+            scope: None,
         }
     }
 
@@ -1571,6 +1569,7 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
             uid: 1000,
             pid: 10,
             app: "/usr/bin/greedy".into(),
+            scope: None,
         };
         let wait = Duration::from_secs(5);
         let parked: Vec<_> = (0..ASKS_PER_APP)
@@ -1602,6 +1601,7 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
             uid: 1000,
             pid: 12,
             app: "/usr/bin/notes".into(),
+            scope: None,
         };
         let short = Duration::from_millis(50);
         let a = s.1.asks.ask_from(&s.0, &other, Ask::ClipboardRead, short);
@@ -1619,30 +1619,28 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
     /// QA-100 API-6: web app hosts share one executable; the cap counts each app on its own.
     #[test]
     fn per_app_cap_tells_web_apps_apart() {
-        let host = |pid| Caller {
+        let host = |scope: Option<&str>| Caller {
             uid: 1000,
-            pid,
+            pid: 50,
             app: crate::webapp::HOST.into(),
+            scope: scope.map(str::to_owned),
         };
-        let scope = |pid: i32| {
-            let id = if pid < 100 { "doctor" } else { "notes" };
-            Some(format!(
-                "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-wol-org.wolos.webapp.{id}-{pid}-1.scope\n"
-            ))
-        };
-        let (doctor, doctor2, notes) = (host(50), host(51), host(200));
-        assert_eq!(app_key(&doctor, &scope), "webapp:org.wolos.webapp.doctor");
-        assert_ne!(app_key(&doctor, &scope), app_key(&notes, &scope));
-        // Two processes of one app are one app only while they share a scope name (pid is part of it).
-        assert!(app_key(&doctor2, &scope).starts_with("webapp:"));
-        // No scope readable: the executable, as before.
-        assert_eq!(app_key(&doctor, &|_| None), crate::webapp::HOST);
+        let (doctor, notes) = (
+            host(Some("org.wolos.webapp.doctor")),
+            host(Some("org.wolos.webapp.notes")),
+        );
+        assert_eq!(app_key(&doctor), "webapp:org.wolos.webapp.doctor");
+        assert_ne!(app_key(&doctor), app_key(&notes));
+        // No scope known: the executable, as before.
+        assert_eq!(app_key(&host(None)), crate::webapp::HOST);
+        // A scope on any other program does not rename it.
         let other = Caller {
             uid: 1000,
             pid: 9,
             app: "/usr/bin/notes".into(),
+            scope: Some("org.wolos.webapp.doctor".into()),
         };
-        assert_eq!(app_key(&other, &scope), "/usr/bin/notes");
+        assert_eq!(app_key(&other), "/usr/bin/notes");
     }
 
     #[test]
@@ -1887,11 +1885,13 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
                 uid: 1,
                 pid: 1,
                 app: "/a".into(),
+                scope: None,
             },
             Caller {
                 uid: 1,
                 pid: 2,
                 app: "/a".into(),
+                scope: None,
             },
         );
         let first = n.add(&a);
@@ -1918,6 +1918,7 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
             uid,
             pid: 1,
             app: "/home/a/Work/hello/hello".into(),
+            scope: None,
         };
         let bus = Bus::<UnixStream>::default();
         for _ in 0..3 {

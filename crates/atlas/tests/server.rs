@@ -112,6 +112,108 @@ fn another_program_is_not_the_browser() {
     assert_eq!(b.read(), None);
 }
 
+const NOT_BROWSER: &str =
+    r#"{"reply":"error","id":0,"code":"not-browser","text":"Only Atlas can use this service."}"#;
+
+fn hello_line() -> String {
+    format!(
+        r#"{{"op":"hello","version":2,"pid":{}}}"#,
+        std::process::id()
+    )
+}
+
+/// QA-A9-SEC-1 (a): the hello was written before the bridge accepted, by a process that then became
+/// (or is) the browser. The bridge speaks first now, so bytes that precede its greeting are not an
+/// echo of it.
+#[test]
+fn a_hello_written_before_the_greeting_is_refused() {
+    let (sock, _wold, f) = setup("prewritten");
+    let mut b = Browser::connect_raw(&sock);
+    b.send(&hello_line());
+    b.send(&verb("trash", 1, &f));
+    // The bridge's greeting may come first; nothing may be answered as a hello or a verb. (It can
+    // reset the connection: it closes with the pre-written bytes unread.)
+    let said = b.read_all();
+    assert!(
+        said.iter()
+            .all(|l| l.starts_with("hello ") || l == NOT_BROWSER),
+        "{said:?}"
+    );
+    assert!(f.exists(), "nothing was trashed");
+}
+
+/// QA-A9-SEC-1 (b): the browser connects and hands the socket to a child of the same account (a
+/// process holding the descriptor). The child sends a hello that names the browser's pid, then the
+/// Trash, either at once or after echoing the greeting itself. The echo carries the child's pid,
+/// not the pid the kernel recorded at connect; the hello's own `pid` field is only a claim.
+fn a_child_holds_the_socket(name: &str, echo: bool) -> Vec<String> {
+    use std::os::fd::OwnedFd;
+    use std::process::{Command, Stdio};
+    let (sock, wold, f) = setup(name);
+    wold.answer("file.trash", r#"{"ok":true,"data":{"name":"report.pdf"}}"#);
+    let b = Browser::connect_raw(&sock);
+    let input = OwnedFd::from(b.w.try_clone().unwrap());
+    let output = OwnedFd::from(b.w.try_clone().unwrap());
+    let greeting = if echo {
+        "read l; printf '%s\\n' \"$l\"; "
+    } else {
+        ""
+    };
+    let script = format!(
+        "{greeting}printf '%s\\n' '{}' '{}'; sleep 1",
+        hello_line(),
+        verb("trash", 1, &f)
+    );
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", &script])
+        .stdin(Stdio::from(input))
+        .stdout(Stdio::from(output))
+        .spawn()
+        .unwrap();
+    // The child holds the descriptor, and so it reads the greeting; the parent only listens.
+    child.wait().unwrap();
+    let mut b = b;
+    let said = b.read_all();
+    assert!(
+        said.iter()
+            .all(|l| l == NOT_BROWSER || l.starts_with("hello ")),
+        "{said:?}"
+    );
+    assert!(said.iter().any(|l| l == NOT_BROWSER), "{said:?}");
+    assert!(
+        wold.asked.lock().unwrap().is_empty(),
+        "wold was asked for the Trash in the browser's name"
+    );
+    said
+}
+
+#[test]
+fn a_hello_from_another_process_than_the_connector_is_refused() {
+    let said = a_child_holds_the_socket("child-holds-fd", false);
+    assert!(said.iter().any(|l| l == NOT_BROWSER), "{said:?}");
+}
+
+#[test]
+fn a_greeting_echoed_by_another_process_than_the_connector_is_refused() {
+    let said = a_child_holds_the_socket("child-echoes", true);
+    assert!(said.iter().any(|l| l == NOT_BROWSER), "{said:?}");
+}
+
+/// The greeting is part of the same deadline as the hello: a peer that never answers it is closed
+/// at the hello wait.
+#[test]
+fn a_peer_that_never_answers_the_greeting_is_closed() {
+    let (sock, _wold, _f) = setup("no-echo");
+    let mut b = Browser::connect_raw(&sock);
+    let t = Instant::now();
+    let first = b.read().unwrap();
+    assert!(first.starts_with("hello "), "{first}");
+    assert_eq!(b.read().as_deref(), Some(NOT_BROWSER));
+    assert_eq!(b.read(), None);
+    assert!(t.elapsed() >= Duration::from_secs(4), "{:?}", t.elapsed());
+    assert!(t.elapsed() < Duration::from_secs(8), "{:?}", t.elapsed());
+}
+
 #[test]
 fn a_connection_that_never_says_hello_is_closed() {
     let (sock, _wold, _f) = setup("silent");
@@ -162,7 +264,8 @@ fn the_seventeenth_connection_is_refused() {
             b
         })
         .collect();
-    let mut extra = Browser::connect(&sock);
+    // Refused before the greeting: nothing to answer.
+    let mut extra = Browser::connect_raw(&sock);
     assert_eq!(
         extra.read().as_deref(),
         Some(

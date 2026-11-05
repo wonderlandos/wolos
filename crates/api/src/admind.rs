@@ -324,9 +324,25 @@ pub fn serve(listener: &std::os::unix::net::UnixListener, os: &'static (dyn Admi
 /// An `accept` error (descriptors used up, say) is logged, once per [`ACCEPT_LOG_EVERY`] seconds,
 /// and waited out for [`ACCEPT_BACKOFF`] (QA-100 SHADOW-20: the loop used to spin on it, silent).
 pub fn serve_with(
+    accept: impl FnMut() -> std::io::Result<std::os::unix::net::UnixStream>,
+    os: &'static (dyn AdminOs + Sync),
+    done: impl FnMut() -> bool,
+) {
+    serve_started(accept, os, done, |what, work| {
+        shared::bounded::spawn_conn(what, &|l| os.log(l), work)
+    });
+}
+
+/// [`serve_with`] with the thread start given (`start(what, work)` says whether the thread
+/// began), so a test can refuse one. A connection whose thread the system refused is told
+/// [`BUSY`] like one over its quota (it used to be closed before the hello, and `wol` said
+/// "administrator service unavailable" while the daemon ran, QA-A9-SEC-7); the start waits
+/// [`shared::bounded::SPAWN_BACKOFF`] and logs, so the loop does not spin on the shortage.
+pub fn serve_started(
     mut accept: impl FnMut() -> std::io::Result<std::os::unix::net::UnixStream>,
     os: &'static (dyn AdminOs + Sync),
     mut done: impl FnMut() -> bool,
+    start: impl Fn(&str, Box<dyn FnOnce() + Send>) -> bool,
 ) {
     let shared = Arc::new(Shared::default());
     let quota = shared::bounded::Quota::new(CONN_PER_UID, CONN_TOTAL);
@@ -366,12 +382,17 @@ pub fn serve_with(
             continue;
         };
         let shared = shared.clone();
-        let _ = std::thread::Builder::new()
-            .name("admind-conn".into())
-            .spawn(move || {
+        let for_busy = conn.try_clone().ok();
+        let began = start(
+            "admind-conn",
+            Box::new(move || {
                 serve_one(conn, &shared, os);
                 drop(slot);
-            });
+            }),
+        );
+        if !began && let Some(c) = for_busy {
+            refuse_busy(c);
+        }
     }
 }
 
@@ -1135,7 +1156,7 @@ impl AdminOs for RealOs {
             return Err("package path is not a plain absolute path".into());
         }
         // O_NOCTTY too (S4-2): a terminal the caller names never becomes wol-admind's.
-        let mut f = shared::sys::open_named(src).map_err(|e| e.to_string())?;
+        let mut f = shared::sys::open_regular(src).map_err(|e| e.to_string())?;
         let m = f.metadata().map_err(|e| e.to_string())?;
         if !m.is_file() || m.len() > shared::package::MAX_SIZE {
             return Err("not a package file".into());

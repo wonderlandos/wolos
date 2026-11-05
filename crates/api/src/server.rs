@@ -151,6 +151,8 @@ pub fn serve(
             let who = caller();
             let app = peer.as_ref().and_then(PeerIdentity::web_app);
             let args = peer.as_ref().and_then(PeerIdentity::args);
+            let runtime_dir =
+                webapp::runtime_dir_of(peer.as_ref().and_then(|p| p.env_var("XDG_RUNTIME_DIR")));
             let answer = webapp::handle(
                 rest,
                 who.as_ref(),
@@ -161,6 +163,7 @@ pub fn serve(
                 &webapp::Conn {
                     args: args.as_deref(),
                     gone: &|| peer.as_ref().is_some_and(|p| !p.still_same()),
+                    runtime_dir: runtime_dir.as_deref(),
                 },
             );
             let mut w = &stream;

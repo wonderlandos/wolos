@@ -138,7 +138,7 @@ impl System for Host<'_> {
 
     fn room(&self, path: &str) -> Result<(), String> {
         // The size of the file as it is now; the copy itself stops at MAX_STAGED either way.
-        let size = shared::sys::open_named(path)
+        let size = shared::sys::open_regular(path)
             .and_then(|f| f.metadata())
             .map_or(MAX_STAGED, |m| m.len().min(MAX_STAGED));
         match crate::os::space_at(std::path::Path::new(STAGING)) {
@@ -152,7 +152,7 @@ impl System for Host<'_> {
         // O_NOFOLLOW + fstat on the opened file: what is checked is what is copied. O_NOCTTY
         // (S4-2): a pty the caller names never becomes wold's terminal, whose hang-up would end
         // wold and every session under it.
-        let mut f = shared::sys::open_named(path).ok()?;
+        let mut f = shared::sys::open_regular(path).ok()?;
         let md = f.metadata().ok()?;
         let dirs = crate::admind::dirs_above(&f).ok()?;
         if !md.is_file() || !may_stage(md.uid(), &dirs, uid) {

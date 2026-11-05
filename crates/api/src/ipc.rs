@@ -201,6 +201,7 @@ mod tests {
             uid,
             pid,
             app: exe.into(),
+            scope: None,
         }
     }
 

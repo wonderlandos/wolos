@@ -4,7 +4,8 @@
 //! units we ship without `Restart=` or with the default start limit (a unit that gives up after
 //! five quick failures leaves the screen black for good); RH-222 counts waits written as a
 //! literal at the call (`Duration::from_secs(5)`) instead of a named constant both ends share;
-//! RH-223 counts spawns whose failure is a panic (`.spawn(..).expect(`). The kill journeys
+//! RH-223 counts spawns whose failure is a panic (`.spawn(..).expect(`); RH-224 counts thread
+//! spawns whose failure is dropped (`let _ = thread::Builder..spawn(..)`). The kill journeys
 //! `qa100-live-kill-shell` and `qa100-live-kill-wold` are the live half (brief B2).
 #[path = "support/rc.rs"]
 mod rc;
@@ -24,6 +25,15 @@ const BASELINE: &[Row] = &[
         1,
         "B2",
     ),
+    // Best-effort reapers of a child already started (a thread the system refuses leaves the child
+    // to be reaped at exit), not connection loops: wol-login's power-wait, wol-tor's tab reaper;
+    // the shell's are frozen with its other debt.
+    ("RH-224", "controller", 1, "B2"),
+    ("RH-224", "shell", 19, "B2"),
+    ("RH-224", "wol-tor", 1, "B2"),
+    // wol-xguard's accept loop (crates/xguard/src/guard.rs): it closes the client and goes on, with
+    // no pause or line; the next fixer takes it with the helper (xguard has no logger yet).
+    ("RH-224", "xguard", 1, "B2"),
     ("RH-222", "api", 13, "B2"),
     ("RH-222", "audio", 7, "C9"),
     ("RH-222", "controller", 14, "A1"),
@@ -38,7 +48,7 @@ const BASELINE: &[Row] = &[
     ("RH-222", "xguard", 3, "B1"),
 ];
 
-const IDS: &[&str] = &["RH-221", "RH-222", "RH-223"];
+const IDS: &[&str] = &["RH-221", "RH-222", "RH-223", "RH-224"];
 
 /// Directories whose `*.service` files are our units.
 const UNIT_DIRS: &[&str] = &["files/usr/lib/systemd/system", "files/usr/lib/systemd/user"];
@@ -142,6 +152,27 @@ fn panicking_spawns(s: &Src, h: &mut Hits, key: &str) {
     }
 }
 
+/// Thread spawns whose failure is dropped: a statement `let _ = <..>Builder..spawn(..)` (QA-A9-SEC-7:
+/// the connection was closed with no pause and no line in the journal; the way out is
+/// `shared::bounded::spawn_conn`).
+fn dropped_thread_spawns(s: &Src, h: &mut Hits, key: &str) {
+    for p in rc::find_all(&s.code, ".spawn(") {
+        let from = s.code[..p]
+            .iter()
+            .rposition(|c| matches!(c, b';' | b'{' | b'}'))
+            .map_or(0, |i| i + 1);
+        let stmt = s.code_str(from, p);
+        let stmt = stmt.trim_start();
+        if stmt.starts_with("let _ =") && stmt.contains("Builder") {
+            hit(
+                h,
+                key,
+                format!("{} a thread spawn's error is dropped", s.at(p)),
+            );
+        }
+    }
+}
+
 fn crate_of(rel: &str) -> String {
     rel.split('/').nth(1).unwrap_or("").to_owned()
 }
@@ -162,6 +193,15 @@ fn rh_223_a_failed_spawn_is_an_error_not_a_panic() {
         panicking_spawns(&s, &mut h, &crate_of(&s.rel));
     }
     assert_ratchet("RH-223", "a spawn returns its error", BASELINE, &h);
+}
+
+#[test]
+fn rh_224_a_refused_thread_is_backed_off_from_not_dropped() {
+    let mut h = Hits::new();
+    for s in rc::sources(&["crates"]) {
+        dropped_thread_spawns(&s, &mut h, &crate_of(&s.rel));
+    }
+    assert_ratchet("RH-224", "a spawn's error is handled", BASELINE, &h);
 }
 
 #[test]
@@ -189,6 +229,7 @@ fn rc_22_readers_read_what_they_say() {
         let mut h = Hits::new();
         literal_waits(&s, &mut h, "x");
         panicking_spawns(&s, &mut h, "x");
+        dropped_thread_spawns(&s, &mut h, "x");
         h.values().map(Vec::len).sum::<usize>()
     };
     assert_eq!(n("let t = Duration::from_secs(5);"), 1);
@@ -199,6 +240,15 @@ fn rc_22_readers_read_what_they_say() {
         1
     );
     assert_eq!(n("let c = cmd.spawn()?;"), 0);
+    assert_eq!(
+        n("let _ = std::thread::Builder::new().name(n).spawn(move || f());"),
+        1
+    );
+    assert_eq!(
+        n("let started = std::thread::Builder::new().name(n).spawn(move || f());"),
+        0
+    );
+    assert_eq!(n("let _ = cmd.spawn();"), 0, "a process, not a thread");
 }
 
 #[test]

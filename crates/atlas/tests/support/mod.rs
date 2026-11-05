@@ -139,7 +139,15 @@ pub struct Browser {
 }
 
 impl Browser {
+    /// Connect and answer the bridge's greeting, as the browser does (ADR 0033).
     pub fn connect(sock: &Path) -> Self {
+        let b = Self::connect_raw(sock);
+        shared::jobs::answer_hello(&b.w).unwrap();
+        b
+    }
+
+    /// Connect and leave the greeting unread.
+    pub fn connect_raw(sock: &Path) -> Self {
         let s = UnixStream::connect(sock).unwrap();
         s.set_read_timeout(Some(Duration::from_secs(20))).unwrap();
         Self {
@@ -159,6 +167,18 @@ impl Browser {
             Ok(0) => None,
             Ok(_) => Some(l.strip_suffix('\n').expect("a whole line").to_owned()),
             Err(e) => panic!("no reply: {e}"),
+        }
+    }
+
+    /// Every line until the bridge closes (or resets) the connection.
+    pub fn read_all(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
+        loop {
+            let mut l = String::new();
+            match self.r.read_line(&mut l) {
+                Ok(n) if n > 0 => out.push(l.trim_end().to_owned()),
+                _ => return out,
+            }
         }
     }
 

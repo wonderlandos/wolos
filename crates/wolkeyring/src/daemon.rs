@@ -36,7 +36,7 @@ struct Inner {
 pub struct Daemon {
     name: String,
     inner: Mutex<Inner>,
-    digests: Mutex<HashMap<FileKey, String>>,
+    digests: Mutex<HashMap<FileKey, Option<String>>>,
 }
 
 /// A caller as the kernel showed it at one moment, with the process pinned so the moment can be
@@ -113,7 +113,11 @@ impl Daemon {
         let sha256 = match cached {
             Some(d) => d,
             None => {
-                let d = io::sha256_file(&pinned.at("exe"))?;
+                // Over the cap there is no digest (and none is retried for this file version).
+                let d = match io::sha256_file(&pinned.at("exe"))? {
+                    io::Hashed::Digest(d) => Some(d),
+                    io::Hashed::TooLarge => None,
+                };
                 let mut c = self.digests.lock().unwrap_or_else(|p| p.into_inner());
                 if c.len() > 4096 {
                     c.clear();
@@ -125,7 +129,7 @@ impl Daemon {
         let id = Ident {
             app: AppId {
                 exe: exe.clone(),
-                sha256: Some(sha256),
+                sha256,
                 app: scope.clone(),
                 signer: None,
             },
@@ -299,6 +303,12 @@ impl Daemon {
     /// program that was identified, before the work and again after it (a reply is dropped, not
     /// sent, when the process changed while the work ran).
     pub fn handle_as(&self, who: Option<&Ident>, req: Request) -> Reply {
+        // A caller the kernel could not show (its executable unreadable, its file changed while it
+        // was hashed) gets nothing but the keyring's state: not an unlock, a lock, a search of
+        // every item's label and attributes, nor the audit (QA-A9-SEC-2).
+        if who.is_none() && !matches!(req, Request::Status) {
+            return Reply::err(&Error::Denied);
+        }
         if who.is_some_and(|i| !i.unchanged()) {
             return Reply::err(&Error::Denied);
         }
@@ -387,8 +397,22 @@ pub fn bind(path: &std::path::Path) -> Result<UnixListener> {
     Ok(l)
 }
 
-/// Serves the fast path until the process ends.
-pub fn serve(d: Arc<Daemon>, l: UnixListener) {
+/// Serves the fast path until the process ends. `log` is where a refused thread is reported (the
+/// binary's stderr, the journal).
+pub fn serve(d: Arc<Daemon>, l: UnixListener, log: fn(&str)) {
+    serve_with(d, l, move |what, work| {
+        shared::bounded::spawn_conn(what, &log, work)
+    });
+}
+
+/// [`serve`] with the thread start given (`start(what, work)` returns whether the thread began), so
+/// a test can refuse one. A refused connection is dropped and the loop serves the next one
+/// (QA-A9-SEC-3).
+pub fn serve_with(
+    d: Arc<Daemon>,
+    l: UnixListener,
+    start: impl Fn(&str, Box<dyn FnOnce() + Send>) -> bool,
+) {
     let live = Arc::new(AtomicUsize::new(0));
     for c in l.incoming() {
         let Ok(c) = c else { continue };
@@ -396,11 +420,17 @@ pub fn serve(d: Arc<Daemon>, l: UnixListener) {
             live.fetch_sub(1, Ordering::SeqCst);
             continue;
         }
-        let (d, live) = (d.clone(), live.clone());
-        std::thread::spawn(move || {
-            connection(&d, c);
+        let (d, live2) = (d.clone(), live.clone());
+        let began = start(
+            "wol-keyringd fast path",
+            Box::new(move || {
+                connection(&d, c);
+                live2.fetch_sub(1, Ordering::SeqCst);
+            }),
+        );
+        if !began {
             live.fetch_sub(1, Ordering::SeqCst);
-        });
+        }
     }
 }
 
@@ -476,6 +506,141 @@ impl LineReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Waits until `pid` has executed a program whose name ends with `name` (spawn returns after
+    /// the fork; the pinned executable is the test's own until the exec is done).
+    fn exec_done(pid: u32, name: &str) {
+        for _ in 0..2000 {
+            let exe = std::fs::read_link(format!("/proc/{pid}/exe"));
+            if exe.is_ok_and(|e| e.ends_with(name)) {
+                return;
+            }
+            std::thread::yield_now();
+        }
+        panic!("the child never executed {name}");
+    }
+
+    fn denied(r: &Reply) -> bool {
+        !r.ok && r.error.as_deref() == Some("denied")
+    }
+
+    /// QA-A9-SEC-2: a caller the kernel could not show gets nothing but `Status` (which is not
+    /// asked here: it would open the real keyring). Before, Unlock, Lock, Search and Audit were
+    /// served to it.
+    #[test]
+    fn an_unknown_caller_gets_only_status() {
+        let d = Daemon::new("unknown-caller-test");
+        let reqs = [
+            Request::Unlock {
+                password: "x".into(),
+            },
+            Request::Lock,
+            Request::Search {
+                attrs: BTreeMap::new(),
+            },
+            Request::Get { id: "a".into() },
+            Request::Set {
+                label: "l".into(),
+                attrs: BTreeMap::new(),
+                secret: "AA".into(),
+                class: Class::WhenUnlocked,
+            },
+            Request::Delete { id: "a".into() },
+            Request::Audit { limit: 5 },
+        ];
+        for req in reqs {
+            let r = d.handle_as(None, req.clone());
+            assert!(denied(&r), "{req:?} -> {r:?}");
+        }
+    }
+
+    /// QA-A9-SEC-4: an executable over the cap is identified without a digest, so a grant bound
+    /// to a digest does not match it, and the file is not read.
+    #[test]
+    fn an_executable_over_the_cap_is_identified_without_a_digest() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("wolkeyring-big-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big-sleep");
+        std::fs::copy(std::fs::canonicalize("/usr/bin/sleep").unwrap(), &big).unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&big).unwrap();
+        f.set_len(io::MAX_HASHED + (1 << 20)).unwrap();
+        drop(f);
+        std::fs::set_permissions(&big, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut child = std::process::Command::new(&big).arg("30").spawn().unwrap();
+        exec_done(child.id(), "big-sleep");
+        let pinned = io::Pinned::pid(child.id() as i32, shared::sys::euid()).unwrap();
+        let d = Daemon::new("big-exe-test");
+        let who = d.identify(pinned).expect("identified");
+        assert_eq!(who.app.sha256, None, "no digest over the cap");
+        let bound = AppId {
+            exe: who.app.exe.clone(),
+            sha256: Some("00".repeat(32)),
+            app: None,
+            signer: None,
+        };
+        assert!(
+            !bound.grants(&who.app),
+            "a digest-bound grant never matches"
+        );
+        // A small program still gets its digest.
+        let mut small = std::process::Command::new("/usr/bin/sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        exec_done(small.id(), "sleep");
+        let p = io::Pinned::pid(small.id() as i32, shared::sys::euid()).unwrap();
+        assert!(d.identify(p).unwrap().app.sha256.is_some());
+        let _ = (child.kill(), child.wait(), small.kill(), small.wait());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// QA-A9-SEC-3: a connection whose thread the system refused is dropped (its peer sees the
+    /// end), and the loop goes on to serve the next one.
+    #[test]
+    fn a_refused_thread_drops_one_connection_and_the_loop_serves_the_next() {
+        use std::sync::atomic::AtomicBool;
+        let dir = std::env::temp_dir().join(format!("wolkeyring-spawn-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sock = dir.join("k.sock");
+        let l = UnixListener::bind(&sock).unwrap();
+        let refused_first = Arc::new(AtomicBool::new(false));
+        let d = Arc::new(Daemon::new("spawn-test"));
+        let rf = refused_first.clone();
+        std::thread::spawn(move || {
+            serve_with(d, l, move |what, work| {
+                if !rf.swap(true, Ordering::SeqCst) {
+                    drop(work);
+                    return false;
+                }
+                shared::bounded::spawn_conn(what, &|_| {}, work)
+            });
+        });
+        let mut first = UnixStream::connect(&sock).unwrap();
+        first
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut buf = [0u8; 16];
+        assert_eq!(
+            first.read(&mut buf).unwrap(),
+            0,
+            "the refused one is closed"
+        );
+        let mut second = UnixStream::connect(&sock).unwrap();
+        second
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        second.write_all(b"not json\n").unwrap();
+        let mut got = String::new();
+        let mut one = [0u8; 1];
+        while second.read(&mut one).unwrap() == 1 && one[0] != b'\n' {
+            got.push(one[0] as char);
+        }
+        assert!(got.contains("malformed"), "{got}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn backoff_grows_and_is_capped() {

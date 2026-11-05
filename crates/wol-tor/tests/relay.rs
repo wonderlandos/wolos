@@ -83,9 +83,38 @@ fn relay(tor: PathBuf, ready: bool, wait: Duration) -> (SocketAddr, Arc<Ready>) 
     });
     thread::Builder::new()
         .name("relay".into())
-        .spawn(move || relay.serve(l))
+        .spawn(move || relay.serve(l, |_| {}))
         .unwrap();
     (addr, r)
+}
+
+/// A relay whose first stream thread the system refuses.
+fn relay_refusing_first(tor: PathBuf) -> SocketAddr {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = l.local_addr().unwrap();
+    let r = Arc::new(Ready::default());
+    r.set(true);
+    let relay = Arc::new(Relay {
+        tor_socks: tor,
+        isolator: Arc::new(Isolator::new(Group::new("it").unwrap())),
+        ready: r,
+        ready_wait: Duration::from_millis(50),
+    });
+    let starts = AtomicUsize::new(0);
+    thread::Builder::new()
+        .name("relay".into())
+        .spawn(move || {
+            relay.serve_with(l, move |what, work| {
+                if starts.fetch_add(1, Ordering::SeqCst) == 0 {
+                    drop(work);
+                    false
+                } else {
+                    shared::bounded::spawn_conn(what, &|_| {}, work)
+                }
+            })
+        })
+        .unwrap();
+    addr
 }
 
 fn domain_request(cmd: u8, host: &str, port: u16) -> Vec<u8> {
@@ -219,4 +248,23 @@ fn tor_going_away_stops_new_streams() {
         browser(addr, None, &domain_request(1, "example.org", 443)).0,
         1
     );
+}
+
+/// QA-A9-SEC-11: one refused stream thread drops that stream; the relay goes on serving.
+#[test]
+fn a_refused_stream_thread_does_not_end_the_relay() {
+    let path = sock_path();
+    let (_seen, _got) = fake_tor(&path);
+    let addr = relay_refusing_first(path);
+    let mut first = TcpStream::connect(addr).unwrap();
+    first
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    let mut b = [0u8; 1];
+    assert!(
+        matches!(first.read(&mut b), Ok(0) | Err(_)),
+        "the refused stream is closed"
+    );
+    let (code, _s) = browser(addr, None, &domain_request(1, "www.example.org", 443));
+    assert_eq!(code, 0, "the next stream is served");
 }

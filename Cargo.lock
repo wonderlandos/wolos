@@ -5494,7 +5494,9 @@ dependencies = [
 name = "wol-tor"
 version = "0.12.0"
 dependencies = [
+ "core",
  "serde_json",
+ "shared",
 ]
 
 [[package]]

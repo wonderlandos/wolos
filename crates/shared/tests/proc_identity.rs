@@ -4,7 +4,8 @@
 //! executable is read through that descriptor (`/proc/self/fd/<n>/exe`: `api::peer::PeerIdentity`,
 //! the shell socket's `Pinned` in crates/shell/src/ui/ipc.rs). A pid number can be reused by the
 //! time it is looked up again, and the lookup then names the newcomer. This test reads the
-//! non-test code of every crate's `src/` and fails on an `exe` read built from a pid number.
+//! non-test code of every crate's `src/` and fails on any `/proc/<number>/<file>` read built from a
+//! pid number (`exe`, `environ`, `cgroup`, `cmdline`: all go through the pinned descriptor, QA-A9-SEC-6).
 use std::path::{Path, PathBuf};
 
 fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -22,24 +23,54 @@ fn rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
 }
 
 /// Known exceptions: (file under crates/, reason). Each is an open item, not a pattern to copy.
-const ALLOWED: &[(&str, &str)] = &[(
-    "shared/src/sys/mod.rs",
-    "sys::executable(pid): the realtime server's per-connection identity \
-     (crates/realtime/src/identity.rs) still looks the pid up; it should pin /proc/<pid> at \
-     accept like api::peer (reported with R2C-22)",
-)];
+const ALLOWED: &[(&str, &str)] = &[
+    (
+        "core/src/monitor/procs.rs",
+        "the System Monitor's process list reads the cgroup of every process it lists, to group \
+         them into apps; the text is shown, it decides no grant and no identity",
+    ),
+    (
+        "shared/src/sys/mod.rs",
+        "sys::executable(pid): the realtime server's per-connection identity \
+         (crates/realtime/src/identity.rs) still looks the pid up; it should pin /proc/<pid> at \
+         accept like api::peer (reported with R2C-22)",
+    ),
+];
 
-/// A line that builds `/proc/<something>/exe` from a number, not from `self` or a descriptor.
+/// The files of `/proc/<pid>` that say who a process is or what it carries. (Statistics such as
+/// `stat`, `smaps_rollup` and `oom_score_adj` describe a process for a monitor or a tuner; they
+/// grant nothing.)
+const IDENTITY_FILES: &[&str] = &[
+    "exe", "environ", "cgroup", "cmdline", "maps", "status", "comm", "root", "cwd",
+];
+
+/// A line that builds `/proc/<number>/<file>` from a number (`/proc/{pid}/exe`, `/proc/{pid}/environ`,
+/// `/proc/{}/cgroup`), not from `self` or a descriptor. Opening the directory itself
+/// (`/proc/{pid}`) is how a process is pinned, so a path that ends there is not a read.
 fn reads_exe_by_number(line: &str) -> bool {
     let l = line.trim_start();
     if l.starts_with("//") {
         return false;
     }
-    let Some(at) = l.find("/proc/{") else {
-        return false;
-    };
-    let rest = &l[at..];
-    rest.contains("}/exe") && !rest.starts_with("/proc/self")
+    let mut from = 0;
+    while let Some(at) = l[from..].find("/proc/{") {
+        let rest = &l[from + at..];
+        from += at + "/proc/{".len();
+        if rest.starts_with("/proc/self") {
+            continue;
+        }
+        // `/proc/{pid}/file`: an identity file follows the closing brace of the placeholder.
+        if let Some(close) = rest.find('}')
+            && let Some(file) = rest[close + 1..].strip_prefix('/')
+            && IDENTITY_FILES.iter().any(|f| {
+                file.strip_prefix(f)
+                    .is_some_and(|r| !r.starts_with(|c: char| c.is_ascii_alphanumeric()))
+            })
+        {
+            return true;
+        }
+    }
+    false
 }
 
 #[test]
@@ -48,6 +79,13 @@ fn the_rule_sees_what_it_should() {
         r#"std::fs::read_link(format!("/proc/{pid}/exe"))"#
     ));
     assert!(reads_exe_by_number(r#"format!("/proc/{}/exe", p.pid)"#));
+    // QA-A9-SEC-6: the two reads that were missed because only `exe` counted.
+    assert!(reads_exe_by_number(
+        r#"    std::fs::File::open(format!("/proc/{pid}/environ"))"#
+    ));
+    assert!(reads_exe_by_number(
+        r#"    std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()"#
+    ));
     assert!(!reads_exe_by_number(
         r#"format!("/proc/self/fd/{}/exe", dir.as_raw_fd())"#
     ));
@@ -58,7 +96,7 @@ fn the_rule_sees_what_it_should() {
 }
 
 #[test]
-fn nothing_reads_an_executable_by_pid_number() {
+fn nothing_reads_a_proc_file_by_pid_number() {
     let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut files = Vec::new();
     for e in std::fs::read_dir(&crates).expect("crates/").flatten() {

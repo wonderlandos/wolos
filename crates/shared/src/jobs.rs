@@ -75,8 +75,17 @@ pub fn answer_hello(s: &std::os::unix::net::UnixStream) -> std::io::Result<()> {
 /// execs a trusted binary before accept cannot have the child answer for it. Clients need nothing
 /// extra: [`answer_hello`] is a plain write.
 pub fn greet(s: &std::os::unix::net::UnixStream) -> std::io::Result<()> {
+    greet_by(s, std::time::Instant::now() + HELLO_TIMEOUT)
+}
+
+/// [`greet`] with the whole exchange (hello out, echo in) due at `deadline`: the wait is cut down
+/// before each read, so a peer that sends a byte now and then does not extend it. The atlas bridge
+/// uses this to count its hello wait from accept (QA-A9-SEC-1).
+pub fn greet_by(
+    s: &std::os::unix::net::UnixStream,
+    deadline: std::time::Instant,
+) -> std::io::Result<()> {
     let before = s.read_timeout()?;
-    s.set_read_timeout(Some(HELLO_TIMEOUT))?;
     let peer = crate::sys::peer(s)
         .filter(|p| p.pid > 0)
         .ok_or_else(|| std::io::Error::other("the kernel did not say who connected"))?;
@@ -88,6 +97,13 @@ pub fn greet(s: &std::os::unix::net::UnixStream) -> std::io::Result<()> {
         if line.len() >= MAX_HELLO {
             return Err(std::io::Error::other("the client did not answer the hello"));
         }
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return Err(std::io::Error::other(
+                "the client did not answer the hello in time",
+            ));
+        }
+        s.set_read_timeout(Some(left))?;
         let (n, pid) = crate::sys::recv_with_pid(s, &mut byte)?;
         if n == 0 {
             return Err(std::io::Error::other("the client did not answer the hello"));
@@ -310,6 +326,30 @@ mod tests {
     }
 
     use super::*;
+
+    /// A peer that sends a byte now and then does not stretch the deadline (the atlas bridge counts
+    /// its hello wait from accept).
+    #[test]
+    fn greet_by_cuts_a_trickling_peer_off_at_the_deadline() {
+        use std::io::Write;
+        use std::os::unix::net::UnixStream;
+        let (srv, mut cli) = UnixStream::pair().unwrap();
+        let t = std::time::Instant::now();
+        let h = std::thread::spawn(move || {
+            // A pause that is a wait on a channel nobody sends on (tests do not sleep).
+            let (_keep, never) = std::sync::mpsc::channel::<()>();
+            for _ in 0..40 {
+                let _ = never.recv_timeout(std::time::Duration::from_millis(50));
+                if cli.write_all(b" ").is_err() {
+                    break;
+                }
+            }
+        });
+        let e = greet_by(&srv, t + std::time::Duration::from_millis(500)).unwrap_err();
+        assert!(t.elapsed() < std::time::Duration::from_millis(1500), "{e}");
+        drop(srv);
+        let _ = h.join();
+    }
 
     #[test]
     fn spec_defaults_and_validation() {

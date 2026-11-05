@@ -177,6 +177,7 @@ mod tests {
             uid,
             pid: 7,
             app: app.into(),
+            scope: None,
         }
     }
 

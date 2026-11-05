@@ -111,6 +111,52 @@ fn accept_emfile_logged_not_looped() {
     );
 }
 
+/// QA-A9-SEC-7: the system refuses the thread for an admitted connection (TasksMax, RLIMIT_NPROC).
+/// Its client is greeted and told the service is busy, not dropped before the hello, and the next
+/// connection is served by the same loop.
+#[test]
+fn a_refused_connection_thread_replies_busy_and_the_loop_goes_on() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let os = leak();
+    let (srv_a, cli_a) = UnixStream::pair().unwrap();
+    let (srv_b, mut cli_b) = UnixStream::pair().unwrap();
+    let mut queue = vec![srv_b, srv_a];
+    let starts = AtomicUsize::new(0);
+    admind::serve_started(
+        || queue.pop().ok_or_else(|| std::io::Error::other("no more")),
+        os,
+        {
+            let mut n = 0;
+            move || {
+                n += 1;
+                n > 2
+            }
+        },
+        |what, work| {
+            // The first connection is refused (its work closure dropped); the second starts.
+            if starts.fetch_add(1, Ordering::SeqCst) == 0 {
+                drop(work);
+                false
+            } else {
+                shared::bounded::spawn_conn(what, &|_| {}, work)
+            }
+        },
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 2);
+    // The refused one is greeted and told busy.
+    shared::jobs::answer_hello(&cli_a).expect("greeted");
+    cli_a
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    cli_a.shutdown(std::net::Shutdown::Write).unwrap();
+    let mut line = String::new();
+    BufReader::new(&cli_a).read_line(&mut line).unwrap();
+    assert!(line.contains(admind::BUSY), "{line}");
+    // The second is served: it is greeted too.
+    shared::jobs::answer_hello(&cli_b).expect("the next connection is served");
+    let _ = cli_b.flush();
+}
+
 /// The hello answered, then `req` sent and the write side closed; the reply line.
 fn ask(path: &std::path::Path, req: &AdminRequest) -> std::io::Result<String> {
     let mut s = shared::jobs::connect(path)?;

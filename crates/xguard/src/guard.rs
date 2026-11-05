@@ -161,7 +161,7 @@ pub const USER_DIRS_CAP: u64 = 64 * 1024;
 /// [`USER_DIRS_CAP`] bytes. None otherwise.
 pub fn read_user_dirs(path: &str, uid: u32) -> Option<String> {
     use std::os::unix::fs::MetadataExt;
-    let f = shared::sys::open_named(path).ok()?;
+    let f = shared::sys::open_regular(path).ok()?;
     let md = f.metadata().ok()?;
     if !md.is_file() || md.uid() != uid {
         return None;

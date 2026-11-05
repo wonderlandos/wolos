@@ -177,6 +177,56 @@ pub fn read_text(path: &std::path::Path, max: u64) -> Option<String> {
     String::from_utf8(read_file(path, max)?).ok()
 }
 
+/// Pause after a refused connection thread: the shortage (TasksMax, RLIMIT_NPROC, memory) lasts
+/// until something ends, and the accept loop must not spin on it.
+pub const SPAWN_BACKOFF: Duration = Duration::from_millis(500);
+
+/// One connection's (or one stream's) named thread. A refusal (EAGAIN) drops that one connection
+/// (the work closure, and the socket it owns), tells `log` (the caller's journal: a library does
+/// not print, RR-004) and waits [`SPAWN_BACKOFF`] so the caller's loop does not spin; the daemon
+/// stays up and serves the next one. `std::thread::spawn` panics in the thread that called it,
+/// which ended an accept loop while the process lived on with a socket that never answered
+/// (QA-SHADOW-40, QA-A9-SEC-3/7/11). Returns whether the thread started.
+pub fn spawn_conn(what: &str, log: &dyn Fn(&str), work: impl FnOnce() + Send + 'static) -> bool {
+    spawn_conn_with(std::thread::Builder::new(), what, log, work)
+}
+
+/// [`spawn_conn`] with the thread's `Builder` given (its stack size); the name is `what`.
+pub fn spawn_conn_with(
+    builder: std::thread::Builder,
+    what: &str,
+    log: &dyn Fn(&str),
+    work: impl FnOnce() + Send + 'static,
+) -> bool {
+    try_spawn_conn(
+        what,
+        log,
+        work,
+        |w| builder.name(what.into()).spawn(w).map(drop),
+        std::thread::sleep,
+    )
+}
+
+/// [`spawn_conn`] with the thread start and the wait given, so a test can refuse the start.
+pub fn try_spawn_conn<W>(
+    what: &str,
+    log: &dyn Fn(&str),
+    work: W,
+    spawn: impl FnOnce(W) -> std::io::Result<()>,
+    wait: impl FnOnce(Duration),
+) -> bool {
+    match spawn(work) {
+        Ok(()) => true,
+        Err(e) => {
+            log(&format!(
+                "{what}: cannot start a connection thread, dropping it: {e}"
+            ));
+            wait(SPAWN_BACKOFF);
+            false
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Counts {
     total: usize,
@@ -248,6 +298,45 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::os::unix::net::UnixStream;
+
+    /// QA-A9-SEC-3/7/11: a refused thread drops the work, waits, and reports it; the next start is
+    /// served without a wait.
+    #[test]
+    fn a_refused_connection_thread_backs_off() {
+        let waited = std::cell::Cell::new(None);
+        let ran = std::cell::Cell::new(false);
+        let said = std::cell::RefCell::new(String::new());
+        let log = |l: &str| said.borrow_mut().push_str(l);
+        let started = try_spawn_conn(
+            "x",
+            &log,
+            || ran.set(true),
+            |_| Err(std::io::Error::from_raw_os_error(11)),
+            |d| waited.set(Some(d)),
+        );
+        assert!(!started && !ran.get());
+        assert_eq!(waited.get(), Some(SPAWN_BACKOFF));
+        assert!(said.borrow().starts_with("x: cannot start"), "{said:?}");
+        waited.set(None);
+        assert!(try_spawn_conn(
+            "x",
+            &log,
+            || {},
+            |_| Ok(()),
+            |d| waited.set(Some(d))
+        ));
+        assert_eq!(waited.get(), None);
+    }
+
+    #[test]
+    fn spawn_conn_runs_the_work_on_a_named_thread() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        assert!(spawn_conn("wol-test-conn", &|_| {}, move || {
+            let _ = tx.send(std::thread::current().name().map(str::to_owned));
+        }));
+        let name = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(name.as_deref(), Some("wol-test-conn"));
+    }
 
     #[test]
     fn read_file_returns_the_whole_file_or_nothing() {

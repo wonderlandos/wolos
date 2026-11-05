@@ -773,7 +773,7 @@ fn bt_name(s: &str) -> bool {
             .any(|c| c.is_control() || matches!(c, '"' | '\\' | '{' | '}' | ';' | '#'))
 }
 
-/// Device URI without `user:password@` (logs).
+/// An address without `user:password@` (logs); anything that is not `scheme://...` is returned as is.
 fn without_userinfo(uri: &str) -> String {
     let Some((scheme, rest)) = uri.split_once("://") else {
         return uri.into();
@@ -962,7 +962,8 @@ fn is_wol_path(p: &str) -> bool {
         && !p.chars().any(char::is_control)
 }
 
-/// Log text without secrets (Wi-Fi password and keybind JSON left out).
+/// Log text without secrets (Wi-Fi password and keybind JSON left out, and `user:password@` of
+/// every address: a PAC address may carry them, QA-A9-SEC-10).
 pub fn describe(r: &AdminRequest) -> String {
     let name = r.action.name();
     match r.action {
@@ -979,7 +980,14 @@ pub fn describe(r: &AdminRequest) -> String {
             format!("{name} {} {}", r.args[0], without_userinfo(&r.args[1]))
         }
         _ if r.args.is_empty() => name.into(),
-        _ => format!("{name} {}", r.args.join(" ")),
+        _ => format!(
+            "{name} {}",
+            r.args
+                .iter()
+                .map(|a| without_userinfo(a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
     }
 }
 

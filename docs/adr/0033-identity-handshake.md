@@ -36,6 +36,7 @@ start time survive exec, so neither a pidfd nor `/proc/<pid>/stat` can tell the 
 - Residual: a client that legitimately forks between connect and its hello (none in tree) is
   refused; it must connect after the fork. A trusted binary whose parent is hostile is ADR 0020's
   concern (audit S6), not the handshake's.
+- The atlas bridge (`crates/atlas`, ADR 0043) greets the same way with `shared::jobs::greet_by` (the greeting and the hello line share one deadline); the pid in its hello line is a claim that must equal SO_PEERCRED's, not an identity (QA-A9-SEC-1, protocol version 2).
 - The memsaver and qos sockets greet the same way (`crates/api/src/bin/wold.rs` calls `greet`), and
   the realtime agent answers through `shared::jobs::answer_hello`.
 - `session.approve`: a helper's admin tool (`wol mcp`) no longer dials the shell; it asks wold,
