@@ -37,6 +37,20 @@ fn sealed(names: &str, bootctl: &str) -> FakeEnv {
     }
 }
 
+/// The in-namespace `pacman -Q` answered (before and after a change that added vim): a change
+/// whose layer cannot be read back is refused (QA-A7-4), so tests of a good change say so.
+fn read_back(mut env: FakeEnv) -> FakeEnv {
+    env.captures
+        .push(("/usr/bin/pacman -Q".into(), "bash 5.2-1\n".into()));
+    for n in 1..=9 {
+        env.files.push((
+            PathBuf::from(format!("/var/lib/wolos/layers/wolos-layer-{n:04}/after")),
+            "bash 5.2-1\nvim 9.1-1\n".into(),
+        ));
+    }
+    env
+}
+
 fn lines(env: &FakeEnv) -> Vec<String> {
     env.execs.iter().map(|a| a.join(" ")).collect()
 }
@@ -119,7 +133,7 @@ fn download_only_uses_a_scratch_database_on_a_sealed_system() {
 
 #[test]
 fn an_install_is_a_live_layer_without_a_restart() {
-    let mut env = sealed("vim\nvim-runtime\n", IDLE);
+    let mut env = read_back(sealed("vim\nvim-runtime\n", IDLE));
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert!(
@@ -414,8 +428,8 @@ fn a_good_boot_removes_a_layer_pacman_never_finished() {
 /// or pacman while the first holds the lock is refused before it runs anything.
 #[test]
 fn a_second_update_or_package_change_is_refused_while_one_runs() {
-    let mut first = sealed("vim\n", IDLE);
-    let mut second = sealed("vim\n", IDLE);
+    let mut first = read_back(sealed("vim\n", IDLE));
+    let mut second = read_back(sealed("vim\n", IDLE));
     second.locks = first.locks.clone();
     first
         .locks
@@ -452,7 +466,7 @@ fn a_chroot_left_mounted_is_unmounted_first() {
     assert_ne!(run("pkg -- -S vim", &mut env), 0);
     assert_eq!(lines(&env), ["umount -R /run/wolos/layer-root"]);
     assert!(env.err.contains("still mounted"), "{}", env.err);
-    let mut clean = sealed("vim\n", IDLE);
+    let mut clean = read_back(sealed("vim\n", IDLE));
     clean.files.push((
         PathBuf::from("/proc/self/mountinfo"),
         "36 25 0:32 / / rw shared:1 - btrfs /dev/vda2 rw\n".into(),
@@ -668,7 +682,7 @@ fn a_layer_records_its_database_even_under_usr() {
 #[test]
 fn a_layer_pacman_committed_is_kept_when_the_merge_fails() {
     // CORE-5: mkdir, the private chroot step, rm work ok; `systemd-sysext refresh` fails.
-    let mut env = sealed("vim\n", IDLE);
+    let mut env = read_back(sealed("vim\n", IDLE));
     env.exec_codes = vec![0, 0, 0, 1];
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
@@ -779,10 +793,10 @@ wolos-layer-0003
         ),
         (folded, None),
     ] {
-        let mut env = sealed(
+        let mut env = read_back(sealed(
             "vim
 ", IDLE,
-        );
+        ));
         env.captures.retain(|c| c.0 != "ls -1 /var/lib/extensions");
         env.captures
             .push(("ls -1 /var/lib/extensions".into(), String::new()));
@@ -1061,5 +1075,63 @@ fn an_empty_transaction_makes_no_layer() {
             .any(|w| w.0.ends_with("wolos-layer.json")),
         "{:?}",
         env.written
+    );
+}
+
+/// QA-A7-4: a failed `pacman -Q` in the layer's namespace leaves an empty `after` file; read as
+/// "every package was removed" it wrote a record that, at the next update, dropped every
+/// package's entry from the new slot. An unreadable answer is a failed query: the layer is
+/// thrown away, no record is written, nothing merges.
+#[test]
+fn an_unreadable_layer_query_makes_no_record() {
+    for after in [Some(""), None, Some("bash 5.2-1\n")] {
+        let mut env = sealed("vim\n", IDLE);
+        env.captures.push((
+            "/usr/bin/pacman -Q".into(),
+            "bash 5.2-1\ncoreutils 9-1\nglibc 2.40-1\nvim 9-1\n".into(),
+        ));
+        if let Some(text) = after {
+            env.files.push((
+                PathBuf::from("/var/lib/wolos/layers/wolos-layer-0002/after"),
+                text.into(),
+            ));
+        }
+        let code = run("pkg -- -S vim", &mut env);
+        let l = lines(&env);
+        assert_ne!(code, 0, "{after:?}: {}", env.out);
+        assert!(
+            l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()),
+            "{after:?}: {l:?}"
+        );
+        assert!(!l.contains(&"systemd-sysext refresh".into()), "{l:?}");
+        assert!(
+            !env.written
+                .iter()
+                .any(|w| w.0.ends_with("wolos-layer.json")),
+            "{after:?}: {:?}",
+            env.written
+        );
+        assert!(env.err.contains("could not be read back"), "{}", env.err);
+    }
+}
+
+/// QA-A7-18: `wol pkg -Sw` killed mid-way leaves its scratch database folder, and nothing else
+/// cleans it up: boot removes every folder the download makes (the name comes from the code).
+#[test]
+fn a_killed_download_leaves_no_scratch_folder_after_a_restart() {
+    #[path = "support/repo.rs"]
+    mod repo;
+    let code = repo::read("crates/controller/src/pkg.rs");
+    let name = code
+        .split("\"/var/tmp/")
+        .nth(1)
+        .and_then(|r| r.split(".XXXXXX").next())
+        .expect("the scratch folder is made under /var/tmp");
+    let conf = repo::read("files/usr/lib/tmpfiles.d/wolos.conf");
+    assert!(
+        conf.lines()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>()
+                == ["R", &format!("/var/tmp/{name}.*")]),
+        "tmpfiles.d/wolos.conf has no `R /var/tmp/{name}.*`"
     );
 }

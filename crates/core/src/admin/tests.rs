@@ -1315,3 +1315,16 @@ fn wol_package_actions() {
     )));
     assert!(!needs_fresh_password(&r(PkgUpgrade, &[])));
 }
+
+/// QA-A7-17: a process the compositor started has no `$USER`; the name then follows the uid into
+/// `passwd`, so an administrator is not read as a standard account.
+#[test]
+fn the_admin_check_works_without_user_in_the_environment() {
+    let passwd = "root:x:0:0::/root:/bin/sh\nada:x:1000:1000::/home/ada:/bin/bash\nbob:x:1001:1001::/home/bob:/bin/bash\n";
+    let group = "wheel:x:998:ada\nusers:x:100:bob\n";
+    assert!(account_is_admin(None, 1000, passwd, group));
+    assert!(account_is_admin(Some(""), 1000, passwd, group));
+    assert!(!account_is_admin(None, 1001, passwd, group));
+    assert!(account_is_admin(Some("ada"), 1001, passwd, group));
+    assert!(!account_is_admin(None, 4242, passwd, group), "unknown uid");
+}

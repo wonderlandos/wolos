@@ -628,3 +628,32 @@ fn network_and_wifi_probe_concurrently() {
     );
     assert_eq!(json_out(&e)["wifi"]["on"], true);
 }
+
+/// QA-A7-11: Larger text lives in gsettings; the journal holds its record file, and `wol undo`
+/// of that entry sets the desktop's text scale back to match.
+#[test]
+fn undoing_larger_text_sets_the_text_scale() {
+    let home = temp_home("larger-text");
+    let state = home.join("state");
+    let j = wol_core::journal::Journal::new(&state, &home);
+    j.save(
+        "accessibility",
+        "settings",
+        &[(wol_core::journal::LARGER_TEXT_FILE, Some("1.25\n"))],
+        1,
+    )
+    .unwrap();
+    let mut e = FakeEnv {
+        home,
+        ..Default::default()
+    };
+    assert_eq!(run("undo --yes", &mut e), 0, "{}", e.err);
+    assert!(
+        e.captured_argvs
+            .iter()
+            .any(|a| a.join(" ")
+                == "gsettings set org.gnome.desktop.interface text-scaling-factor 1.0"),
+        "{:?}",
+        e.captured_argvs
+    );
+}

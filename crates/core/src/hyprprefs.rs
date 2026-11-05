@@ -158,6 +158,29 @@ fn xkb(layouts: &[String]) -> (String, String) {
     (l.join(","), v.join(","))
 }
 
+/// Where wol-login (root) keeps the keyboard layout of the account that last used this computer:
+/// two lines, the xkb layouts and the variants (comma lists). The login window's compositor
+/// config reads it, so the login window types on the layout a person set in Settings, not the
+/// one chosen at install time for ever (QA-A7-16).
+pub const LAST_LAYOUT: &str = "/var/lib/wolos/last-layout";
+
+/// The text of [`LAST_LAYOUT`] for an account's `prefs`. Only layouts WolOS offers are kept (the
+/// file is made by root from a file the account can write, and read by a compositor config);
+/// none left is the US layout.
+pub fn last_layout_text(prefs: &DesktopPrefs) -> String {
+    let mut known: Vec<String> = prefs
+        .layouts
+        .iter()
+        .filter(|l| crate::prefs::LAYOUTS.iter().any(|k| k.0 == l.as_str()))
+        .cloned()
+        .collect();
+    if known.is_empty() {
+        known.push("us".into());
+    }
+    let (kb, variant) = xkb(&known);
+    format!("{kb}\n{variant}\n")
+}
+
 impl DesktopPrefs {
     /// Missing or broken file = defaults; unknown keys ignored.
     pub fn parse(text: Option<&str>) -> Self {
@@ -688,6 +711,20 @@ pub fn apply_shortcuts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-A7-16: the login window follows the last account's layouts, known ones only.
+    #[test]
+    fn the_last_layout_file_lists_known_layouts_only() {
+        let p = |l: &[&str]| DesktopPrefs {
+            layouts: l.iter().map(|x| x.to_string()).collect(),
+            ..Default::default()
+        };
+        assert_eq!(last_layout_text(&p(&["br", "us(intl)"])), "br,us\n,intl\n");
+        assert_eq!(last_layout_text(&p(&["xx\nevil", "br"])), "br\n\n");
+        assert_eq!(last_layout_text(&p(&["not-a-layout"])), "us\n\n");
+        assert_eq!(last_layout_text(&p(&[])), "us\n\n");
+    }
+
     use crate::system::fake::FakeHost;
 
     fn kw(p: &DesktopPrefs, k: &str) -> String {
