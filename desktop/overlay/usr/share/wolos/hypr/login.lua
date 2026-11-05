@@ -29,7 +29,7 @@ hl.exec_cmd([[sh -c 'systemd-detect-virt -q --vm && hyprctl eval "hl.config({cur
 hl.on("hyprland.start", function()
     hl.exec_cmd("sh -c 'exec hypridle -c /usr/share/wolos/hypr/login-idle.conf'") -- the display turns off after 10 idle minutes (QA-FILES-10)
     hl.exec_cmd("wol-vbox-guest") -- VirtualBox: resize with the VM window, clipboard, drag and drop (only under VirtualBox)
-    hl.exec_cmd([[sh -c '/usr/bin/wol-loginwindow; hyprctl dispatch "hl.dsp.exit()"']])
+    hl.exec_cmd([[sh -c '/usr/bin/wol-loginwindow; hyprctl dispatch "hl.dsp.dpms({ action = \"off\" })"; hyprctl dispatch "hl.dsp.exit()"']]) -- output off first: no stale card in the last scanout (QA-SHEET-3)
 end)
 
 -- Whole-frame redraws: with damage tracking a page fade's last frame was never repainted (VM).

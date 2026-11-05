@@ -221,14 +221,20 @@ impl ThemeCatalog {
         cat
     }
 
-    /// Everything a person can pick: built-ins, `search_paths(config_home)` and the theme packs of
-    /// enabled plugins under `data_home` (`packs`; a pack never replaces an id already known).
+    /// Everything a person can pick: built-ins and their accent variants,
+    /// `search_paths(config_home)` and the theme packs of enabled plugins under `data_home`
+    /// (`packs`; a pack never replaces an id already known).
     pub fn installed(config_home: &Path, data_home: Option<&Path>) -> Self {
         let cat = Self::load(&search_paths(config_home));
-        match data_home {
+        let cat = match data_home {
             Some(d) => packs::add(cat, &packs::themes(config_home, d)),
             None => cat,
-        }
+        };
+        // The accent variants (`wol-dark-blue`…) are built-ins too: every reader resolves what
+        // Setup and Appearance save. Only `wol appearance` added them, so `wol theme set` (the
+        // session's exec-once), the shell and `apps::apply` answered Unknown("wol-dark-blue") and
+        // a Dark + Ocean pick came up half light (QA-VIS1-2).
+        accent::variants().into_iter().fold(cat, Self::with)
     }
 
     /// Adds `spec` unless its id is taken.
@@ -358,6 +364,28 @@ pub(crate) fn kept_mode(path: &Path) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-VIS1-2: every id Setup and Appearance save (`accent::theme_id`, both variants, every
+    /// accent) resolves from the installed catalog itself, which `wol theme set`, the shell and
+    /// `apps::apply` read; `wol theme set wol-dark-blue` answered Unknown.
+    #[test]
+    fn the_installed_catalog_resolves_every_accent_pick() {
+        let dir = std::env::temp_dir().join(format!("wol-accent-cat-{}", std::process::id()));
+        let cat = ThemeCatalog::installed(&dir, None);
+        let mut n = 0;
+        for variant in [Some(Variant::Light), Some(Variant::Dark)] {
+            for (accent, ..) in accent::ACCENTS {
+                let Some(id) = accent::theme_id(variant, accent) else {
+                    continue;
+                };
+                let t = cat.resolve(&id).unwrap_or_else(|e| panic!("{id}: {e:?}"));
+                assert_eq!(Some(t.variant), variant, "{id}");
+                n += 1;
+            }
+        }
+        assert!(n >= 14, "{n} ids checked");
+        assert!(cat.resolve("wol-dark-blue").is_ok());
+    }
 
     /// The default themes are made of the design tokens (`design/tokens/colors.json`), so the
     /// desktop, the icons and the brand cannot drift apart. Rule: the hue-carrying tokens (accent,

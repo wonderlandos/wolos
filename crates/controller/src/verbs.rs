@@ -294,13 +294,11 @@ fn shell_reload(env: &mut dyn Env) {
 
 // ---- appearance ----
 
+/// Built-ins (accent variants included), theme folders and plugins' theme packs.
 fn catalog(env: &dyn Env) -> ThemeCatalog {
-    accent::variants().into_iter().fold(
-        ThemeCatalog::installed(
-            &env.config_home(),
-            wol_core::theme::apps::data_home(|k| env.var(k)).as_deref(),
-        ),
-        ThemeCatalog::with,
+    ThemeCatalog::installed(
+        &env.config_home(),
+        wol_core::theme::apps::data_home(|k| env.var(k)).as_deref(),
     )
 }
 

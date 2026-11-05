@@ -17,6 +17,30 @@ fn every_hyprland_session_runs_at_scale_one() {
     }
 }
 
+/// QA-SHEET-3, QA-VIS2-20: a greeter compositor (installer, Setup, login window) turns its output
+/// off before it exits, in both config languages: the last scanout (the old card with black bars)
+/// came back on screen during the hand-off to the next one. The installer had it, Setup did not.
+#[test]
+fn every_greeter_compositor_turns_the_output_off_before_it_exits() {
+    for c in ["installer", "setup", "login"] {
+        let conf = read(&format!("desktop/overlay/usr/share/wolos/hypr/{c}.conf"));
+        assert!(
+            conf.lines()
+                .any(|l| l.starts_with("exec-once = /usr/bin/wol-")
+                    && l.contains("hyprctl dispatch dpms off; hyprctl dispatch exit")),
+            "{c}.conf: dpms off before exit"
+        );
+        let lua = read(&format!("desktop/overlay/usr/share/wolos/hypr/{c}.lua"));
+        assert!(
+            lua.lines().any(|l| l.contains("/usr/bin/wol-")
+                && l.contains(
+                    r#"hl.dsp.dpms({ action = \"off\" })"; hyprctl dispatch "hl.dsp.exit()""#
+                )),
+            "{c}.lua: dpms off before exit"
+        );
+    }
+}
+
 /// QA-FILES-1 / QA-ADR-15: every program the login window's power row runs (and the session menu's)
 /// exists on the Arch image. `acpiconf` and `shutdown -p` were FreeBSD's and are gone; the verbs are
 /// systemd's, which every image has (`systemd-ukify` and the units below `files/usr/lib/systemd`
