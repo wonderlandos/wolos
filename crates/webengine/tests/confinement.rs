@@ -258,6 +258,20 @@ fn child() {
 
     let token = ipc.join("socket");
     let mut out = std::io::stdout();
+    // Before confinement: the probes below must hit something that exists, or "ssh" would measure
+    // the filesystem (ENOENT), not the rule (QA-A10-IMG-05: a build chroot's HOME has no .ssh).
+    let pre = |p: Option<PathBuf>| match p.map(std::fs::read_dir) {
+        Some(Ok(_)) => "ok".to_string(),
+        Some(Err(e)) => format!("err:{e}"),
+        None => "err:no HOME".to_string(),
+    };
+    writeln!(out, "pre_home={}", pre(home.clone())).unwrap();
+    writeln!(
+        out,
+        "pre_ssh={}",
+        pre(home.as_ref().map(|h| h.join(".ssh")))
+    )
+    .unwrap();
     let done = match confine::enter(token.to_str().unwrap()) {
         Ok(a) => a,
         Err(e) => {
@@ -348,7 +362,15 @@ fn child() {
 
 fn confined_child() {
     let me = std::env::current_exe().unwrap();
-    let o = Command::new(me).env(CHILD, "1").output().unwrap();
+    // The child's HOME is made here, with a .ssh/ holding a key file: the "home" and "ssh" probes
+    // then meet the rule, not a missing directory (QA-A10-IMG-05: the clean chroot's check() runs
+    // with HOME=$srcdir, which has no .ssh, and the probe saw ENOENT where EACCES is expected).
+    let home = std::env::temp_dir().join(format!("wol-confine-home-{}", std::process::id()));
+    std::fs::create_dir_all(home.join(".ssh")).unwrap();
+    std::fs::write(home.join(".ssh").join("id_ed25519"), "not a key").unwrap();
+    let o = Command::new(me).env(CHILD, "1").env("HOME", &home).output();
+    std::fs::remove_dir_all(&home).ok();
+    let o = o.unwrap();
     let text = String::from_utf8_lossy(&o.stdout);
     assert!(
         o.status.success(),
@@ -357,6 +379,13 @@ fn confined_child() {
         String::from_utf8_lossy(&o.stderr)
     );
     let got: BTreeMap<_, _> = text.lines().filter_map(|l| l.split_once('=')).collect();
+    for k in ["pre_home", "pre_ssh"] {
+        let v = got.get(k).copied().unwrap_or("missing");
+        assert!(
+            v == "ok",
+            "{k} is {v}: the denial below would not be measured\n{text}"
+        );
+    }
     if let Some(why) = got.get("skip") {
         assert!(
             std::env::var_os("WOL_CONFINE_REQUIRED").is_none(),

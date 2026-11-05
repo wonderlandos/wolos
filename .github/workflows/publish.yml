@@ -8,12 +8,14 @@
 #       (its log: "== wolos-pkgbuilds -> s3://.../runs/<run>") into [wolos-testing].
 #   what=promote: [wolos-testing] -> [wolos] (after the release passed its VM test).
 #   what=iso run=<vX.Y.Z>: the release of that tag (put on all four repos by `wolos-build release`):
-#       ISO from [wolos-testing], VM test, release.json signed, the latest release.
+#       promote first, then the ISO from [wolos] (`WOLOS_REPO_NAME=wolos wolos-build iso`), VM test,
+#       then release.json signed and the latest release (a stable release of an image built from
+#       [wolos-testing] is refused: the channel gate of `release_iso`, BUILD.md Release).
 #   what=cdn run=<run>: copy a signed repo to the CDN's bucket after main uploaded it by hand.
 #   what=iso-s3 run=<S3 run id> tag=<vX.Y.Z> [prerelease=false]: publish an ISO already built and
 #       VM-tested on the build box (s3://$BUCKET/runs/<run>/: the .iso, its manifest .json and the VM
-#       test's checks.txt, which must say BOOT PASS and no FAIL) as a pre-release of this repo
-#       (default): `wolos-build release --do --iso --prerelease`. With prerelease=false it is the
+#       test's checks.txt, which must say BOOT PASS and no FAIL) as a pre-release of the releases
+#       repo (vars.WOLOS_RELEASES_REPO, as the iso job; default): `wolos-build release --do --iso --prerelease`. With prerelease=false it is the
 #       STABLE release: the ISO (over 2 GiB: the CDN only) goes to cdn.wolos.org/v<version>/ and
 #       latest/ with stable.json, the packages' files and notes to GitHub as `releases/latest`, and
 #       the manifest must say it was built from [wolos] (the channel gate of `release_iso`). Same
@@ -115,7 +117,11 @@ jobs:
       TAG: ${{ inputs.tag }}
       PRERELEASE: ${{ inputs.prerelease }}
       BUCKET: ${{ vars.BUCKET }}
-      GH_REPO: ${{ github.repository }}
+      # The releases repo, as the iso job (wolos-iso release.yml) and promote: the stable release's
+      # fleet gate reads [wolos] at wolos-2026-10-31 there, and the GitHub mirror is written there
+      # (QA-A10-IMG-01: github.repository is wonderlandos/wolos, where that release does not exist).
+      # RC-073 (wolos-build tests/test_rules_ci.py) holds every job that runs wolos-build to it.
+      GH_REPO: ${{ vars.WOLOS_RELEASES_REPO || 'wonderlandos/wolos-packages' }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Inputs
@@ -138,6 +144,9 @@ jobs:
       - name: ISO, release.json, signature, release
         env:
           WOLOS_RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
+          # Writes to the releases repo (github.token cannot): unset, the mirror is not written
+          # when the CDN is (release_mirror in lib/publish.sh), as in the iso job.
+          WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
           # cdn.wolos.org is the primary download; an ISO of 2 GiB or more goes there only.
           WOLOS_CDN_UPLOAD_TOKEN: ${{ secrets.WOLOS_CDN_UPLOAD_TOKEN }}
         run: |
