@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Atlas reads the interface density: `--atlas-density=compact` or `comfortable` (in `atlas-flags.conf`) makes the rows of its own menus 24 or 32 px instead of 28; `wol_core::browser::density_flag` maps the Settings value to the switch (the new interface is off by default).
 - Web app ids are now at most 47 letters (it was 48), so the app's whole id fits the name its process group carries. Once, when you upgrade: a web app whose name made an id of exactly 48 letters no longer shows in the launcher or in `wol webapp list`; add it again with the same name and it gets the shorter id. Apps with shorter names are not touched.
 - Search understands what you mean (docs/modules/search.md): Settings search, the Search bar and `wol help` find rows, apps, manual sections and commands by meaning, in your language, on the computer (a 15 MB table of word pieces, nothing is sent). Word matches still come first. The Search bar offers "Did you mean" when nothing matches. `wol help <words>` where the words are not a command now lists the commands and manual pages that mean them (it used to print the usage with nothing in it) and exits 66 when nothing matches; `wol <word>` with an unknown first word suggests the command that means it.
 - Bundled apps need no Settings visit before they work: a package can ship default grants for harmless verbs (Gallery: move to the Trash, share), listed in Settings > Privacy & Security where the person can still switch them off, and the choice survives updates (`consent::DEFAULTS_DIR`, docs/modules/security.md).

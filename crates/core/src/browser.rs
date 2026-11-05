@@ -271,6 +271,19 @@ pub fn launcher_defaults(wayland: bool, render_node: bool) -> Vec<&'static str> 
         .collect()
 }
 
+/// The Settings density (design/tokens/density.json: `compact`, `standard`, `comfortable`) as the
+/// switch the Atlas fork reads (`--atlas-density`, chrome/browser/ui/atlas/kit/kit_layout_provider.h):
+/// the rows of its own menus are 24, 28 or 32 px. `standard` is what the browser does without the
+/// switch, and a name that is none of the three adds nothing, so a stale or mistyped value cannot
+/// reach the command line.
+pub fn density_flag(density: &str) -> Option<&'static str> {
+    match density {
+        "compact" => Some("--atlas-density=compact"),
+        "comfortable" => Some("--atlas-density=comfortable"),
+        _ => None,
+    }
+}
+
 /// Every policy key and value WolOS ships: (`managed`, key, value).
 pub fn shipped_policies() -> Vec<(bool, String, Value)> {
     let mut out = Vec::new();
@@ -470,6 +483,24 @@ mod tests {
         assert_eq!(launcher_defaults(false, false), [keyring, auto]);
         for f in launcher_flags() {
             assert!(f.flag.starts_with("--") && !f.flag.contains(' '), "{f:?}");
+        }
+    }
+
+    #[test]
+    fn the_settings_density_becomes_the_forks_switch() {
+        assert_eq!(density_flag("compact"), Some("--atlas-density=compact"));
+        assert_eq!(
+            density_flag("comfortable"),
+            Some("--atlas-density=comfortable")
+        );
+        // Standard is the default; anything else is not passed on.
+        assert_eq!(density_flag("standard"), None);
+        for bad in ["", "Compact", "huge", "compact ", "--atlas-density=compact"] {
+            assert_eq!(density_flag(bad), None, "{bad:?}");
+        }
+        for f in ["compact", "comfortable"] {
+            let flag = density_flag(f).unwrap();
+            assert!(flag.starts_with("--") && !flag.contains(' '), "{flag}");
         }
     }
 
