@@ -86,6 +86,8 @@ files/usr/lib/wolos/webpolicy
 files/usr/lib/wolos/wol-install
 files/usr/lib/wolos/xguard-update
 files/usr/share/wolos/boot/41_wolos
+tools/bench/atlas-drive/bench.py
+tools/bench/atlas-drive/chart.py
 tools/bench/discord/as-user.sh
 tools/bench/discord/cdp.py
 tools/bench/discord/duty.sh

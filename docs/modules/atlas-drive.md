@@ -116,7 +116,7 @@ Done = built and run against a real Atlas (headless, the component build of 2026
 | codegen | `codegen` replays the verbs of a session; it is not an interactive recorder |
 | screenshots, PDF, video | screenshot, pdf; frames from `record`; no mp4/webm muxer |
 | accessibility snapshot | `snapshot` (also refs and diff, which `ariaSnapshot` does not have) |
-| cross-browser | Atlas only (a Servo adapter is later) |
+| cross-browser | Atlas only (a page-engine adapter is later) |
 
 ## Frozen CDP subset
 
@@ -124,7 +124,7 @@ Done = built and run against a real Atlas (headless, the component build of 2026
 
 ## Not built (and where it goes)
 
-Attach to a running Atlas (the launcher holds the pipe: ADR 0063 "Not decided"), the consent sheet and indicator widget, the Crystal shard, wolvm `drive.*` steps, bindings generated from `browser_protocol.pdl`, incremental accessibility mirror (a heavy page costs the browser about a second per full tree; Playwright's `ariaSnapshot` costs the same), frames, drag and drop, incognito contexts, Servo adapter.
+Attach to a running Atlas (the launcher holds the pipe: ADR 0063 "Not decided"), the consent sheet and indicator widget, the Crystal shard, wolvm `drive.*` steps, bindings generated from `browser_protocol.pdl`, incremental accessibility mirror (a heavy page costs the browser about a second per full tree; Playwright's `ariaSnapshot` costs the same), frames, drag and drop, incognito contexts, page-engine adapter.
 
 ## Where things are
 

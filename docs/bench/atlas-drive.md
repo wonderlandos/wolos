@@ -100,7 +100,7 @@ Metrics, the same sequence in `examples/bench.rs` and `pw.mjs`:
 
 ## Not measured, not verified
 
-- Headed mode, a real GPU, the official PGO build of Atlas (the component build is several times slower in the browser; the driver's own costs do not change), Servo.
+- Headed mode, a real GPU, the official PGO build of Atlas (the component build is several times slower in the browser; the driver's own costs do not change), the page engine.
 - The `fed://` page through the system `atlas-fed` package: the helper was the slot-4 binary.
 - Playwright with its MCP server, with other launch flags, or `page.accessibility` (removed from Playwright); a Playwright run whose script uses `waitForLoadState('networkidle')`.
 - The size of `page.content()` is in the raw JSON (`content_tokens`: 7461 on the hub page, 13 087 on wolos, 143 859 on the heavy page); it is what a script that reads HTML pays and is not part of the comparison.

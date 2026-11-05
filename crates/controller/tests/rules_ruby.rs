@@ -58,7 +58,10 @@ const CENSUS: &[(&str, &str)] = &[
 /// (`tools/bench/discord/*.py`, six; `tools/bench/js-runtime-x/*.py`, two: DevTools websocket and
 /// smaps readers), and `tools/theme/atlas-gtk3-sample.py` draws a GTK 3 sample through python-gi
 /// (ATLAS-THEME), a binding Ruby does not have here.
-const B_PYTHON: &[(&str, usize)] = &[("tools", 11)];
+/// tools 11 -> 18 (INT-2, round 4; none of them is shipped): the MEMSAVER-X2 harness
+/// (`tools/bench/memsaver-x2/*.py`, five: they drive Discord and read /proc from the forge) and
+/// ATLAS-DRIVE's `tools/bench/atlas-drive/bench.py` and `chart.py` (CDP timings against Playwright).
+const B_PYTHON: &[(&str, usize)] = &[("tools", 18)];
 /// Scanner fixtures (wrong on purpose; never part of the scope).
 const FIXTURES: &str = "crates/controller/tests/fixtures/ruby/";
 /// The folders whose Ruby is checked.

@@ -25,7 +25,7 @@ WolOS tests Atlas, the hub and the OS web apps with pixel steps (wolvm journeys)
 ## Not decided here (honest list; docs/modules/atlas-drive.md has the per-verb status)
 - Attaching to an Atlas that is already running: a pipe cannot be attached afterwards, so this needs the launcher to hold the pipe (the launcher flag `--atlas-drive`, Developer mode only) and hand the daemon the descriptors. Not built; today the daemon starts its own Atlas.
 - The consent sheet itself (shell UI) and the indicator widget; the daemon provides the hook and the state file.
-- Crystal shard, wolvm `drive.*` journey steps, generated bindings from `browser_protocol.pdl`, Servo adapter, video encoding (frames are written; muxing is ffmpeg's), incremental accessibility mirror (a heavy page costs the browser about a second per full tree).
+- Crystal shard, wolvm `drive.*` journey steps, generated bindings from `browser_protocol.pdl`, page-engine adapter, video encoding (frames are written; muxing is ffmpeg's), incremental accessibility mirror (a heavy page costs the browser about a second per full tree).
 
 ## Consequences
 - New crate in the workspace, new binary `atlas-drive`, new fuzz target `atlas_drive_wire` (STANDARDS list, ci.yml matrix, seeds), unsafe ratchet row `atlas-drive 0`, architecture row (`shared` only).

@@ -74,7 +74,7 @@ const BASELINE: &[(&str, &str, usize)] = &[
     // +1 (INT-2, 0.13 integration): theme::gtk_atlas::want is documented to stop with the token's
     //   name for a theme that passed the contract (try_want is the fallible form).
     ("RR-016", "core", 1),
-    ("RR-017", "api", 10),
+    ("RR-017", "api", 8),
     ("RR-017", "audio", 1),
     ("RR-017", "aurlaws", 74),
     ("RR-017", "controller", 3),
@@ -170,7 +170,6 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-036", "aurlaws", 4),
     ("RR-036", "wopkg", 18),
     ("RR-036", "xguard", 34),
-    ("RR-037", "api", 1),
     ("RR-037", "core", 4),
     ("RR-037", "proxy", 1),
     ("RR-037", "realtime", 1),
@@ -178,9 +177,6 @@ const BASELINE: &[(&str, &str, usize)] = &[
     //   lock.rs: one-shot helper threads that end with their job.
     ("RR-037", "shell", 33),
     ("RR-037", "wol-abi", 1),
-    // +4 (INT-2, 0.13 integration): wol-keyringd.rs and daemon.rs: connection and tick threads of
-    //   the daemon.
-    ("RR-037", "wolkeyring", 4),
     ("RR-037", "wopkg", 2),
     ("RR-037", "xguard", 2),
     ("RR-037", "xguard-clam", 1),
@@ -232,6 +228,9 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-048", "shell", 8),
     ("RR-048", "wol-abi", 10),
     ("RR-049", "api", 7),
+    // +2 (INT-2, 0.13 integration): atlas-fed/tests/serve.rs waits out the helper's idle exit
+    //   (800 ms) and a retry (300 ms): the test is about the clock.
+    ("RR-049", "atlas-fed", 2),
     ("RR-049", "controller", 1),
     ("RR-049", "core", 1),
     // +9 (INT-2, 0.13 integration): tests that wait for a real process, a Broadway frame or a
@@ -263,9 +262,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     // +1 (INT-2, 0.13 integration): shared/src/plugins.rs is 2042 lines with the plugin hub fields
     //   (WD-PLUG).
     ("RR-056", "shared", 1),
-    // +3 (INT-2, 0.13 integration): kit/widgets.rs 2059, tests/golden.rs 2256 and
-    //   tests/rules_ui.rs 2087 lines with the merged branches' parts and rules.
-    ("RR-056", "shell", 3),
+    // +4 (INT-2, 0.13 integration): kit/widgets.rs 2059, tests/golden.rs 2256, tests/rules_ui.rs
+    //   2087 and ui/settings/mod.rs 2026 lines with the merged branches' parts and rules (the input
+    //   guard of the Store sheet, the reveal of a searched row).
+    ("RR-056", "shell", 4),
     ("RR-057", "api", 1),
     ("RR-057", "audio", 1),
     ("RR-057", "aurlaws", 1),
