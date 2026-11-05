@@ -71,6 +71,19 @@ fn tail(rest: &str) -> Result<(String, Option<String>), String> {
     Ok((path.to_owned(), query))
 }
 
+/// The one spelling of a web host every Federate decision reads (the resolver's TLD rule, the http
+/// mapping, webengine's origin gate): the root label dropped (`home.fed.` is `home.fed`, every
+/// trailing dot) and ASCII lower case. Two readers that spelled it apart let `https://home.fed.`
+/// past the fed-only rule (QA-A10-CS-2). Borrowed when `host` is already in that spelling.
+pub fn web_host(host: &str) -> std::borrow::Cow<'_, str> {
+    let host = host.trim_end_matches('.');
+    if host.bytes().any(|b| b.is_ascii_uppercase()) {
+        std::borrow::Cow::Owned(host.to_ascii_lowercase())
+    } else {
+        std::borrow::Cow::Borrowed(host)
+    }
+}
+
 /// `(host, rest)` of an `http(s)` URL: the host as [`FedUrl::http_host`] gives it, and everything
 /// from the first `/`, `?` or `#` after the authority.
 fn http_parts(url: &str) -> Option<(String, &str)> {
@@ -85,8 +98,7 @@ fn http_parts(url: &str) -> Option<(String, &str)> {
         Some((h, p)) if !hostport.ends_with(']') && p.bytes().all(|b| b.is_ascii_digit()) => h,
         _ => hostport,
     };
-    let host = host.strip_suffix('.').unwrap_or(host);
-    Some((host.to_ascii_lowercase(), rest))
+    Some((web_host(host).into_owned(), rest))
 }
 
 fn split_authority(rest: &str) -> (&str, &str) {

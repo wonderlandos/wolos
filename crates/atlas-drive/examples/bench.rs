@@ -72,7 +72,13 @@ fn main() {
         .map(|(a, b)| (a.to_string(), b.to_string()))
         .collect();
     let sock = std::env::temp_dir().join(format!("adb-{}/drive.sock", std::process::id()));
-    let _ = std::fs::create_dir_all(sock.parent().unwrap());
+    // the daemon makes the directory 0700 and refuses one that is not private (QA-A10-CS-3)
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let _ = std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(sock.parent().unwrap());
+    }
     let mut out = json!({});
 
     // cold start: process start -> first command answered
