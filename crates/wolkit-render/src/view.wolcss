@@ -13,6 +13,8 @@
 .list-field { min-height: 40px; justify-content: center; }
 /* switch: the regular size. */
 toggle { width: 36px; height: 24px; }
+/* slider: the regular height; the trough and the knob are drawn inside it. */
+slider { height: 16px; min-height: 16px; background: transparent; border-radius: 0; }
 /* label: the six type roles (design/tokens/type.json). */
 .icon { color: text; }
 .role-display { font-size: 35px; line-height: 1.485714; font-weight: 600; letter-spacing: -0.5px; }
