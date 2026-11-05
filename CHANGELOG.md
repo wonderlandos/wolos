@@ -32,6 +32,7 @@
 - Tor as a layer of the system (ADR 0056, docs/modules/tor.md): for Atlas tabs, for one app or for the whole computer, kept by the firewall rather than by a setting of the program; `wol-tor switches` shows and changes it.
 - `fed://` addresses open in the web engine (ADR 0052): the Federate network's names resolve through the signed chain, with honest error pages.
 - The keyring has a post-quantum store (ADR 0054, docs/modules/keyring.md): `wol keyring` and `wol-keyringd` are installed; the daemon stays off and gnome-keyring is still the login keyring until the unlock path is wired.
+- In Settings, pressing Undo on the "changed" note at the bottom of a window no longer shuts the whole desktop down; it undoes the change as it should. The line that says what is wrong under a field (a name that is taken, a password that is too short) is now red, as it was meant to be.
 
 Windows
 - Snap windows to halves, quarters and the full screen: drag a window by its title bar to the left or right edge for a half of the screen, to a corner for a quarter, to the top to zoom, with a preview of the place before you let go; dragging it away gives back its old size. Resting the pointer on the zoom button opens a chooser with the halves and the four quarters. ⌘ with the arrow keys walks the same places (⌘↑ no longer opens Overview: ⌃↑ and the three-finger swipe still do). System Settings > Desktop & Dock > Windows has Snap windows to screen edges (on by default); Tile windows keeps the automatic layout. See docs/modules/windows.md.

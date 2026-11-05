@@ -434,7 +434,8 @@ impl wol_context {
                         FromHost::Clicked { widget, .. }
                         | FromHost::Edited { widget, .. }
                         | FromHost::Toggled { widget, .. }
-                        | FromHost::Slid { widget, .. } => *widget,
+                        | FromHost::Slid { widget, .. }
+                        | FromHost::Picked { widget, .. } => *widget,
                         FromHost::Closed { .. } | FromHost::Chose { .. } => continue,
                     };
                     let w = lock(&self.widgets).get(&id).and_then(Weak::upgrade);
