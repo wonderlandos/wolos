@@ -98,3 +98,4 @@ tools/install-webapps.sh
 tools/license/relicense.py
 tools/ruby/lint.sh
 tools/site-shots.sh
+tools/theme/atlas-gtk3-sample.py
