@@ -1,7 +1,7 @@
 # The file went away, or is a folder where only a file can go. wold is not asked.
 dir photos
-> {"op":"hello","version":1,"pid":@PID}
-< {"reply":"hello","version":1}
+> {"op":"hello","version":2,"pid":@PID}
+< {"reply":"hello","version":2}
 > {"op":"share","id":1,"path":"@DIR/gone.pdf"}
 < {"reply":"error","id":1,"code":"not-found","text":"The file is not there any more. It may have been moved or deleted."}
 > {"op":"trash","id":2,"path":"@DIR/gone.pdf"}

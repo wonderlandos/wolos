@@ -5,8 +5,8 @@ file home-like
 wold file.trash {"ok":true,"data":{"name":"report.pdf"}}
 wold file.trash {"ok":true,"data":{}}
 wold file.trash {"ok":false,"code":"invalid-argument","message":"The home folder cannot go to the Trash."}
-> {"op":"hello","version":1,"pid":@PID}
-< {"reply":"hello","version":1}
+> {"op":"hello","version":2,"pid":@PID}
+< {"reply":"hello","version":2}
 > {"op":"trash","id":1,"path":"@DIR/report.pdf"}
 < {"reply":"ok","id":1,"outcome":"trashed"}
 > {"op":"trash","id":2,"path":"@DIR/photos"}

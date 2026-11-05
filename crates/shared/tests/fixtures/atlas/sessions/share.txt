@@ -4,8 +4,8 @@ wold share.file {"ok":true,"data":{"done":"copied"}}
 wold share.file {"ok":true,"data":{"done":"saved"}}
 wold share.file {"ok":true,"data":{"done":"opened"}}
 wold share.file {"ok":true,"data":{"done":"cancelled"}}
-> {"op":"hello","version":1,"pid":@PID}
-< {"reply":"hello","version":1}
+> {"op":"hello","version":2,"pid":@PID}
+< {"reply":"hello","version":2}
 > {"op":"share","id":1,"path":"@DIR/report.pdf"}
 < {"reply":"ok","id":1,"outcome":"copied"}
 > {"op":"share","id":2,"path":"@DIR/report.pdf"}

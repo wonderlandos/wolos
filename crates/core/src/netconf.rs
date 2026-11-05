@@ -301,11 +301,13 @@ fn is_host(h: &str) -> bool {
 }
 
 /// A PAC address: http or https, no spaces, quotes or control characters (it is written into a
-/// shell file and a settings key).
+/// shell file and a settings key), and no `user:password@` in front of the host: a credential in a
+/// URL ends up in `/etc/wolos/proxy.conf` and in logs (QA-A9-SEC-10).
 pub fn is_pac_url(s: &str) -> bool {
-    s.split_once("://")
-        .is_some_and(|(scheme, rest)| matches!(scheme, "http" | "https") && !rest.is_empty())
-        && s.len() <= 2048
+    s.split_once("://").is_some_and(|(scheme, rest)| {
+        let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+        matches!(scheme, "http" | "https") && !rest.is_empty() && !authority.contains('@')
+    }) && s.len() <= 2048
         && s.bytes()
             .all(|b| b.is_ascii_graphic() && !b"'\"\\`$".contains(&b))
 }
@@ -332,9 +334,9 @@ pub fn proxy_problem(c: &ProxyConfig) -> Option<&'static str> {
     let manual = [&c.http, &c.https, &c.socks];
     match c.mode {
         ProxyMode::Off => None,
-        ProxyMode::Auto if !is_pac_url(&c.pac_url) => {
-            Some("Type the web address of the PAC file, like https://wpad.example.com/proxy.pac.")
-        }
+        ProxyMode::Auto if !is_pac_url(&c.pac_url) => Some(
+            "Type the web address of the PAC file, like https://wpad.example.com/proxy.pac, without a user name or password in it.",
+        ),
         ProxyMode::Manual if manual.iter().all(|s| s.is_empty()) => {
             Some("Type at least one proxy server, like proxy.example.com:3128.")
         }
@@ -956,6 +958,19 @@ mod tests {
         }
         assert!(is_host_port("[2001:db8::1]:3128") && is_host_port("10.0.0.1:8080"));
         assert_eq!(parse_proxy_conf("mode=manual\n"), ProxyConfig::default());
+    }
+
+    /// QA-A9-SEC-10: a PAC address with credentials is refused (they would be written to
+    /// proxy.conf and logged); an `@` further on in the path is fine.
+    #[test]
+    fn a_pac_address_never_carries_credentials() {
+        assert!(is_pac_url("https://wpad.example/proxy.pac"));
+        assert!(is_pac_url("http://wpad.example/a@b.pac"));
+        assert!(is_pac_url("http://wpad.example/p.pac?u=a@b"));
+        assert!(!is_pac_url("https://user:secret@wpad.example/proxy.pac"));
+        assert!(!is_pac_url("http://user@wpad.example/proxy.pac"));
+        assert!(!is_pac_url("http://@wpad.example/proxy.pac"));
+        assert!(proxy_from_args(&["auto", "https://u:p@wpad.example/x.pac", "-"]).is_none());
     }
 
     #[test]

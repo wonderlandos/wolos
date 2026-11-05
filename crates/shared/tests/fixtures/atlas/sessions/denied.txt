@@ -3,8 +3,8 @@ file report.pdf
 wold share.file {"ok":false,"code":"permission-denied","message":"This app may not share."}
 wold open.with {"ok":false,"code":"permission-denied","message":"This app may not share."}
 wold file.trash {"ok":false,"code":"permission-denied","message":"This app may not use the Trash."}
-> {"op":"hello","version":1,"pid":@PID}
-< {"reply":"hello","version":1}
+> {"op":"hello","version":2,"pid":@PID}
+< {"reply":"hello","version":2}
 > {"op":"share","id":1,"path":"@DIR/report.pdf"}
 < {"reply":"error","id":1,"code":"permission-denied","text":"You have not allowed Atlas to share files or open them in other apps. You can allow it in System Settings, Privacy & Security."}
 > {"op":"open_with","id":2,"path":"@DIR/report.pdf"}

@@ -3,8 +3,8 @@ file report.pdf
 wold share.file {"ok":false,"code":"unavailable","message":"The desktop is busy. Try again."}
 wold share.file {"ok":false,"code":"unavailable","message":"The desktop is not running."}
 wold file.trash {"ok":false,"code":"unavailable","message":"The desktop did not answer."}
-> {"op":"hello","version":1,"pid":@PID}
-< {"reply":"hello","version":1}
+> {"op":"hello","version":2,"pid":@PID}
+< {"reply":"hello","version":2}
 > {"op":"share","id":1,"path":"@DIR/report.pdf"}
 < {"reply":"error","id":1,"code":"busy","text":"Something else is waiting for you to choose. Finish it, then try again."}
 > {"op":"share","id":2,"path":"@DIR/report.pdf"}

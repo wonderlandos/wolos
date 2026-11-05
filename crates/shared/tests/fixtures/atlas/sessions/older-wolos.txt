@@ -4,8 +4,8 @@ wold share.file {"ok":false,"code":"invalid-argument","message":"The request is 
 wold file.trash {"ok":false,"code":"invalid-argument","message":"The request is not a known call."}
 wold open.with {"ok":false,"code":"invalid-argument","message":"The request is not a known call."}
 opener ok
-> {"op":"hello","version":1,"pid":@PID}
-< {"reply":"hello","version":1}
+> {"op":"hello","version":2,"pid":@PID}
+< {"reply":"hello","version":2}
 > {"op":"share","id":1,"path":"@DIR/report.pdf"}
 < {"reply":"error","id":1,"code":"unavailable","text":"Sharing a file from Atlas needs a newer WolOS."}
 > {"op":"trash","id":2,"path":"@DIR/report.pdf"}
