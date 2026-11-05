@@ -180,6 +180,10 @@ fn lights_exceptions_follow_the_chrome_policy() {
     let plugin = include_str!("../../../plugins/wol-hypr/main.cpp");
     assert!(plugin.contains("wol_window_lights(") && plugin.contains("wol-lights-none"));
     assert!(plugin.contains("wol-lights-close"));
+    // QA-WM-2: an Xwayland client that draws its own frame (the fork's `m_gtkFrameExtents`) reports
+    // code 6, not 3 (X11) like every window that is not a menu.
+    assert!(plugin.contains("xs->m_gtkFrameExtents ? 6 : 3"));
+    assert!(!plugin.contains("noBorders(w) ? 4 : 3"));
 }
 
 /// Live: un-zooming put a window back where the layout first saw it, not where wol-hypr placed it:
@@ -518,14 +522,15 @@ fn greeter_has_a_session_bus() {
     );
 }
 
-/// Live: the shell never appeared and left no trace. Its stderr goes to the session runtime dir.
+/// Live: the shell never appeared and left no trace. Its stderr goes to the session runtime dir
+/// (the unit's `StandardError=append:`, or the redirect where there is no user manager).
 /// The start line also runs the first sign-in Setup while the session's flag is there (ADR 0013,
 /// same words as hyprland.lua: `lua_session_starts_the_conf_programs`).
 #[test]
 fn shell_output_is_logged() {
     assert!(
         CONF.lines().any(|l| l.trim()
-            == r#"exec-once = sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
+            == r#"exec-once = sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; dbus-update-activation-environment --systemd --all; systemctl --user start wolos-shell.service || exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"'"#)
     );
 }
 

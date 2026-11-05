@@ -126,7 +126,8 @@ fn never_on_the_live_system() {
     assert!(!s.state().join("setup-started").exists());
 }
 
-/// The start line: the setup first while the flag is there, then the shell whatever it returned.
+/// The start line: the setup first while the flag is there, then the shell whatever it returned:
+/// as the user unit (QA-LIVE-21: restarted when killed), bare only where there is no user manager.
 #[test]
 fn the_compositor_runs_the_setup_before_the_shell() {
     let lua = read("desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
@@ -137,7 +138,7 @@ fn the_compositor_runs_the_setup_before_the_shell() {
     assert_eq!(
         lines,
         [
-            r#"once([[sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])"#
+            r#"once([[sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; dbus-update-activation-environment --systemd --all; systemctl --user start wolos-shell.service || exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])"#
         ]
     );
 }

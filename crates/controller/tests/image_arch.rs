@@ -41,6 +41,45 @@ fn every_greeter_compositor_turns_the_output_off_before_it_exits() {
     }
 }
 
+/// QA-SHEET-2, QA-VIS2-4 (the installer hand-off): the installer's compositor leaves the console
+/// it found. The boot log was on the framebuffer, and the old Welcome card came back with black
+/// bars, between the card fading out and the live desktop. Writing the blank bytes while the VT is in
+/// graphics mode does nothing, so `installer-session` writes them in text mode, to the VT the login
+/// window uses, before the compositor takes it (wol-login's BLANK_CONSOLE on CONSOLE); the Try
+/// word comes after the compositor is gone, drawn on the same blank console.
+#[test]
+fn the_installer_blanks_the_console_before_its_compositor_starts() {
+    use controller::login::{BLANK_CONSOLE, CONSOLE};
+    let s = read("files/usr/lib/wolos/installer-session");
+    let code: Vec<&str> = s
+        .lines()
+        .map(str::trim_start)
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    let at = |needle: &str| {
+        code.iter()
+            .position(|l| l.contains(needle))
+            .unwrap_or_else(|| panic!("installer-session has no line with {needle}"))
+    };
+    // The same bytes as wol-login writes, as printf escapes.
+    let printf = BLANK_CONSOLE.replace('\x1b', "\\033");
+    let blank = at(&format!("printf '{printf}' > \"$tty\""));
+    assert!(
+        code.contains(&format!("tty={CONSOLE}").as_str()),
+        "the login window's VT"
+    );
+    assert!(
+        blank < at("Hyprland -c"),
+        "blank first: after the compositor has the VT the write is lost"
+    );
+    // The Try word is drawn after the compositor ended, then the desktop is asked for.
+    assert!(at("Hyprland -c") < at("Starting the desktop"));
+    assert!(at("Starting the desktop") < at("systemctl start --no-block wold.service"));
+    // The compositor is the installer's own config, which turns the output off before it exits
+    // (`every_greeter_compositor_turns_the_output_off_before_it_exits`).
+    assert!(code.iter().any(|l| l.contains("installer.lua")));
+}
+
 /// QA-FILES-1 / QA-ADR-15: every program the login window's power row runs (and the session menu's)
 /// exists on the Arch image. `acpiconf` and `shutdown -p` were FreeBSD's and are gone; the verbs are
 /// systemd's, which every image has (`systemd-ukify` and the units below `files/usr/lib/systemd`

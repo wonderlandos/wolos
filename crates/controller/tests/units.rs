@@ -1497,6 +1497,80 @@ fn session_helpers_have_restart() {
     }
 }
 
+/// QA-LIVE-21: the shell's supervisor is a user unit too. `pkill -9 -x wol-shell` matches the
+/// supervisor and the shell it runs, so the supervisor alone could not bring the desktop back:
+/// the unit restarts it for any end it did not choose (a signal included, SIGTERM and SIGKILL),
+/// with no start limit, and the compositor's start line goes through it. The line that runs the
+/// shell bare stays only as the fallback where there is no user manager.
+#[test]
+fn shell_unit_comes_back_when_killed() {
+    let dir = "files/usr/lib/systemd/user";
+    let u = repo_text(&format!("{dir}/wolos-shell.service"));
+    let lines: Vec<&str> = u
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .collect();
+    for want in [
+        "PartOf=wolos-session.target",
+        "StartLimitIntervalSec=0",
+        "ExecStart=/usr/bin/wol-shell --supervised",
+        "Restart=always",
+        // The supervisor's own deliberate ends (display gone, ceiling reached, already running)
+        // stay ended; a signal has no exit status, so it is always restarted.
+        "RestartPreventExitStatus=0 1",
+        "StandardError=append:%t/wol-shell.log",
+    ] {
+        assert!(
+            lines.contains(&want),
+            "wolos-shell.service lacks {want}: {u}"
+        );
+    }
+    assert!(
+        !lines.iter().any(|l| l.starts_with("RestartSec=0")),
+        "a restart with no pause is a busy loop"
+    );
+    for conf in ["hyprland.lua", "hyprland.conf"] {
+        let c = repo_text(&format!("desktop/overlay/usr/share/wolos/hypr/{conf}"));
+        let start: Vec<&str> = c
+            .lines()
+            .filter(|l| {
+                (l.contains("exec-once") || l.starts_with("once(")) && l.contains("wol-shell")
+            })
+            .collect();
+        assert_eq!(start.len(), 1, "{conf}: {start:?}");
+        let l = start[0];
+        let unit = l.find("systemctl --user start wolos-shell.service");
+        let bare = l.find("exec wol-shell --supervised");
+        let env = l.find("dbus-update-activation-environment --systemd --all");
+        assert!(
+            env < unit && unit < bare && bare.is_some(),
+            "{conf}: environment, then the unit, the bare shell only as the fallback: {l}"
+        );
+        assert!(l[bare.unwrap() - 4..].starts_with(" || "), "{conf}: {l}");
+    }
+}
+
+/// QA-LIVE-21: moving the shell out of the session scope into its own unit must not cost it the
+/// priority the scope gave the desktop: the unit carries the scope drop-in's CPUWeight and
+/// MemoryMin, read from that file, so there is one value to change.
+#[test]
+fn shell_unit_keeps_the_session_scope_priority() {
+    let scope = repo_text("files/usr/lib/systemd/system/session-.scope.d/70-wolos-limits.conf");
+    let unit = repo_text("files/usr/lib/systemd/user/wolos-shell.service");
+    let value = |text: &str, key: &str| {
+        text.lines()
+            .map(str::trim)
+            .filter(|l| !l.starts_with('#'))
+            .find_map(|l| l.strip_prefix(key).and_then(|v| v.strip_prefix('=')))
+            .map(str::to_owned)
+    };
+    for key in ["CPUWeight", "MemoryMin"] {
+        let want = value(&scope, key).unwrap_or_else(|| panic!("the scope drop-in has no {key}"));
+        assert_eq!(value(&unit, key), Some(want), "wolos-shell.service {key}");
+    }
+}
+
 /// QA-LIVE-41 (B3): the lock screen's supervisor is a user unit that comes back when it is killed
 /// (both wol-lock processes killed left a black screen with no way back), never after a real unlock
 /// (exit 0) nor on a compositor with no session lock (69, shell lock.rs LOCK_UNSUPPORTED).

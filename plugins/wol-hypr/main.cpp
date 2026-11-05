@@ -93,8 +93,14 @@ static bool isWolProgram(PHLWINDOW w) {
 }
 
 static int32_t decorationOf(PHLWINDOW w) {
-    if (w->backend().isX11())
-        return noBorders(w) ? 4 : 3;
+    if (w->backend().isX11()) {
+        // A GTK client that draws its own frame sets _GTK_FRAME_EXTENTS (hyprland-wolos 0017): it
+        // keeps its header-bar buttons, the strip would be a second set (QA-WM-2).
+        if (noBorders(w))
+            return 4;
+        const auto xs = xsurfaceOf(w);
+        return xs && xs->m_gtkFrameExtents ? 6 : 3;
+    }
     const auto top = toplevelOf(w);
     if (!top)
         return 1;
