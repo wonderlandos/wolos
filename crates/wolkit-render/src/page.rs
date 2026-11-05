@@ -50,6 +50,8 @@ pub struct Page {
     events: EventQueue,
     pub list: DisplayList,
     seq: u32,
+    /// What a click on each part of the design-system nodes means ([`crate::view::Bind`]).
+    binds: Vec<crate::view::Bind>,
 }
 
 impl Page {
@@ -85,6 +87,7 @@ impl Page {
             events: EventQueue::new(),
             list: DisplayList::new(),
             seq: 0,
+            binds: Vec::new(),
         };
         page.with(|w, b, s| b.show(w, s))
             .map_err(|e| e.to_string())?;
@@ -119,9 +122,16 @@ impl Page {
     /// Shows a `shared::view` tree ([`crate::view::raise`]).
     pub fn mount(&mut self, tree: &Node) -> Result<(), String> {
         let mut w = Writer::new();
-        crate::view::raise(tree, &mut w);
+        self.binds = crate::view::raise_bound(tree, &mut w);
         let bytes = w.finish(self.seq + 1).to_vec();
         self.apply(&bytes)
+    }
+
+    /// What a click on scene part `node` means to the app, when it is a part of the
+    /// design-system nodes (a checkbox, an option, a chip, a tab, a disclosure header): these keep
+    /// their state in the app's tree, so the page does not flip them itself.
+    pub fn pick_for(&self, node: u32) -> Option<&crate::view::Pick> {
+        self.binds.iter().find(|b| b.node == node).map(|b| &b.pick)
     }
 
     /// A new size (logical pixels) and scale.
@@ -223,6 +233,85 @@ impl Page {
         pipeline::ensure_layout(&mut self.core);
         let r = self.core.scene.rect(i);
         Some([r.x, r.y, r.w, r.h])
+    }
+
+    /// The look the page draws with: light or dark and the accent (0xRRGGBB). The page reads
+    /// the system theme through its host (the shell's Kit host passes the shell's theme, the web
+    /// loader the host page's theme message or `prefers-color-scheme`) and calls this on every
+    /// change; colours are tokens resolved at paint time, so the next frame has the new look.
+    /// Returns whether anything changed.
+    pub fn set_theme(&mut self, dark: bool, accent_rgb: u32) -> bool {
+        let env = &mut self.core.env;
+        if env.dark == dark && env.accent_rgb == accent_rgb {
+            return false;
+        }
+        env.dark = dark;
+        env.accent_rgb = accent_rgb;
+        self.core.style_version += 1;
+        true
+    }
+
+    /// Applies the system theme the way native wolkit apps read it
+    /// (`wolkit::window::native::theme::read`: the active theme file, its accent, Auto day and
+    /// night). Feature `native` only; the shell's Kit host passes the shell's own theme and the
+    /// web page the host page's. Returns whether anything changed.
+    #[cfg(feature = "native")]
+    pub fn follow_system_theme(&mut self, config_home: &std::path::Path) -> bool {
+        use wolkit::window::native::{sys, theme};
+        let a = theme::read(config_home, sys::local_time());
+        self.set_theme(a.env.dark, a.env.accent_rgb)
+    }
+
+    /// The built-in theme's accent for light or dark (`crates/core/src/theme/builtin`).
+    pub fn default_accent(dark: bool) -> u32 {
+        theme_accent(dark)
+    }
+
+    fn live(&self, node: u32) -> Option<wolkit::scene::Idx> {
+        let id = wolkit::scene::NodeId(node);
+        let i = id.slot();
+        (self.core.scene.is_live(i) && self.core.scene.id(i) == id).then_some(i)
+    }
+
+    /// Whether the part is checked (a switch that is on).
+    pub fn checked(&self, node: u32) -> bool {
+        self.live(node)
+            .is_some_and(|i| self.core.scene.state(i) & wolkit::scene::state::CHECKED != 0)
+    }
+
+    /// A slider's value.
+    pub fn slider_value(&self, node: u32) -> Option<f32> {
+        let i = self.live(node)?;
+        let v = self
+            .core
+            .scene
+            .prop(i, wolkit::scene::prop::id::SLIDER_VALUE)?;
+        Some(f32::from_bits(v.w[0]))
+    }
+
+    /// A part's text (a field's contents, a label).
+    pub fn text_of(&self, node: u32) -> Option<String> {
+        let i = self.live(node)?;
+        Some(self.core.scene.text(i).to_owned())
+    }
+
+    /// Height the content needs: the bottom of the page's last part plus the page's bottom
+    /// padding (the view sheet pads the page by the same step left and bottom), at the current
+    /// width. None before a tree is mounted.
+    pub fn content_height(&mut self) -> Option<f32> {
+        pipeline::ensure_layout(&mut self.core);
+        let page = self.live(crate::view::FIRST_STRUCT)?;
+        let scene = &self.core.scene;
+        let root = scene.rect(page);
+        let mut c = scene.first_child(page);
+        let (mut bottom, mut pad) = (root.y, None);
+        while c != wolkit::scene::NIL {
+            let r = scene.rect(c);
+            bottom = bottom.max(r.y + r.h);
+            pad.get_or_insert(r.x - root.x);
+            c = scene.next_sibling(c);
+        }
+        Some(bottom - root.y + pad.unwrap_or(0.0))
     }
 
     /// The window's own background (the surface token).

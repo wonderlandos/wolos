@@ -1,0 +1,38 @@
+{
+  "type": "stack",
+  "spacing": 16,
+  "children": [
+    {
+      "type": "stack",
+      "spacing": 4,
+      "children": [
+        { "type": "label", "text": "Look", "role": "large" },
+        { "type": "label", "text": "Theme, accent colour and text size. The whole system follows these choices at once, apps included, and nothing needs to restart.", "role": "secondary" }
+      ]
+    },
+    {
+      "type": "list",
+      "children": [
+        { "type": "toggle", "id": 1, "on": false, "label": "Dark Appearance" },
+        { "type": "toggle", "id": 2, "on": true, "label": "Follow the Time of Day" },
+        { "type": "toggle", "id": 3, "on": false, "label": "Increase Contrast" },
+        { "type": "toggle", "id": 4, "on": false, "label": "Reduce Transparency" }
+      ]
+    },
+    { "type": "label", "text": "Text Size", "role": "title" },
+    {
+      "type": "list",
+      "children": [
+        { "type": "slider", "id": 5, "value": 100.0, "min": 80.0, "max": 150.0 }
+      ]
+    },
+    {
+      "type": "row",
+      "spacing": 8,
+      "children": [
+        { "type": "spacer" },
+        { "type": "button", "id": 6, "label": "Restore Defaults" }
+      ]
+    }
+  ]
+}

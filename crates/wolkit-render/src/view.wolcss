@@ -3,18 +3,22 @@
    The same roles, card list and spacing scale the shell's Kit host draws in GTK
    (crates/shell/src/ui/app_view.rs); colours are theme tokens only. */
 
-.page { padding: 0 lg lg lg; background: surface; }
-/* The Kit host's 40 px title row is the 28 px bar plus the page gap above the divider. */
+/* BEGIN generated from design/components/catalog.json by tests/spec_sheet.rs (WOL_SPEC_UPDATE=1); do not edit */
+/* window-chrome: the page pads left, right and bottom; the title row is the bar plus the page gap. */
+.page { padding: 0 16px 16px 16px; gap: 12px; background: surface; }
 .titlebar { min-height: 28px; }
-.list { background: card; border-radius: m; padding: xs md; box-shadow: sm; }
-.list-row { min-height: 52px; align-items: center; }
-.list-field { min-height: 52px; justify-content: center; }
+/* list-row: the card and its rows at the standard density. */
+.list { background: card; border-radius: 12px; padding: 4px 12px; box-shadow: sm; }
+.list-row { min-height: 40px; align-items: center; gap: 8px; }
+.list-field { min-height: 40px; justify-content: center; }
+/* switch: the regular size. */
+toggle { width: 36px; height: 24px; }
+/* label: the six type roles (design/tokens/type.json). */
 .icon { color: text; }
-
-.role-display { font-size: display; font-weight: 700; }
-.role-large { font-size: large; font-weight: 600; }
-/* The Kit host draws a title at the body size, semibold (kit.css label.title). */
-.role-title { font-size: body; font-weight: 600; }
-.role-body { font-size: body; }
-.role-secondary { font-size: secondary; color: dim; }
-.role-caption { font-size: caption; color: dim; }
+.role-display { font-size: 35px; line-height: 1.485714; font-weight: 600; letter-spacing: -0.5px; }
+.role-large { font-size: 27px; line-height: 1.481481; font-weight: 700; letter-spacing: -0.5px; }
+.role-title { font-size: 13px; line-height: 1.538462; font-weight: 600; }
+.role-body { font-size: 13px; line-height: 1.538462; font-weight: 400; }
+.role-secondary { font-size: 11px; line-height: 1.454545; font-weight: 400; color: dim; }
+.role-caption { font-size: 11px; line-height: 1.454545; font-weight: 600; letter-spacing: 0.4px; }
+/* END generated */

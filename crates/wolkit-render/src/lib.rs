@@ -26,6 +26,7 @@ pub mod page;
 pub mod view;
 #[cfg(feature = "native")]
 pub mod vulkan;
+#[cfg(feature = "gpu")]
 pub mod wgpu_backend;
 
 pub use wolkit::cpu::raster::Image;

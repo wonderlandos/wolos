@@ -63,8 +63,18 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
                 // the audio adaptor (wol_audio::pw::Handle).
                 // Settings and the Search bar rank by meaning with wolsem (docs/modules/search.md).
-                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio", "wolsem"]
-                    .contains(&dep.as_str()),
+                // Kit app windows draw through libWolkit's page and CPU rasteriser (WOLKIT-1TO1).
+                "shell" => [
+                    "shared",
+                    "core",
+                    "wopkg",
+                    "wol-lua",
+                    "audio",
+                    "wolsem",
+                    "wolkit",
+                    "wolkit-render",
+                ]
+                .contains(&dep.as_str()),
                 // The web-app runtime (ADR 0042) paints into wolkit surface nodes and reads wolkit's
                 // event records; BSD-2-Clause like wolkit, so the licence rule holds. It serves
                 // fed:// through `federate` (ADR 0052), a BSD-2-Clause leaf with no workspace
@@ -155,7 +165,8 @@ fn violations_table() {
         (&[("wolkit", &["core", "shared"])], &[]),
         (&[("wolkit", &["wol-abi"])], &["wolkit -> wol-abi"]),
         (&[("wolkit", &["api"])], &["wolkit -> api"]),
-        (&[("shell", &["wolkit"])], &["shell -> wolkit"]),
+        // WOLKIT-1TO1: Kit app windows draw through libWolkit's page and CPU rasteriser.
+        (&[("shell", &["wolkit"])], &[]),
         (&[("wol-abi", &["wolkit"])], &["wol-abi -> wolkit"]),
         (&[("wopkg", &["core", "shared"])], &[]),
         (&[("wopkg", &["api"])], &["wopkg -> api"]),
@@ -179,10 +190,8 @@ fn violations_table() {
             &[],
         ),
         (&[("wolkit-web", &["api"])], &["wolkit-web -> api"]),
-        (
-            &[("shell", &["wolkit-render"])],
-            &["shell -> wolkit-render"],
-        ),
+        (&[("shell", &["wolkit-render"])], &[]),
+        (&[("shell", &["wolkit-web"])], &["shell -> wolkit-web"]),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

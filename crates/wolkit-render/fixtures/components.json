@@ -1,0 +1,612 @@
+{
+ "note": "WOLKIT-1TO1 component cases: each tree drawn by the shell's Kit host (golden kit-view-<name>-<variant>) and by wolkit-render (tests/page.rs); they must be the same pixels. Size: 360 x 200.",
+ "width": 360,
+ "height": 200,
+ "cases": [
+  {
+   "name": "window-chrome",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": []
+   }
+  },
+  {
+   "name": "switch-off",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "toggle",
+      "id": 1,
+      "on": false,
+      "label": "Bluetooth"
+     }
+    ]
+   }
+  },
+  {
+   "name": "switch-on",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "toggle",
+      "id": 1,
+      "on": true,
+      "label": "Bluetooth"
+     }
+    ]
+   }
+  },
+  {
+   "name": "button-default",
+   "tree": {
+    "type": "row",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "spacer"
+     },
+     {
+      "type": "button",
+      "id": 1,
+      "label": "Cancel"
+     },
+     {
+      "type": "button",
+      "id": 2,
+      "label": "Install"
+     }
+    ]
+   }
+  },
+  {
+   "name": "text-field-filled",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "text-field",
+      "id": 1,
+      "text": "Ada Lovelace",
+      "placeholder": "Name"
+     }
+    ]
+   }
+  },
+  {
+   "name": "text-field-empty",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "text-field",
+      "id": 1,
+      "text": "",
+      "placeholder": "Name"
+     }
+    ]
+   }
+  },
+  {
+   "name": "slider-low",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "slider",
+      "id": 1,
+      "value": 10.0,
+      "min": 0.0,
+      "max": 100.0
+     }
+    ]
+   }
+  },
+  {
+   "name": "slider-high",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "slider",
+      "id": 1,
+      "value": 90.0,
+      "min": 0.0,
+      "max": 100.0
+     }
+    ]
+   }
+  },
+  {
+   "name": "list-row",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "label",
+      "text": "Name",
+      "role": "body"
+     },
+     {
+      "type": "label",
+      "text": "Wi-Fi",
+      "role": "body"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label-display",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": [
+     {
+      "type": "label",
+      "text": "Wonderland 0.12",
+      "role": "display"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label-large",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": [
+     {
+      "type": "label",
+      "text": "Wonderland 0.12",
+      "role": "large"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label-title",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": [
+     {
+      "type": "label",
+      "text": "Wonderland 0.12",
+      "role": "title"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label-body",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": [
+     {
+      "type": "label",
+      "text": "Wonderland 0.12",
+      "role": "body"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label-secondary",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": [
+     {
+      "type": "label",
+      "text": "Wonderland 0.12",
+      "role": "secondary"
+     }
+    ]
+   }
+  },
+  {
+   "name": "label-caption",
+   "tree": {
+    "type": "stack",
+    "spacing": 0,
+    "children": [
+     {
+      "type": "label",
+      "text": "Wonderland 0.12",
+      "role": "caption"
+     }
+    ]
+   }
+  },
+  {
+   "name": "checkbox-off",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "checkbox",
+      "id": 1,
+      "label": "Show hidden files",
+      "checked": false
+     }
+    ]
+   }
+  },
+  {
+   "name": "checkbox-on",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "checkbox",
+      "id": 1,
+      "label": "Show hidden files",
+      "checked": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "checkbox-mixed",
+   "tree": {
+    "type": "list",
+    "children": [
+     {
+      "type": "checkbox",
+      "id": 1,
+      "label": "Select all",
+      "checked": false,
+      "mixed": true
+     }
+    ]
+   }
+  },
+  {
+   "name": "radio-group",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "radio-group",
+      "id": 1,
+      "options": [
+       {
+        "key": "a",
+        "label": "Automatic"
+       },
+       {
+        "key": "b",
+        "label": "Light"
+       },
+       {
+        "key": "c",
+        "label": "Dark"
+       }
+      ],
+      "selected": "b"
+     }
+    ]
+   }
+  },
+  {
+   "name": "chips-assist",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "chips",
+      "id": 1,
+      "kind": "assist",
+      "chips": [
+       {
+        "key": "cal",
+        "label": "Add to Calendar"
+       },
+       {
+        "key": "map",
+        "label": "Directions"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "chips-filter",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "chips",
+      "id": 1,
+      "kind": "filter",
+      "chips": [
+       {
+        "key": "all",
+        "label": "All"
+       },
+       {
+        "key": "inst",
+        "label": "Installed",
+        "on": true
+       },
+       {
+        "key": "upd",
+        "label": "Updates"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "chips-input",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "chips",
+      "id": 1,
+      "kind": "input",
+      "chips": [
+       {
+        "key": "ada",
+        "label": "Ada"
+       },
+       {
+        "key": "grace",
+        "label": "Grace"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "chips-suggestion",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "chips",
+      "id": 1,
+      "kind": "suggestion",
+      "chips": [
+       {
+        "key": "w",
+        "label": "Weather today"
+       },
+       {
+        "key": "n",
+        "label": "News"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "tabs-primary",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "tabs",
+      "id": 1,
+      "tabs": [
+       {
+        "key": "o",
+        "label": "Overview"
+       },
+       {
+        "key": "d",
+        "label": "Details"
+       },
+       {
+        "key": "h",
+        "label": "History"
+       }
+      ],
+      "selected": "d",
+      "children": [
+       {
+        "type": "label",
+        "text": "Overview body",
+        "role": "body"
+       },
+       {
+        "type": "label",
+        "text": "Wi-Fi, 5 GHz, WPA3",
+        "role": "body"
+       },
+       {
+        "type": "label",
+        "text": "History body",
+        "role": "body"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "progress-half",
+   "tree": {
+    "type": "stack",
+    "spacing": 16,
+    "children": [
+     {
+      "type": "progress",
+      "value": 0.5,
+      "label": "Installing"
+     },
+     {
+      "type": "progress",
+      "value": 1.0,
+      "label": "Done"
+     },
+     {
+      "type": "progress",
+      "label": "Working"
+     }
+    ]
+   }
+  },
+  {
+   "name": "divider",
+   "tree": {
+    "type": "stack",
+    "spacing": 12,
+    "children": [
+     {
+      "type": "label",
+      "text": "First group",
+      "role": "body"
+     },
+     {
+      "type": "divider"
+     },
+     {
+      "type": "label",
+      "text": "Second group",
+      "role": "body"
+     }
+    ]
+   }
+  },
+  {
+   "name": "card-elevated",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "card",
+      "style": "elevated",
+      "children": [
+       {
+        "type": "label",
+        "text": "Weather",
+        "role": "title"
+       },
+       {
+        "type": "label",
+        "text": "Sunny, 21 degrees",
+        "role": "secondary"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "card-filled",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "card",
+      "style": "filled",
+      "children": [
+       {
+        "type": "label",
+        "text": "Weather",
+        "role": "title"
+       },
+       {
+        "type": "label",
+        "text": "Sunny, 21 degrees",
+        "role": "secondary"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "card-outlined",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "card",
+      "style": "outlined",
+      "children": [
+       {
+        "type": "label",
+        "text": "Weather",
+        "role": "title"
+       },
+       {
+        "type": "label",
+        "text": "Sunny, 21 degrees",
+        "role": "secondary"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "disclosure-closed",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "disclosure",
+      "id": 1,
+      "title": "Advanced options",
+      "open": false,
+      "children": [
+       {
+        "type": "label",
+        "text": "Hidden body",
+        "role": "body"
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "disclosure-open",
+   "tree": {
+    "type": "stack",
+    "spacing": 8,
+    "children": [
+     {
+      "type": "disclosure",
+      "id": 1,
+      "title": "Advanced options",
+      "open": true,
+      "children": [
+       {
+        "type": "label",
+        "text": "Shown body",
+        "role": "body"
+       },
+       {
+        "type": "checkbox",
+        "id": 2,
+        "label": "Use the proxy",
+        "checked": true
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

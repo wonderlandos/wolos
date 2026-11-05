@@ -9,8 +9,12 @@ description = "libWolkit render targets behind one trait: the CPU reference, the
 [features]
 # `native`: the existing Vulkan renderer (wolkit::gpu, ash) as a second GPU implementation of the
 # trait. Off for wasm32.
-default = ["native"]
+default = ["native", "gpu"]
 native = ["wolkit/native"]
+# `gpu`: the wgpu target natively (Vulkan). Off for a host that only needs the CPU reference, such
+# as the shell's Kit host (crates/shell ui::app_wolkit), which must not link wgpu. The web
+# module turns it on (wgpu is the page's renderer there).
+gpu = ["dep:wgpu"]
 
 [dependencies]
 wolkit = { path = "../wolkit", default-features = false }
@@ -18,10 +22,10 @@ shared.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"], optional = true }
 
 [dev-dependencies]
 # The shared golden scenes and their font set name harfrust types (already wolkit's dependency).

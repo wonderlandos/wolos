@@ -3,6 +3,8 @@
 
 use wasm_bindgen::prelude::*;
 use wolkit::window::{KeyInput, PointerInput};
+use wolkit_render::Renderer;
+use wolkit_render::cpu::CpuRenderer;
 use wolkit_render::page::Page;
 use wolkit_render::wgpu_backend::{WgpuRenderer, device_descriptor, unpad};
 
@@ -24,6 +26,10 @@ pub struct KitPage {
     config: wgpu::SurfaceConfiguration,
     last_ms: f64,
     t0: f64,
+    /// The exact path (the default): the CPU reference draws the frame and WebGPU shows it byte
+    /// for byte, so the page is the shell's Kit window pixel for pixel. Off: the GPU rasterises
+    /// (`?raster=gpu`), within the GPU tolerance of the reference.
+    exact: bool,
 }
 
 /// Mounts the view tree `tree_json` (a `shared::view::Node`, JSON) into `canvas`, `width` by
@@ -85,8 +91,12 @@ pub async fn mount(
             )
         })
         .ok_or_else(|| js("The canvas offers no 8-bit unorm format."))?;
+    // COPY_DST: the exact path writes the CPU frame into the canvas texture. A WebGPU canvas
+    // takes any usage its format allows (gpuweb GPUCanvasConfiguration.usage); wgpu's web backend
+    // reports RENDER_ATTACHMENT alone as a static placeholder, so the caps are not asked here.
+    let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST;
     let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        usage,
         format,
         width: dw,
         height: dh,
@@ -105,6 +115,7 @@ pub async fn mount(
         config,
         last_ms: 0.0,
         t0,
+        exact: usage.contains(wgpu::TextureUsages::COPY_DST),
     };
     kit.frame()?;
     Ok(kit)
@@ -121,6 +132,17 @@ impl KitPage {
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             other => return Err(js(format!("{other:?}"))),
         };
+        if self.exact {
+            let img = self
+                .page
+                .draw(|f| CpuRenderer.render_image(f))
+                .map_err(js)?;
+            self.r.upload_frame(&img, &tex.texture);
+            self.r.queue.submit([]);
+            self.r.queue.present(tex);
+            self.last_ms = now_ms() - t;
+            return Ok(self.last_ms);
+        }
         let view = tex
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -133,6 +155,37 @@ impl KitPage {
         Ok(self.last_ms)
     }
 
+    /// The system theme: light or dark and the accent (0xRRGGBB). The loader calls it on the host
+    /// page's theme message (inside WolOS) or on a `prefers-color-scheme` change (outside), and
+    /// the next frame has the new look; no reload. Returns whether anything changed.
+    pub fn set_theme(&mut self, dark: bool, accent: u32) -> Result<bool, JsValue> {
+        let changed = self.page.set_theme(dark, accent);
+        if changed {
+            self.r.invalidate();
+            self.frame()?;
+        }
+        Ok(changed)
+    }
+
+    /// The built-in accent of light or dark (the loader's default outside WolOS).
+    pub fn default_accent(dark: bool) -> u32 {
+        Page::default_accent(dark)
+    }
+
+    /// `true`: the exact path (CPU frame shown through WebGPU, the default when the canvas
+    /// allows copies); `false`: the GPU rasteriser.
+    pub fn set_exact(&mut self, exact: bool) -> Result<bool, JsValue> {
+        self.exact = exact && self.config.usage.contains(wgpu::TextureUsages::COPY_DST);
+        self.r.invalidate();
+        self.frame()?;
+        Ok(self.exact)
+    }
+
+    /// Which path draws: `exact` or `gpu`.
+    pub fn raster(&self) -> String {
+        if self.exact { "exact" } else { "gpu" }.into()
+    }
+
     /// Milliseconds from the start of `mount` to now (the loader reads it after the first frame).
     pub fn since_mount_ms(&self) -> f64 {
         now_ms() - self.t0
@@ -142,8 +195,9 @@ impl KitPage {
     pub fn stats(&self) -> String {
         let s = self.r.stats;
         format!(
-            "{{\"adapter\":{:?},\"draws\":{},\"instances\":{},\"passes\":{},\"layers\":{},\"upload_bytes\":{},\"frame_ms\":{:.3}}}",
+            "{{\"adapter\":{:?},\"raster\":{:?},\"draws\":{},\"instances\":{},\"passes\":{},\"layers\":{},\"upload_bytes\":{},\"frame_ms\":{:.3}}}",
             self.r.adapter(),
+            self.raster(),
             s.draws,
             s.instances,
             s.passes,
@@ -208,10 +262,18 @@ impl KitPage {
     pub async fn snapshot(&mut self) -> Result<js_sys::Uint8Array, JsValue> {
         let (w, h) = self.page.device_size();
         let r = &mut self.r;
-        let (enc, buf, row) = self.page.draw(|f| {
-            r.invalidate();
-            r.encode_image(f)
-        });
+        let (enc, buf, row) = if self.exact {
+            let img = self
+                .page
+                .draw(|f| CpuRenderer.render_image(f))
+                .map_err(js)?;
+            r.encode_upload(&img)
+        } else {
+            self.page.draw(|f| {
+                r.invalidate();
+                r.encode_image(f)
+            })
+        };
         self.r.queue.submit([enc.finish()]);
         let (tx, rx) = futures_oneshot();
         buf.slice(..)
@@ -264,4 +326,18 @@ fn futures_oneshot() -> (
 #[wasm_bindgen]
 pub fn sample_json() -> String {
     wolkit_render::view::SAMPLE_JSON.into()
+}
+
+/// Settings > Look as a view tree (`wolkit_render::view::SETTINGS_LOOK_JSON`), the responsive
+/// sample (`/kit.html?tree=look`).
+#[wasm_bindgen]
+pub fn settings_look_json() -> String {
+    wolkit_render::view::SETTINGS_LOOK_JSON.into()
+}
+
+/// The component cases (`wolkit_render::view::COMPONENTS_JSON`: `{width, height, cases: [{name,
+/// tree}]}`), the trees the shell's `kit-view-*` goldens draw (`/kit.html?case=<name>`).
+#[wasm_bindgen]
+pub fn components_json() -> String {
+    wolkit_render::view::COMPONENTS_JSON.into()
 }

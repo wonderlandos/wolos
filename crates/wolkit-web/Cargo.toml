@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 wolkit = { path = "../wolkit", default-features = false }
-wolkit-render = { path = "../wolkit-render", default-features = false }
+wolkit-render = { path = "../wolkit-render", default-features = false, features = ["gpu"] }
 shared.workspace = true
 serde_json.workspace = true
 

@@ -488,6 +488,7 @@ fn drift(t: &Tokens, css: &str, widgets: &str, motion_rs: &str) -> Vec<String> {
         ("label.eyebrow", "eyebrow", true, true),
         ("label.heading", "heading", true, false),
         ("label.large-title", "large-title", true, true),
+        ("label.display", "display", true, true),
         (".empty-state label.large-title", "empty-state", true, true),
     ] {
         let r = css_rule(css, sel);

@@ -24,9 +24,9 @@ use wolkit::paint::geom::{Color, PixelRect};
 use wolkit::paint::glyphs::{GlyphSource, NoGlyphs};
 use wolkit::text::glyphcache::Glyphs;
 
-use crate::FrameIn;
+use crate::{FrameIn, Image};
 #[cfg(not(target_arch = "wasm32"))]
-use crate::{Image, RenderError, Renderer};
+use crate::{RenderError, Renderer};
 
 /// The WGSL uber-shader.
 pub const SHADER: &str = include_str!("shaders/ui.wgsl");
@@ -856,7 +856,9 @@ impl WgpuRenderer {
                 "wolkit offscreen",
                 (w, h, 1),
                 OFFSCREEN,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
                 false,
             ));
         }
@@ -864,7 +866,87 @@ impl WgpuRenderer {
         let Some(view) = view else {
             unreachable!("made above")
         };
-        let mut enc = self.render_to(frame, &view, OFFSCREEN);
+        let enc = self.render_to(frame, &view, OFFSCREEN);
+        self.readback_copy(enc, w, h)
+    }
+
+    /// The exact path (WOLKIT-1TO1): a frame the CPU reference drew, written into `texture`
+    /// byte for byte (`queue.write_texture`, no sampling, no blending), swizzled when the target
+    /// is BGRA. What the canvas shows is then the CPU frame, so the web page and the shell's Kit
+    /// windows (which paint the same frame) are the same pixels on every GPU. `texture` needs
+    /// `COPY_DST` and an 8-bit unorm format (RGBA or BGRA).
+    pub fn upload_frame(&self, img: &Image, texture: &wgpu::Texture) {
+        let bgra = matches!(
+            texture.format(),
+            wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb
+        );
+        let swizzled;
+        let data: &[u8] = if bgra {
+            swizzled = img
+                .data
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[2], p[1], p[0], p[3]])
+                .collect::<Vec<u8>>();
+            &swizzled
+        } else {
+            &img.data
+        };
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(img.width * 4),
+                rows_per_image: Some(img.height),
+            },
+            wgpu::Extent3d {
+                width: img.width,
+                height: img.height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// [`Self::upload_frame`] into the offscreen target and the copy to a readback buffer, as
+    /// [`Self::encode_image`] does for a GPU-drawn frame (tests read the exact path back).
+    pub fn encode_upload(&mut self, img: &Image) -> (wgpu::CommandEncoder, wgpu::Buffer, u32) {
+        let (w, h) = (img.width.max(1), img.height.max(1));
+        if self.readback.as_ref().is_none_or(|t| t.w != w || t.h != h) {
+            self.readback = Some(tex(
+                &self.device,
+                "wolkit offscreen",
+                (w, h, 1),
+                OFFSCREEN,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::COPY_DST,
+                false,
+            ));
+        }
+        if let Some(t) = self.readback.as_ref() {
+            self.upload_frame(img, &t.tex);
+        }
+        let enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("wolkit upload"),
+            });
+        self.readback_copy(enc, w, h)
+    }
+
+    fn readback_copy(
+        &mut self,
+        mut enc: wgpu::CommandEncoder,
+        w: u32,
+        h: u32,
+    ) -> (wgpu::CommandEncoder, wgpu::Buffer, u32) {
         let row = (w * 4).div_ceil(256) * 256;
         let buf = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wolkit readback"),
@@ -997,17 +1079,23 @@ fn pollster_block<F: std::future::Future>(f: F) -> F::Output {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl Renderer for WgpuRenderer {
-    fn name(&self) -> String {
-        format!("wgpu {}", self.adapter_name)
+impl WgpuRenderer {
+    /// The exact path natively: `img` written into the GPU target and read back (what the web
+    /// page's canvas holds when it shows a CPU frame).
+    pub fn upload_image(&mut self, img: &Image) -> Result<Image, RenderError> {
+        let (w, h) = (img.width.max(1), img.height.max(1));
+        let (enc, buf, row) = self.encode_upload(img);
+        self.read_back(enc, &buf, w, h, row)
     }
 
-    fn render_image(&mut self, frame: FrameIn<'_>) -> Result<Image, RenderError> {
-        // The trait draws one frame on its own, like the Vulkan renderer's `render_image` after
-        // `invalidate`; the live page uses `render_to`, which keeps the chunk cache.
-        self.invalidate();
-        let (w, h) = (frame.width.max(1), frame.height.max(1));
-        let (enc, buf, row) = self.encode_image(frame);
+    fn read_back(
+        &mut self,
+        enc: wgpu::CommandEncoder,
+        buf: &wgpu::Buffer,
+        w: u32,
+        h: u32,
+        row: u32,
+    ) -> Result<Image, RenderError> {
         self.queue.submit([enc.finish()]);
         let slice = buf.slice(..);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1028,5 +1116,21 @@ impl Renderer for WgpuRenderer {
             height: h,
             data,
         })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Renderer for WgpuRenderer {
+    fn name(&self) -> String {
+        format!("wgpu {}", self.adapter_name)
+    }
+
+    fn render_image(&mut self, frame: FrameIn<'_>) -> Result<Image, RenderError> {
+        // The trait draws one frame on its own, like the Vulkan renderer's `render_image` after
+        // `invalidate`; the live page uses `render_to`, which keeps the chunk cache.
+        self.invalidate();
+        let (w, h) = (frame.width.max(1), frame.height.max(1));
+        let (enc, buf, row) = self.encode_image(frame);
+        self.read_back(enc, &buf, w, h, row)
     }
 }
