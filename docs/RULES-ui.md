@@ -56,7 +56,7 @@ What: a catalogue of checkable rules (ids `RU-nnn`) for user-facing text, GTK an
 | RU-034 | No OK, Yes or No buttons: say the action. |
 | RU-035 | A file with a destructive button also has a way out (Cancel, Not Now, Close, Done, Back). |
 
-### Widgets (RU-040 to RU-050)
+### Widgets (RU-040 to RU-051)
 
 | Id | Rule |
 |---|---|
@@ -71,6 +71,7 @@ What: a catalogue of checkable rules (ids `RU-nnn`) for user-facing text, GTK an
 | RU-048 | No list row is made unfocusable. |
 | RU-049 | No fixed width above 600 px in code (set_size_request, set_width_request). |
 | RU-050 | An icon-only button has a tooltip. |
+| RU-051 | A link that opens a Settings page names it by its page id (`wol-settings privacy`), never by a title: titles are translated and edited. |
 
 ### CSS (RU-055 to RU-064)
 

@@ -32,6 +32,22 @@ Settings search, the Search bar and `wol help` find things by what a question me
 - **The Search bar** (`search_sem.rs`, `ui/searchbar.rs`). Apps, system actions, Settings pages and every Settings row are items; the manual's sections are the second index. Word hits first as before, then rows by meaning fused by RRF (two after word hits, each of cosine 0.5 or more; up to the free rows when there are none), at most two manual sections (cosine 0.28 or more), files after them as before. A manual section opens `https://wolos.org/manual/<page>#<anchor>` in the browser (the image has no local copy of the pages). When nothing matches, a "Did you mean" row offers the corrected word's hit or the nearest title; the web search row stays last.
 - **`wol help <words>`** (`helpfind.rs`). Words that are not the start of a command's path are a question: the five commands whose help line means it, and up to two manual sections with their URLs; with no table the same words are matched as words only. Nothing found exits 66 (`not-found`). An unknown first word (not a flag, not an unknown subcommand) with no near spelling adds "did you mean 'wol power restart'?" when it means that command (the word "reboot", typed after `wol`).
 
+## What a result opens
+
+Every result lands on the exact thing it names, by an id and not by the title it shows (QA-SEARCH-1: "privacy settings" opened Settings on its first pane).
+
+| Result | Opens | Lands on |
+|---|---|---|
+| App | its launcher | the app |
+| System action | the command the menu bar runs | the action (Restart, Shut Down and Log Out ask first) |
+| Settings page | `wol-settings <page-id>` (`privacy`, `wifi`, `date-time`) | the page |
+| Settings row (and a Control Center tile or module, a kind of app permission) | `wol-settings <page-id>#<row-id>` (`privacy#screen-recording`) | the page, scrolled to the row and lit until the person leaves the page |
+| File or folder | `gio open <path>` | the file |
+| Row an app provided | wold, by the app's key | the app's own row |
+| Manual section | the browser at `wolos.org/manual/<page>#<anchor>` | the section |
+
+Page ids are written once in `ui/settings/ids.rs` (`PAGE_IDS`); a row id is the slug of its English title. `wol-settings` also takes an older title or alias and a title in any shipped language, and resolves it to the same page and row. A query word that only names the place ("settings", "preferences", "ajustes") is dropped when another word remains, so "privacy settings" finds the Privacy pane. Rows rank one step below an app, an action or a page that matches the same way. A row a pane draws only in some state (a permission needs an app that asked, a slider hidden by its own switch) opens its page and lights nothing. A link in the shell names a page id, never a title (RU-051, RC-47).
+
 ## What is shipped
 
 `/usr/share/wolos/manual/static-mrl.wst` (+ `.sha256`) and `sections.json` (`{"v":1,"model":"static-mrl","sections":[{"id":"/manual/page#anchor","title":"Page: Section","text":"...","vec":"<optional base64: dim int8 and an f32 scale>"}]}`, or a bare array), both produced by the site build (`site/scripts/lib/search-table.mjs --dim 256 --bits 4 --scripts all`, and the sections export); without `vec` the OS computes the vectors itself (90 ms for 505 sections, once per process, off the interface thread). `wolsem::installed()` loads them once. The package that installs them is `wolos-system` (INT-2: the `package()` of its PKGBUILD installs the two files with `install -Dm644 ... "$pkgdir/usr/share/wolos/manual/"` and `wolos-pkgbuilds/docs` lists the paths; the PKGBUILD is not edited here).
