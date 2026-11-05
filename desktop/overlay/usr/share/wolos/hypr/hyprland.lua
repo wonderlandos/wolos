@@ -302,6 +302,9 @@ bind("CTRL + " .. mod .. " + Space", "wol-app emoji")
 bind(mod .. " + SHIFT + V", "wol shell toggle clipboard")
 -- Theme picker (ADR 0031 themes v2): every theme as a preview card.
 bind("CTRL + " .. mod .. " + T", "wol shell toggle themes")
+-- Colour picker (ADR 0059 S16): click a pixel, its hex value goes to the clipboard and a notification
+-- names it (hyprpicker --autocopy --notify; hypr/permissions.lua lets it copy the screen).
+bind("CTRL + " .. mod .. " + P", "hyprpicker --autocopy --notify")
 
 -- Windows (Cmd semantics)
 -- App actions shared with the menu bar app/Window menus (wol-app).

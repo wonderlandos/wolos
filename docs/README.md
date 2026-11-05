@@ -81,6 +81,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0054](adr/0054-post-quantum-keyring.md) | Post-quantum local keyring: unlock factors, per-app access lists, signed audit chain, export and LAN move | proposed |
 | [0055](adr/0055-system-wide-tls-policy.md) | System-wide TLS policy: post-quantum hybrid by default | proposed |
 | [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
+| [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
 
 ## Modules
 
@@ -92,6 +93,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
 | [modules/default-apps.md](modules/default-apps.md) | Default Apps and Open With: the app the person picks per kind of file (`~/.config/mimeapps.list`, journaled), Open With remembering, a file dropped on a Dock tile, the tile's own actions | ADR 0059 (draft) |
+| [modules/experience.md](modules/experience.md) | The experience as data: the 28 surfaces with owner and journey, what each shipped app provides (`X-WolOS-Surfaces`), the image budget | [0059](adr/0059-the-wolos-experience.md) |
 | [modules/search.md](modules/search.md) | search by meaning on the device: the `.wst` table and its reader (`wolsem`), the hybrid rank, Settings search, the Search bar's manual and "Did you mean", `wol help <words>` | [0057](adr/0057-search-by-meaning.md) |
 | [modules/tor.md](modules/tor.md) | Tor as a layer of the OS (`wol-tor`): Atlas tabs, one app, the whole computer; switches, status, doctor, Keep Tor ready | [0053](adr/0053-atlas-private-and-tor-tabs.md), [0056](adr/0056-wol-tor-system-tor-layer.md) |
 | [modules/doctor.md](modules/doctor.md) | Doctor: every check of the system in one list (`wol doctor`, the Doctor app), each with its fix | [0048](adr/0048-system-web-apps.md) |

@@ -32,6 +32,12 @@ Plugins and assistants
 - Plugin Maker asks before dropping unsaved edits, saves only with edits (Ctrl+S), says where the package went (Downloads), checks every open file as you type, refuses to share a plugin that still has the scaffold's author or summary, and opens a shipped plugin. Store > Plugins lists plugins that are installed but not in the index.
 - `wol mcp`: an approval sheet is dropped when the assistant that asked has gone, a second `initialize` cannot rename the client, Always Allow survives the client's self-update, batches work, a line over 1 MiB and a tool answer over 256 KiB are cut, and it does not run as root. `wol open` returns once the app is asked for. `wol` run by an assistant's shell (Claude Code's Bash tool, `CLAUDECODE=1`) meets the same helper gate as `wol mcp` (ADR 0032).
 
+Everyday apps
+- Misspelled words are underlined in Text Editor and other apps that check spelling, in English (US and UK), Spanish, French, German, Italian, Dutch, Polish and Portuguese (Brazil and Portugal). Japanese and Chinese have no word list.
+- Ctrl+Super+P picks a colour from anywhere on the screen: click a pixel and its value is on the clipboard, with a notification.
+- Photos in the Dock is Gallery, and PNG and JPEG pictures open in it; GIF, WebP and SVG pictures open in the browser for now. The photo manager (Shotwell), the image viewer and the two graphics benchmarks are no longer on the image (the App Store and `pacman -S glmark2 vkmark` add them).
+- The screen reader (Orca) and its voice are on the image.
+
 ## 0.12.1 (unreleased)
 A fixes-only release after a hunt for stalls, races and weak spots in 0.12.0. Nothing new to learn.
 

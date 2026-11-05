@@ -12,7 +12,7 @@ Mature ports under WolOS names. Tests: `crates/controller/tests/image_userland.r
 | Browser | helium-browser (`wol_core::theme::helium::HELIUM.bin`) | `helium` |
 | Mail | geary | `org.gnome.Geary` |
 | Music | amberol | `io.bassi.Amberol` |
-| Photos | shotwell | `org.gnome.Shotwell` |
+| Photos | wolos-app-gallery (Gallery; Shotwell is in the Store) | `org.wolos.gallery` |
 | Calendar | gnome-calendar | `org.gnome.Calendar` |
 | Notes | gnote | `org.gnome.Gnote` |
 | Terminal | foot | `foot` |

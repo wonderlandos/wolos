@@ -38,6 +38,7 @@ key (Ctrl+C; a terminal's Ctrl+Shift+C), see `shell::appmenu::send`.
 | Esc | Closes menus and panels and dismisses notification banners |
 | ⇧⌘V | Clipboard history |
 | ⌘, / ⌘Return | Settings / Terminal |
+| ⌃⌘P | Pick a colour from the screen (the value goes to the clipboard) |
 | ⇧⌘3/4/5 | Screenshot full / region / toolbar (saved to the Desktop) |
 | ⌃⌘F, ⌥⌘F | Fullscreen, float a tiled window |
 | ⌃⌥←/→ (Ctrl+Alt+Left/Right), 3-finger swipe | Switch space |

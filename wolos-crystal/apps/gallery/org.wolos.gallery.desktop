@@ -10,3 +10,4 @@ Categories=Graphics;Viewer;Photography;
 MimeType=image/jpeg;image/png;
 Keywords=photos;pictures;images;viewer;slideshow;
 StartupWMClass=org.wolos.gallery
+X-WolOS-Surfaces=S04;S05;S19;S27

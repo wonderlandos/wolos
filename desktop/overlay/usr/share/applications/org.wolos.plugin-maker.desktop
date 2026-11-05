@@ -7,3 +7,4 @@ Exec=wol-plugin-maker %f
 Categories=Development;
 Keywords=plugin;theme;menu bar;widget;
 StartupNotify=true
+X-WolOS-Surfaces=S19;S25;S27
