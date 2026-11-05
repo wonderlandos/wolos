@@ -73,7 +73,16 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "wifi.hotspot" => get(env, hotspot_state, json),
         "wifi.hotspot.on" => hotspot_on(env, inv.get("name"), json),
         "wifi.hotspot.off" => control(env, json, hotspot_state, |c| c.set_hotspot(None)),
-        "bluetooth.get" => get(env, bluetooth_state, json),
+        "bluetooth.get" => {
+            let v = bluetooth_state(env);
+            // No adapter: one sentence, not `on: -` (QA-DEV-19); `--json` keeps `"on": null`.
+            if !json && v["on"].is_null() {
+                env.out("This computer has no Bluetooth adapter.\n");
+                0
+            } else {
+                show(env, v, json)
+            }
+        }
         "bluetooth.on" | "bluetooth.off" => {
             let on = inv.action == "bluetooth.on";
             with_password(env, json, bluetooth_state, &move |c, pw| {

@@ -1962,6 +1962,9 @@ pub struct FakeEnv {
     pub admin: std::sync::Arc<std::sync::Mutex<FakeAdmin>>,
     /// `hardware()` results in order (the last one repeats); empty = read `host`.
     pub hw: Vec<shared::hardware::HardwareSnapshot>,
+    /// What every command run with stdin through [`Env::controls`] writes on stderr and fails
+    /// with (nmcli's import error, say); None: they succeed with no output.
+    pub stdin_err: Option<String>,
     /// Files replaced through `write_file`.
     pub written: Vec<(PathBuf, String)>,
     /// (variable, secret) given to `exec_secret`, in order.
@@ -2179,7 +2182,10 @@ impl Env for FakeEnv {
         let admin = self.admin.clone();
         wol_core::controls::Controls {
             host,
-            stdin: Arc::new(|_, _| Ok(String::new())),
+            stdin: {
+                let fail = self.stdin_err.clone();
+                Arc::new(move |_, _| fail.clone().map_or(Ok(String::new()), Err))
+            },
             admin: Arc::new(move |req, pw| {
                 let mut a = admin.lock().unwrap_or_else(|e| e.into_inner());
                 a.sent.push(format!(

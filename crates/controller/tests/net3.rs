@@ -250,3 +250,29 @@ fn the_airplane_list_folder_is_made_for_every_account() {
         }
     }
 }
+
+/// net3-vpn: nmcli's own reason reaches the person. Every import failure starts "Error: failed to
+/// import", so every one read as "not a file NetworkManager can read", whatever nmcli said.
+#[test]
+fn vpn_import_names_nmcli_s_reason() {
+    let h = Arc::new(FakeHost::linux());
+    h.file(
+        "/usr/lib/NetworkManager/VPN/nm-openvpn-service.name",
+        "[VPN Connector]\n",
+    );
+    let mut env = FakeEnv {
+        host: Some(h),
+        stdin_err: Some(
+            "Error: failed to import '/tmp/office.ovpn': configuration error: invalid 1th argument to \"proto\" (line 3).\n"
+                .into(),
+        ),
+        ..Default::default()
+    };
+    assert_ne!(run("vpn import /tmp/office.ovpn", &mut env), 0);
+    assert!(
+        env.err
+            .contains("configuration error: invalid 1th argument to \"proto\" (line 3)"),
+        "{}",
+        env.err
+    );
+}

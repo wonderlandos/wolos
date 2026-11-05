@@ -4,7 +4,9 @@
 
 pub const SOCKET: &str = "/var/run/wol-admin.sock";
 pub const MAX_REQUEST: usize = 8192;
-pub const MAX_ARGS: usize = 4;
+/// The wire's count is one digit. A manual proxy is 5 arguments and DNS over TLS up to 9: 4 refused
+/// both as "invalid request" before wol-admind looked (0.13.0 dry run, net3-proxy-dns).
+pub const MAX_ARGS: usize = 9;
 pub const MAX_PASSWORD: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -382,7 +384,8 @@ mod tests {
             b"revoke\x00",
             b"revoke\x00x\x00",
             b"revoke\x0010\x00",
-            b"idle\x005\x00a\x00b\x00c\x00d\x00e\x00",
+            // A count the fields do not fill (9 claimed, 2 given).
+            b"idle\x009\x00a\x00b\x00",
             b"idle\x001\x00",
             b"idle\x001\x001\n2\x00",
             b"idle\x001\x00\xff\x00",

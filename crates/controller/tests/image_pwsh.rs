@@ -533,7 +533,7 @@ fn terminals_open_the_shell_chosen_in_settings() {
     let d = sandbox("termshell", &[]);
     let (root, home) = (d.join("root"), d.join("home"));
     let say = "#!/bin/sh\necho \"$(basename \"$0\") SHELL=$SHELL $*\"\n";
-    for p in ["usr/bin/zsh", "usr/bin/fish"] {
+    for p in ["usr/bin/zsh", "usr/bin/fish", "usr/bin/rsh"] {
         let f = root.join(p);
         fs::create_dir_all(f.parent().unwrap()).unwrap();
         fs::write(&f, say).unwrap();
@@ -578,6 +578,14 @@ fn terminals_open_the_shell_chosen_in_settings() {
     assert_eq!(
         run(Some("fish")).0,
         format!("fish SHELL={}/usr/bin/fish -l", root.display())
+    );
+    // QA-PWR-1: rsh ships on the image; the word starts it, not zsh and "not installed".
+    assert_eq!(
+        run(Some("rsh\n")),
+        (
+            format!("rsh SHELL={}/usr/bin/rsh -l", root.display()),
+            String::new()
+        )
     );
     for (word, shown) in [("nu\n", "nu"), ("tcsh\n", "tcsh")] {
         assert_eq!(

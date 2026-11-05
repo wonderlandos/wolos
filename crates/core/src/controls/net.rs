@@ -165,10 +165,12 @@ impl Controls {
             _ => None,
         };
         let from = staged.as_ref().map_or(p, |(_, f)| f.to_str().unwrap_or(p));
+        vpn::note_import_reason(None);
         let r = vpn::import_argv(kind, from)
             .ok_or(ControlError::Invalid)
             .and_then(|a| {
                 self.exec(&a, "")
+                    .inspect_err(|e| vpn::note_import_reason(vpn::import_reason(e)))
                     .map_err(|e| match vpn::classify_import_error(&e) {
                         vpn::ImportFailure::NoPlugin => ControlError::Unsupported,
                         vpn::ImportFailure::BadFile => ControlError::Invalid,
