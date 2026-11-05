@@ -6,7 +6,7 @@ The Federate Network is "a human alternative web protocol/runtime that runs on t
 
 What the public material says (read 2026-11-04):
 - Landing page https://federate.network/ (`/index.en.md`, `/install.sh`, `/install.ps1`): one DNS setting or the `federate` CLI; `fed://` links; "everything past it is signed, content-addressed, and hash-verified".
-- Reference implementation https://github.com/federatenetwork/federate (MIT, Rust, commit e7fc027 of 2026-07-07): `docs/en-US/federate-uri.md` (address grammar), `protocol.md` (root zone, manifests, blocks, HTTP API), `signatures.md` (chain of trust, canonical signing, rollback and expiry), `native-protocol.md` (TCP 4077 framed JSON), `browser-compatibility.md`, `future-federate-browser.md` (a native client "verifies everything itself, trusting no gateway").
+- Reference implementation https://github.com/federatenetwork/federate (MIT, Rust, commit e7fc027 of 2026-07-07): its `en-US/federate-uri.md` (address grammar), `protocol.md` (root zone, manifests, blocks, HTTP API), `signatures.md` (chain of trust, canonical signing, rollback and expiry), `native-protocol.md` (TCP 4077 framed JSON), `browser-compatibility.md`, `future-federate-browser.md` (a native client "verifies everything itself, trusting no gateway").
 - Reference browser https://github.com/federatenetwork/fedsurf (MIT, Tauri, commit dae6055): registers `fed://` as a custom scheme and resolves in process with the reference crates.
 - The live network: `https://federate.network/v1/bootstrap` (root key `f7942f5c...e5e6`, `native_nodes` empty), `/v1/root` (root_version 1783402193, 23 TLDs, all root-managed, 3 names), `/v1/domain/home.fed`, `/v1/manifest/41220e29...`, `/v1/block/ddfe588a...`.
 

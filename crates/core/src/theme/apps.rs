@@ -710,17 +710,38 @@ pub fn write_files(id: &str, config_home: &Path) -> Result<ResolvedTheme, String
 pub fn push(t: &ResolvedTheme, config_home: &Path) {
     let foot = foot_is_ours(&user_dir(config_home), config_home)
         .then(|| terminal_argv(t, shared::sys::euid()));
+    let bus = session_bus(|k| std::env::var(k).ok(), |p| p.exists());
     for a in gsettings_argv(t)
         .into_iter()
         .chain(strip_argv(t))
         .chain(foot)
     {
-        let _ = std::process::Command::new(&a[0])
+        let mut c = std::process::Command::new(&a[0]);
+        if let Some(bus) = &bus {
+            c.env("DBUS_SESSION_BUS_ADDRESS", bus);
+        }
+        let _ = c
             .args(&a[1..])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
     }
+}
+
+/// The session bus address for `gsettings` when the environment names none: the compositor's
+/// exec-once runs `wol theme set` without DBUS_SESSION_BUS_ADDRESS, and every write failed with
+/// "Cannot autolaunch D-Bus without X11 $DISPLAY" (QA-VIS1-2: color-scheme stayed 'default', the
+/// GTK apps light under a Dark pick, the window button layout never reached Files). The user
+/// bus is `$XDG_RUNTIME_DIR/bus` under systemd. None when one is set or there is no such socket.
+pub fn session_bus(
+    var: impl Fn(&str) -> Option<String>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<String> {
+    if var("DBUS_SESSION_BUS_ADDRESS").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    let bus = Path::new(&var("XDG_RUNTIME_DIR").filter(|v| !v.is_empty())?).join("bus");
+    exists(&bus).then(|| format!("unix:path={}", bus.display()))
 }
 
 /// `$XDG_DATA_HOME`, else `$HOME/.local/share`; None without either.
@@ -855,6 +876,31 @@ fn replace_link(target: &Path, link: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-VIS1-2: `wol theme set` from the compositor's exec-once has no session bus in its
+    /// environment; gsettings gets the systemd user bus, and an address already set is kept.
+    #[test]
+    fn gsettings_reaches_the_user_bus_from_the_compositor() {
+        let env = |bus: Option<&'static str>| {
+            move |k: &str| match k {
+                "XDG_RUNTIME_DIR" => Some("/run/user/1000".to_string()),
+                "DBUS_SESSION_BUS_ADDRESS" => bus.map(String::from),
+                _ => None,
+            }
+        };
+        let there = |p: &Path| p == Path::new("/run/user/1000/bus");
+        assert_eq!(
+            session_bus(env(None), there).as_deref(),
+            Some("unix:path=/run/user/1000/bus")
+        );
+        assert_eq!(
+            session_bus(env(Some("")), there).as_deref(),
+            Some("unix:path=/run/user/1000/bus")
+        );
+        assert_eq!(session_bus(env(Some("unix:path=/tmp/b")), there), None);
+        assert_eq!(session_bus(env(None), |_| false), None);
+        assert_eq!(session_bus(|_| None, there), None);
+    }
     use crate::theme::ThemeCatalog;
     use std::path::Path;
 
