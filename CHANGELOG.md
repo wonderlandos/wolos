@@ -32,6 +32,7 @@
 - Secure connections (ADR 0055): the system's TLS offers the post-quantum hybrid group first (curl and pacman, GnuTLS apps, the package tool, the web engine and Atlas), `wol doctor tls` shows what each part does.
 - Tor as a layer of the system (ADR 0056, docs/modules/tor.md): for Atlas tabs, for one app or for the whole computer, kept by the firewall rather than by a setting of the program; `wol-tor switches` shows and changes it.
 - `fed://` addresses open in the web engine (ADR 0052): the Federate network's names resolve through the signed chain, with honest error pages.
+- A Federate name is `fed://` only (ADR 0052): the web engine refuses a Federate host over http, https, ws and wss before any socket or DNS lookup, every http(s) address on a Federate TLD maps to `fed://`, and only a Federate page can load a Federate subresource, so web pages cannot probe Federate names.
 - The keyring has a post-quantum store (ADR 0054, docs/modules/keyring.md): `wol keyring` and `wol-keyringd` are installed; the daemon stays off and gnome-keyring is still the login keyring until the unlock path is wired.
 - In Settings, pressing Undo on the "changed" note at the bottom of a window no longer shuts the whole desktop down; it undoes the change as it should. The line that says what is wrong under a field (a name that is taken, a password that is too short) is now red, as it was meant to be.
 

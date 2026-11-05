@@ -151,7 +151,10 @@ pub fn bridge(record: &[u8], surface_node: u32) -> Vec<Bridged> {
         Some(match k {
             kind::CLICK => {
                 // `u32 button`, `u32 mods` (the engine reads modifiers from key events), `f32 x, y`.
-                let button = u32_at(record, p)?;
+                // Wolkit numbers its buttons from 1 (left, middle, right: `wolkit::input::BUTTON_*`);
+                // the engine's from 0 (primary, auxiliary, secondary). Unmapped, a left click was a
+                // middle click to the page (`mousedown` with `button` 1, no `click`).
+                let button = u32_at(record, p)?.saturating_sub(1);
                 let (x, y) = (f32_at(record, p + 8)?, f32_at(record, p + 12)?);
                 vec![
                     Bridged::Input(Input::MouseMove { x, y }),
@@ -383,6 +386,32 @@ mod tests {
         );
         let r = record(kind::POINTER_LEAVE, 7, &words(&[0, 0]));
         assert_eq!(bridge(&r, 7), [Bridged::Input(Input::MouseLeave)]);
+    }
+
+    /// Found on the real engine (the merge of ENGINE-FIX and we-web, 2026-11-05): wolkit's left
+    /// button is 1, the engine's primary is 0, so the page saw a middle click and no `click`.
+    #[test]
+    fn wolkits_buttons_become_the_engines() {
+        let click = |b: u32| {
+            let r = record(
+                kind::CLICK,
+                7,
+                &words(&[b, 0, 1.0f32.to_bits(), 2.0f32.to_bits()]),
+            );
+            match bridge(&r, 7).get(1) {
+                Some(Bridged::Input(Input::MouseButton { button, .. })) => *button,
+                other => panic!("no button: {other:?}"),
+            }
+        };
+        assert_eq!(
+            [
+                click(wolkit::input::BUTTON_LEFT),
+                click(wolkit::input::BUTTON_MIDDLE),
+                click(wolkit::input::BUTTON_RIGHT)
+            ],
+            [0, 1, 2],
+            "left is primary, middle auxiliary, right secondary"
+        );
     }
 
     #[test]

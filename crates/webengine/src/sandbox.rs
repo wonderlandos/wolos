@@ -115,6 +115,14 @@ impl Gate {
         let mut rules = Vec::new();
         let profile = format!("{}/", profile_dir.to_string_lossy().trim_end_matches('/'));
         for o in &policy.origins {
+            if let Some((scheme, host, _, _)) = split_web(o)
+                && matches!(scheme, "http" | "https" | "ws" | "wss")
+                && crate::fed::is_fed_host(host)
+            {
+                return Err(format!(
+                    "origin {o:?} is a Federate name: it is fed://, never http(s)"
+                ));
+            }
             let rule = parse_rule(o).ok_or_else(|| format!("origin {o:?} is not an origin"))?;
             if let Rule::Folder(d) = &rule
                 && (d.starts_with(&profile) || profile.starts_with(d.as_str()))
@@ -130,6 +138,11 @@ impl Gate {
     }
 
     fn web_allowed(&self, https: bool, host: &str, port: Option<u16>, path: &str) -> bool {
+        // A Federate TLD host is `fed://` only (ADR 0052, exclusive): no policy opens it over the
+        // web, so no socket and no DNS lookup is ever made for it.
+        if crate::fed::is_fed_host(host) {
+            return false;
+        }
         if self.telemetry.hosts.iter().any(|h| host_matches(h, host)) {
             return false;
         }
@@ -261,6 +274,34 @@ mod tests {
             !gate(&[], &[], &[]).allows("fed://home.fed/", Load::Navigation),
             "no origin, no load"
         );
+    }
+
+    /// Lead rule 2026-11-05: a Federate name is exclusively `fed://`. The gate answers before any
+    /// socket or DNS lookup exists, whatever the policy names, for every scheme and every load.
+    #[test]
+    fn a_federate_tld_host_is_never_reachable_over_the_web() {
+        let g = gate(&["fed://home.fed", "https://example.com"], &[], &[]);
+        for no in [
+            "http://home.fed/",
+            "https://home.fed/style.css",
+            "https://www.home.fed/",
+            "wss://home.fed/socket",
+            "ws://x.pagina:8080/",
+            "https://lobo.pagina/",
+        ] {
+            assert!(!g.allows(no, Load::Navigation), "{no}");
+            assert!(!g.allows(no, Load::Resource), "{no}");
+        }
+        assert!(g.allows("https://example.com/", Load::Resource));
+        // A policy cannot name one: not as an origin, not as a wildcard.
+        for entry in ["https://home.fed", "http://lobo.pagina", "https://*.fed"] {
+            let p = Policy {
+                origins: vec![entry.into()],
+                ..Policy::default()
+            };
+            let err = Gate::new(&p, Path::new("/p")).unwrap_err();
+            assert!(err.contains("fed://"), "{entry}: {err}");
+        }
     }
 
     #[test]

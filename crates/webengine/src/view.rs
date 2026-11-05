@@ -70,7 +70,14 @@ pub struct App {
     pub clipboard: Option<Box<dyn Clipboard>>,
     /// Set for a system web app; see [`WebView::has_channel`] for a library that cannot carry it.
     pub channel: Option<Channel>,
+    /// Called from any of the engine's threads when it wants [`WebView::spin`] to run. A host that
+    /// waits on a descriptor (the Wolkit engine's `dispatch(-1)`) sets this to the call that ends
+    /// the wait, and sleeps until then instead of polling; without it the host must spin on a timer.
+    pub on_wake: Option<WakeFn>,
 }
+
+/// What a host runs when the engine wants to be spun (any thread).
+pub type WakeFn = Box<dyn Fn() + Send + Sync>;
 
 impl App {
     pub fn new(id: &str, profile_dir: PathBuf) -> App {
@@ -80,6 +87,7 @@ impl App {
             content_process: true,
             clipboard: None,
             channel: None,
+            on_wake: None,
         }
     }
 }
@@ -133,6 +141,8 @@ struct Shared {
     on_message: RefCell<Option<OnMessage>>,
     /// The only field the waker touches (it runs on the engine's threads).
     woken: AtomicBool,
+    /// The host's wake-up, set once before the engine exists and never changed: any thread reads it.
+    on_wake: Option<WakeFn>,
 }
 
 // SAFETY: called by the engine on the view's thread with the `Shared` this view boxed as `ctx`.
@@ -181,11 +191,18 @@ fn deliver(s: &Shared, bytes: &[u8]) {
     }
 }
 
-// SAFETY: called from any engine thread; touches only the atomic field of `ctx`.
+// SAFETY: called from any engine thread; touches only the two fields of `ctx` that are made for it
+// (the atomic and the host's `Send + Sync` wake-up), through raw places.
 unsafe extern "C" fn wake_cb(ctx: *mut c_void) {
-    // SAFETY: only the atomic field is touched, through a raw place (any thread).
-    let woken = unsafe { &(*ctx.cast::<Shared>()).woken };
+    let shared = ctx.cast::<Shared>();
+    // SAFETY: only those two fields are borrowed, not the struct: `woken` is atomic, and `on_wake` is
+    // written before the engine exists and read-only afterwards, so a shared reference to it is sound
+    // on any thread (it is `Send + Sync`).
+    let (woken, on_wake) = unsafe { (&(*shared).woken, &(*shared).on_wake) };
     woken.store(true, Ordering::Release);
+    if let Some(wake) = on_wake {
+        wake();
+    }
 }
 
 // SAFETY: as allow_cb; `buf` has `cap` writable bytes.
@@ -249,6 +266,21 @@ pub(crate) fn engine_flags(content_process: bool) -> u32 {
     }
 }
 
+/// The start URL the view opens: `url`, or its `fed://` spelling when `map` has one, and in both
+/// cases only if the policy's gate lets that address be navigated to.
+fn checked_start(
+    gate: &Gate,
+    url: &str,
+    map: impl Fn(&str) -> Option<String>,
+) -> Result<String, Error> {
+    let opens = map(url).unwrap_or_else(|| url.to_owned());
+    if gate.allows(&opens, Load::Navigation) {
+        Ok(opens)
+    } else {
+        Err(Error::Policy(format!("{url} is outside the app's origins")))
+    }
+}
+
 impl WebView {
     /// The app's page at `url`, under `policy`. The start URL must pass the policy's gate.
     pub fn new(policy: &Policy, app: App, target: Target, url: &str) -> Result<WebView, Error> {
@@ -258,9 +290,10 @@ impl WebView {
             ));
         }
         let gate = Gate::new(policy, &app.profile_dir).map_err(Error::Policy)?;
-        if !gate.allows(url, Load::Navigation) {
-            return Err(Error::Policy(format!("{url} is outside the app's origins")));
-        }
+        // A start URL the network spells `fed://` (`http://home.fed`) opens as that address, so the
+        // policy names `fed://name.tld` and nothing about the web (ADR 0052).
+        let start = checked_start(&gate, url, crate::fed::map_http)?;
+        let url = start.as_str();
         std::fs::create_dir_all(&app.profile_dir)
             .map_err(|e| Error::Policy(format!("{}: {e}", app.profile_dir.display())))?;
         let lib = ffi::lib().map_err(Error::Library)?;
@@ -272,6 +305,7 @@ impl WebView {
             clipboard: app.clipboard,
             on_message: RefCell::new(None),
             woken: AtomicBool::new(false),
+            on_wake: app.on_wake,
         });
         let profile = CString::new(app.profile_dir.to_string_lossy().into_owned())
             .map_err(|_| Error::Policy("the profile directory has a NUL".into()))?;
@@ -652,6 +686,85 @@ mod tests {
             crashed,
             frames: 0,
         }
+    }
+
+    fn gate_of(origins: &[&str]) -> Gate {
+        let p = Policy {
+            origins: origins.iter().map(|s| (*s).to_owned()).collect(),
+            ..Policy::default()
+        };
+        Gate::new(
+            &p,
+            std::path::Path::new("/home/a/.local/share/wolos/profiles/x"),
+        )
+        .unwrap()
+    }
+
+    /// The network's own mapping without a network: the 23 known TLDs, nothing held.
+    fn map(url: &str) -> Option<String> {
+        struct NoNet;
+        impl federate::Source for NoNet {
+            fn get(&self, _: &str, _: u64) -> Result<Vec<u8>, String> {
+                Err("no network in this test".into())
+            }
+        }
+        federate::Resolver::new(Box::new(NoNet), federate::ROOT_KEY).map_http(url)
+    }
+
+    #[test]
+    fn a_mapped_start_url_is_allowed_when_the_policy_has_the_fed_origin() {
+        let g = gate_of(&["fed://home.fed"]);
+        assert_eq!(
+            checked_start(&g, "http://home.fed/", map).unwrap(),
+            "fed://home.fed"
+        );
+        assert_eq!(
+            checked_start(&g, "fed://home.fed/", map).unwrap(),
+            "fed://home.fed/"
+        );
+    }
+
+    #[test]
+    fn a_mapped_start_url_is_denied_when_the_policy_has_neither_spelling() {
+        let g = gate_of(&["fed://lobo.pagina", "https://example.com"]);
+        assert!(matches!(
+            checked_start(&g, "http://home.fed/", map),
+            Err(Error::Policy(m)) if m.contains("http://home.fed/")
+        ));
+        let none = gate_of(&[]);
+        assert!(checked_start(&none, "http://home.fed/", map).is_err());
+    }
+
+    #[test]
+    fn a_non_network_http_host_is_left_alone() {
+        // `.com` is not one of the network's TLDs: no mapping, and the policy decides as before.
+        let g = gate_of(&["https://example.com", "fed://home.fed"]);
+        assert_eq!(map("https://example.com/"), None);
+        assert_eq!(
+            checked_start(&g, "https://example.com/", map).unwrap(),
+            "https://example.com/"
+        );
+        assert!(checked_start(&g, "https://other.com/", map).is_err());
+    }
+
+    /// Exclusive Federate names: no start URL under a Federate TLD stays http(s), whether it is a
+    /// valid name or not; what the mapping cannot make a name of the gate refuses.
+    #[test]
+    fn a_federate_tld_start_url_is_never_left_as_http() {
+        let g = gate_of(&["fed://home.fed", "https://example.com"]);
+        for url in [
+            "http://www.home.fed/",
+            "https://home.fed@evil.fed/",
+            "http://lobo.pagina:8080/",
+        ] {
+            let opens = map(url).expect(url);
+            assert!(opens.starts_with("fed://"), "{url} -> {opens}");
+            assert!(checked_start(&g, url, map).is_err(), "{url}");
+        }
+        assert_eq!(
+            checked_start(&g, "https://HOME.fed./x", map).unwrap(),
+            "fed://home.fed/x"
+        );
     }
 
     #[test]

@@ -3,7 +3,9 @@
 //! Network addresses natively, with no setting and no extension. The library calls [`load_cb`] on a
 //! thread of its own for each `fed://` load and [`map_cb`] before each page load of an http(s) URL;
 //! both answer from the `federate` crate, which verifies every signature and content address
-//! before a byte is served and otherwise serves a page saying what failed. Which origins an app
+//! before a byte is served and otherwise serves a page saying what failed. A Federate name is
+//! exclusively `fed://` (lead rule 2026-11-05): [`map_cb`] maps every http(s) URL of a Federate TLD
+//! host, there is no setting, and a failed `fed:` load never falls back to the web. Which origins an app
 //! may reach is still its policy's ([`crate::sandbox`]): `fed://name.tld` is an origin like
 //! `https://host`.
 use crate::ffi;
@@ -36,6 +38,19 @@ pub fn serve(url: &str, kind: federate::Load) -> federate::Reply {
             body: b"The Federate resolver failed.".to_vec(),
         }
     })
+}
+
+/// The `fed://` spelling of an `http(s)://name.tld` URL of the Federate Network, in this process's
+/// resolver; `None` when `url` is not one (an ordinary web host, a TLD outside the network's).
+pub fn map_http(url: &str) -> Option<String> {
+    guarded(|| resolver().map_http(url))
+}
+
+/// Whether `host` (lower case, no port) ends in a Federate TLD of this process's resolver. On
+/// WolOS such a host is exclusively `fed://`: the gate ([`crate::sandbox`]) refuses it over
+/// http(s), ws(s) and everything else, and nothing looks it up in DNS.
+pub fn is_fed_host(host: &str) -> bool {
+    std::panic::catch_unwind(|| resolver().is_fed_host(host)).unwrap_or(true)
 }
 
 /// `f`'s answer, or `None` when it panics: a panic must not unwind into the library (across

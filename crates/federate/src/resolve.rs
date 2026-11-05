@@ -272,19 +272,34 @@ impl Resolver {
         Ok(keep)
     }
 
-    /// Whether an http(s) host under `tld` is taken from the web: in [`KNOWN_TLDS`], and in the
-    /// held zone's TLD table when one is held.
+    /// Whether `tld` is a Federate TLD for the web's purposes: on the built-in [`KNOWN_TLDS`] list,
+    /// whatever the held zone says. A name under it is only ever `fed://` on WolOS, never http(s)
+    /// (ADR 0052, exclusive). The list is deliberately not widened by the zone: whoever holds the
+    /// root key cannot take a TLD of the ordinary web by adding it; a TLD the zone adds is reachable
+    /// as `fed://` at once and under http(s) spelling after a WolOS update lists it.
     pub fn knows_tld(&self, tld: &str) -> bool {
         KNOWN_TLDS.contains(&tld)
-            && lock(&self.zone)
-                .as_ref()
-                .is_none_or(|h| h.zone.tld(tld).is_some())
     }
 
-    /// See [`crate::map_http`].
+    /// Whether `host` (as [`FedUrl::http_host`] gives it) ends in a Federate TLD, however many
+    /// labels it has.
+    pub fn is_fed_host(&self, host: &str) -> bool {
+        host.rsplit_once('.')
+            .is_some_and(|(_, tld)| self.knows_tld(tld))
+    }
+
+    /// See [`crate::map_http`]: the `fed://` spelling of every `http(s)` URL whose host ends in a
+    /// Federate TLD. A host that is not `label.tld` (`www.home.fed`, a bad label) is mapped as it
+    /// stands, so the `fed:` handler answers with a page that says why; it is never left to the
+    /// web. `None` only for a URL that is not http(s) or whose host is not under a Federate TLD.
     pub fn map_http(&self, url: &str) -> Option<String> {
-        let u = FedUrl::from_http(url)?;
-        self.knows_tld(&u.tld).then(|| u.to_url())
+        let host = FedUrl::http_host(url)?;
+        if !self.is_fed_host(&host) {
+            return None;
+        }
+        FedUrl::from_http(url)
+            .map(|u| u.to_url())
+            .or_else(|| FedUrl::raw_fed(url))
     }
 
     fn manifest(&self, address: &str, fqdn: &str, owner: &str) -> Result<Arc<Value>, Outcome> {
@@ -433,10 +448,11 @@ impl Resolver {
 
     /// The reply for one load of `kind`: verified content, or a page that says what happened.
     pub fn serve_load(&self, url: &str, kind: Load) -> page::Reply {
-        let parsed = FedUrl::parse(url).or_else(|e| {
-            FedUrl::from_http(url)
-                .filter(|u| self.knows_tld(&u.tld))
-                .ok_or(e)
+        // An http(s) URL of a Federate TLD host is read as the address it spells; an http(s) URL of
+        // any other host is not an address at all.
+        let parsed = FedUrl::parse(url).or_else(|e| match self.map_http(url) {
+            Some(fed) => FedUrl::parse(&fed),
+            None => Err(e),
         });
         match parsed {
             Ok(u) => page::reply(&u.to_url(), self.resolve_load(&u, time::now(), kind)),

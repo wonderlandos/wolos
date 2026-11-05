@@ -48,9 +48,16 @@ pub fn serve_load(url: &str, kind: Load) -> Reply {
     resolve::shared().serve_load(url, kind)
 }
 
-/// The `fed://` spelling of an `http(s)://` URL whose host is a Federate name under a TLD the
-/// resolver knows (the verified root zone, or the network's TLDs when none is held yet). Never
-/// touches the network.
+/// The `fed://` spelling of an `http(s)://` URL whose host ends in a Federate TLD (the network's built-in
+/// list): always, there is no setting. Never touches the
+/// network. A host that is not `label.tld` is mapped as it stands, and the `fed:` handler refuses
+/// it with a page that says why.
 pub fn map_http(url: &str) -> Option<String> {
     resolve::shared().map_http(url)
+}
+
+/// Whether `host` (lower case, no port) ends in a Federate TLD of the process's resolver: such a
+/// host is never looked up in DNS and never fetched over http(s).
+pub fn is_fed_host(host: &str) -> bool {
+    resolve::shared().is_fed_host(host)
 }

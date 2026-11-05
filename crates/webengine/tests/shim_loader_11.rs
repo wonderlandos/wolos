@@ -10,14 +10,22 @@ use webengine::{App, Policy, Target, WebView, ffi};
 
 const CHANNEL: bool = true;
 
-/// The stand-in library, or None without a C compiler.
+/// The stand-in library, built once (a library the process has loaded is not rewritten), or None
+/// without a C compiler.
 fn mock_lib() -> Option<PathBuf> {
+    static LIB: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    LIB.get_or_init(build_mock).clone()
+}
+
+fn build_mock() -> Option<PathBuf> {
     let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/mock_engine.c");
     let out = std::env::temp_dir().join(format!("wol-mock-engine-{}-{}", 11, std::process::id()));
     std::fs::create_dir_all(&out).ok()?;
     let so = out.join("libwolwebengine.so.1");
     let mut cc = Command::new(std::env::var("CC").unwrap_or_else(|_| "cc".into()));
-    cc.args(["-shared", "-fPIC", "-o"]).arg(&so).arg(&src);
+    cc.args(["-shared", "-fPIC", "-pthread", "-o"])
+        .arg(&so)
+        .arg(&src);
     if CHANNEL {
         cc.arg("-DCHANNEL");
     }
@@ -85,4 +93,35 @@ fn the_page_and_the_host_talk_through_the_libraries_channel() {
     });
     let e = view(a).err().expect("refused");
     assert!(e.to_string().contains("bad origin"), "{e}");
+}
+
+#[test]
+fn the_engines_wake_reaches_the_host_from_the_engines_thread() {
+    let Some(so) = mock_lib() else {
+        eprintln!("no C compiler: the loader is not run against a library here");
+        return;
+    };
+    ffi::load(Some(&so)).unwrap();
+    let woke = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = woke.clone();
+    let mut a = app("wake");
+    a.on_wake = Some(Box::new(move || {
+        log.lock().unwrap().push(std::thread::current().id());
+    }));
+    let v = view(a).unwrap();
+    assert!(!v.take_woken());
+    // The mock engine wakes the host from a thread of its own for each input.
+    v.input(&webengine::input::Input::MouseLeave);
+    assert!(v.take_woken(), "the flag is set as before");
+    let got = woke.lock().unwrap().clone();
+    assert_eq!(got.len(), 1, "the host's wake-up ran once");
+    assert_ne!(
+        got[0],
+        std::thread::current().id(),
+        "on the engine's thread"
+    );
+    // A host that gave none still works.
+    let v = view(app("nowake")).unwrap();
+    v.input(&webengine::input::Input::MouseLeave);
+    assert!(v.take_woken());
 }

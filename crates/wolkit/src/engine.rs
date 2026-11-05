@@ -131,6 +131,13 @@ impl Engine {
 
     // ---- dispatch and events ----
 
+    /// Ends the current or the next [`Engine::dispatch`] wait at once. Callable from any thread:
+    /// a host whose own work (a web engine, a worker's reply) happens elsewhere calls this when
+    /// that work is ready, and waits in `dispatch(-1)` meanwhile instead of polling.
+    pub fn wake(&self) {
+        self.waker.wake();
+    }
+
     /// Wait up to `timeout_ms` (negative: forever, 0: poll) for work, pump the backends, and say
     /// what is pending.
     pub fn dispatch(&self, timeout_ms: i32) -> Result<u32> {
@@ -845,5 +852,26 @@ mod tests {
         // the waker still does
         e.waker.wake();
         assert!(readable(&e), "the waker is always a member");
+    }
+
+    #[test]
+    fn wake_ends_a_blocking_dispatch_from_another_thread() {
+        let e = Engine::new("org.example.wake", abi::ENGINE_HEADLESS).unwrap();
+        let other = e.clone();
+        // Before or during the wait: either way the wait ends at once, not at its 10 s timeout.
+        let t = std::thread::spawn(move || other.wake());
+        let t0 = std::time::Instant::now();
+        e.dispatch(10_000).unwrap();
+        let waited = t0.elapsed();
+        t.join().unwrap();
+        assert!(
+            waited < std::time::Duration::from_secs(5),
+            "dispatch waited {waited:?}: it slept to its timeout instead of ending at the wake"
+        );
+        // A wake with nobody waiting is not lost either.
+        e.wake();
+        let t0 = std::time::Instant::now();
+        e.dispatch(10_000).unwrap();
+        assert!(t0.elapsed() < std::time::Duration::from_secs(5));
     }
 }
