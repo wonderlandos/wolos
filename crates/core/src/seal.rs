@@ -328,11 +328,10 @@ pub enum Fallback {
 /// `other_entry`: the file name of the other slot's boot entry in `loader/entries` (found by
 /// [`entry_of`] in the listing: `wolos-a.conf` or a counted `wolos-a+3.conf`), None when the other
 /// slot has none, or has failed this check itself (no restart loop).
-/// sd-boot's entry id is the file name with its counter and `LoaderEntryDefault` must equal it
-/// (`efi_fnmatch`); `bootctl set-default` accepts any text and writes it. A default rebuilt from
-/// the slot name (`wolos-a.conf`) matched no entry while the slot was counted, so the machine
-/// restarted into the same bad slot (QA-A9-CORE-5). The name comes from the listing, never from
-/// the slot name.
+/// The entry is checked by its file name from the listing (never rebuilt from the slot name); the
+/// default set is its id ([`crate::update::be::activate_argv`]): sd-boot (systemd >= 259) takes the
+/// counter out of an entry's id and matches `LoaderEntryDefault` against the id only
+/// (`efi_fnmatch`), so the counted file name matched nothing (IMAGE-013-3 gate-rollback).
 pub fn fallback(running: &str, other_entry: Option<&str>) -> Fallback {
     match (crate::update::other_slot(running), other_entry) {
         (Some(o), Some(entry)) if entry_of(o, &[entry]).is_some() => Fallback::Boot {
@@ -463,15 +462,21 @@ mod tests {
         }
     }
 
-    /// QA-A9-CORE-5: sd-boot's entry id carries the counter, so the default names the counted
-    /// file: `wolos-a.conf` matched no entry while boot-rearm had counted the slot.
+    /// A counted entry of the other slot is found by its file name and the default is its id:
+    /// sd-boot (systemd >= 259) takes the counter out of the id and matches the default against
+    /// the id only, so `wolos-a+3.conf` as default matched nothing (IMAGE-013-3 gate-rollback;
+    /// QA-A9-CORE-5 had read systemd 257, where the id kept the counter).
     #[test]
-    fn the_fallback_names_the_counted_entry() {
-        for entry in ["wolos-a+3.conf", "wolos-a+2-1.conf"] {
+    fn the_fallback_sets_the_id_of_the_counted_entry() {
+        for entry in ["wolos-a+3.conf", "wolos-a+2-1.conf", "wolos-a.conf"] {
             let Fallback::Boot { argv } = fallback("wolos-b", Some(entry)) else {
                 panic!("{entry}")
             };
-            assert_eq!(argv[0].join(" "), format!("bootctl set-default {entry}"));
+            assert_eq!(
+                argv[0].join(" "),
+                "bootctl set-default wolos-a.conf",
+                "{entry}"
+            );
         }
     }
 

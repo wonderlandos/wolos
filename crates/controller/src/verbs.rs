@@ -1123,7 +1123,7 @@ pub fn rollback(env: &mut dyn Env, be: Option<&str>) -> i32 {
         },
     };
     if env.is_root() {
-        // The entry file as it is on the ESP, counter included (QA-A9-CORE-5).
+        // The entry file as it is on the ESP; the default set is its id (be::activate_argv).
         let dir = be::entries_dir();
         let listed: String = env
             .list_dir(Path::new(&dir))

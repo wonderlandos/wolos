@@ -258,11 +258,12 @@ fn restore_list_marks_the_rollback_target() {
     assert!(none.err.contains("root slots"));
 }
 
-/// QA-A9-CORE-5: `bootctl set-default` writes the text it is given, and sd-boot matches it against
-/// the entry's file name, counter included (systemd v257 boot.c). While boot-rearm has a slot
-/// counted (`wolos-a+3.conf`), `wolos-a.conf` matched nothing and the restore did nothing.
+/// IMAGE-013-3 gate-rollback: `bootctl set-default` writes the text it is given and sd-boot
+/// (systemd >= 259, src/boot/boot.c `boot_entry_parse_tries`) matches it against the entry id,
+/// the file name without its counter. A rollback to a counted slot (`wolos-a+3.conf`) that wrote
+/// the file name matched nothing and the next boot was the newest slot again.
 #[test]
-fn restoring_a_counted_slot_names_its_entry_file() {
+fn restoring_a_counted_slot_sets_its_entry_id() {
     let counted = |entry: &str| {
         let mut e = slots_env("activate-counted");
         e.root = true;
@@ -275,7 +276,7 @@ fn restoring_a_counted_slot_names_its_entry_file() {
     let mut e = counted("wolos-a+3.conf");
     assert_eq!(run("update rollback", &mut e), 0, "{}", e.err);
     let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
-    assert_eq!(ran, ["bootctl set-default wolos-a+3.conf"], "{}", e.err);
+    assert_eq!(ran, ["bootctl set-default wolos-a.conf"], "{}", e.err);
     // A blessed slot has the plain name.
     let mut e = counted("wolos-a.conf");
     assert_eq!(run("update rollback", &mut e), 0, "{}", e.err);

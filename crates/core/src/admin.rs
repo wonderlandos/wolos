@@ -498,8 +498,8 @@ pub fn plan_with(
             .into_iter()
             .map(AdminStep::Run)
             .collect(),
-        // The entry's file name has the boot counter in it while the slot is counted (sd-boot
-        // matches the default against it), so it is read from the directory (QA-A9-CORE-5).
+        // The slot's entry is found in the directory (its file name carries the boot counter
+        // while it is counted); the default set is its id, counter taken out (be::activate_argv).
         AdminAction::BootEnvironment => {
             let dir = crate::update::be::entries_dir();
             let listing = probe(&["ls", "-1", &dir]);

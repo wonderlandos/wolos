@@ -1429,10 +1429,11 @@ fn a_step_is_interrupted_before_it_is_killed() {
     const { assert!(INSTALL_GRACE_SECS > LONG_STEP_GRACE_SECS) };
 }
 
-/// QA-A9-CORE-5: the plan for `boot-environment` names the entry file as the directory lists it
-/// (sd-boot matches the default against it, counter included), the plain name when it lists none.
+/// The plan for `boot-environment` finds the slot's entry file as the directory lists it and sets
+/// its id, the counter taken out: sd-boot (systemd >= 259) matches the default against the id only,
+/// and a counted name booted the newest slot instead (IMAGE-013-3 gate-rollback, QA-A9-CORE-5).
 #[test]
-fn boot_environment_names_the_counted_entry_file() {
+fn boot_environment_sets_the_entry_id() {
     let plan = |listing: Option<&'static str>| {
         let probe = move |a: &[&str]| {
             (a == ["ls", "-1", "/efi/loader/entries"])
@@ -1447,11 +1448,11 @@ fn boot_environment_names_the_counted_entry_file() {
     };
     assert_eq!(
         plan(Some("wolos-a+3.conf\nwolos-b.conf\nloader.conf\n")),
-        "bootctl set-default wolos-a+3.conf"
+        "bootctl set-default wolos-a.conf"
     );
     assert_eq!(
         plan(Some("wolos-a+2-1.conf\nwolos-b.conf\n")),
-        "bootctl set-default wolos-a+2-1.conf"
+        "bootctl set-default wolos-a.conf"
     );
     assert_eq!(
         plan(Some("wolos-b.conf\n")),

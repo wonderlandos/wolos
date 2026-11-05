@@ -233,7 +233,7 @@ fn a_kernel_older_than_the_floor_does_not_stay_up() {
     let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
     assert_eq!(
         ran,
-        ["bootctl set-default wolos-b+3.conf", "systemctl reboot"]
+        ["bootctl set-default wolos-b.conf", "systemctl reboot"]
     );
     assert!(
         e.written
@@ -312,7 +312,7 @@ fn other_ok_needs_failed_mark() {
     assert_eq!(run("boot check", &mut e), 1);
     assert_eq!(
         e.execs.first().map(|a| a.join(" ")).as_deref(),
-        Some("bootctl set-default wolos-b+3.conf")
+        Some("bootctl set-default wolos-b.conf")
     );
     for mark in ["verity-failed-wolos-b", "epoch-failed-wolos-b"] {
         let mut e = under();
