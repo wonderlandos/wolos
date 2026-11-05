@@ -134,6 +134,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/webengine.md](modules/webengine.md) | the web-app runtime's engine: `crates/webengine`, `libwolwebengine.so.1`, the origin gate, process model, input bridge, gaps | [0042](adr/0042-wolos-web-runtime.md) |
 | [modules/widgets.md](modules/widgets.md) | desktop widgets, Edit Widgets, building a widget package, `wol widgets` | [0010](adr/0010-desktop-widgets.md) |
 | [modules/wifi.md](modules/wifi.md) | Wi-Fi: one interface, NetworkManager and iwd, join and its errors | [0016](adr/0016-arch-linux-base.md) |
+| [modules/windows.md](modules/windows.md) | tiling and snapping: drag to an edge or corner with a preview, Super+arrows, the snap layouts chooser, Tile windows; wol-hypr, `realtime::snap` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/wopkg.md](modules/wopkg.md) | wopkg: one package tool for every source, libwopkg behind a stable C ABI | [0021](adr/0021-wopkg.md) |
 
 ## Other

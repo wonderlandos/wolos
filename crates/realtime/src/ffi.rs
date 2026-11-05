@@ -504,6 +504,148 @@ pub unsafe extern "C" fn wol_frame_stats_json(buf: *mut u8, len: usize) -> i32 {
     j.len() as i32
 }
 
+// ---------------------------------------------------------------- window snapping (snap.rs)
+
+/// `snap::zone_at`: the zone under the pointer (px, py) on an output whose box is (sx, sy, sw,
+/// sh), `open` its outer edges (WOL_SNAP_OPEN_*). A `snap::Zone` code (0 none).
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn wol_snap_zone_at(
+    sx: i32,
+    sy: i32,
+    sw: i32,
+    sh: i32,
+    open: u32,
+    px: i32,
+    py: i32,
+) -> i32 {
+    let screen = crate::Rect {
+        x: sx,
+        y: sy,
+        w: sw,
+        h: sh,
+    };
+    crate::snap::zone_at(screen, open, px, py) as i32
+}
+
+/// `snap::zone_box`: the frame of `zone` in the usable area (ax, ay, aw, ah) with the tiling
+/// gaps. 0 with x, y, w, h set (each may be null), -1 for zone none or a bad code.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn wol_snap_box(
+    zone: i32,
+    ax: i32,
+    ay: i32,
+    aw: i32,
+    ah: i32,
+    outer: i32,
+    inner: i32,
+    x: Option<&mut i32>,
+    y: Option<&mut i32>,
+    w: Option<&mut i32>,
+    h: Option<&mut i32>,
+) -> i32 {
+    let area = crate::Rect {
+        x: ax,
+        y: ay,
+        w: aw,
+        h: ah,
+    };
+    let Some(r) = crate::snap::Zone::from_code(zone)
+        .and_then(|z| crate::snap::zone_box(z, area, outer, inner))
+    else {
+        return -1;
+    };
+    put(x, r.x);
+    put(y, r.y);
+    put(w, r.w);
+    put(h, r.h);
+    0
+}
+
+pub const WOL_SNAP_STAY: i32 = 0;
+pub const WOL_SNAP_TO: i32 = 1;
+pub const WOL_SNAP_RESTORE: i32 = 2;
+pub const WOL_SNAP_MINIMISE: i32 = 3;
+pub const WOL_SNAP_MOVE_TILED: i32 = 4;
+pub const WOL_SNAP_ZOOM_TILED: i32 = 5;
+
+/// `snap::key_step`: one Super+arrow (`key` 0 left, 1 right, 2 up, 3 down) on a window in zone
+/// `now`. Step kind (WOL_SNAP_*) in the low byte, the zone (TO) or the key (MOVE_TILED) in the
+/// next; -1 for a bad zone or key.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_snap_key(now: i32, key: i32, tiled: i32, zoomed: i32) -> i32 {
+    use crate::snap::{Key, Step, Zone, key_step};
+    let (Some(z), Some(k)) = (Zone::from_code(now), Key::from_code(key)) else {
+        return -1;
+    };
+    match key_step(z, k, tiled != 0, zoomed != 0) {
+        Step::Stay => WOL_SNAP_STAY,
+        Step::To(z) => WOL_SNAP_TO | (z as i32) << 8,
+        Step::Restore => WOL_SNAP_RESTORE,
+        Step::Minimise => WOL_SNAP_MINIMISE,
+        Step::MoveTiled(k) => WOL_SNAP_MOVE_TILED | (k as i32) << 8,
+        Step::ZoomTiled => WOL_SNAP_ZOOM_TILED,
+    }
+}
+
+/// `snap::unsnap_at`: top-left (x, y; may be null) for a snapped frame (cx, cy, cw, ch) that gets
+/// its old size w x h back under the pointer (px, py).
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn wol_snap_unsnap(
+    cx: i32,
+    cy: i32,
+    cw: i32,
+    ch: i32,
+    w: i32,
+    h: i32,
+    px: i32,
+    py: i32,
+    x: Option<&mut i32>,
+    y: Option<&mut i32>,
+) {
+    let cur = crate::Rect {
+        x: cx,
+        y: cy,
+        w: cw,
+        h: ch,
+    };
+    let (rx, ry) = crate::snap::unsnap_at(cur, (w, h), px, py);
+    put(x, rx);
+    put(y, ry);
+}
+
+/// `snap::still_at`: 1 when the frame (x, y, w, h) is still the snapped one (sx, sy, sw, sh).
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn wol_snap_still(
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    sx: i32,
+    sy: i32,
+    sw: i32,
+    sh: i32,
+) -> i32 {
+    let r = |x, y, w, h| crate::Rect { x, y, w, h };
+    i32::from(crate::snap::still_at(r(x, y, w, h), r(sx, sy, sw, sh)))
+}
+
+/// Word of zone `code` (`hyprctl wolsnap`, the shell's `snap-preview` line): static,
+/// NUL-terminated; null for a bad code.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_snap_zone_name(code: i32) -> *const std::ffi::c_char {
+    crate::snap::Zone::from_code(code).map_or(std::ptr::null(), |z| z.wire().as_ptr())
+}
+
+/// Milliseconds the pointer rests on the zoom button before the snap layouts chooser opens.
+#[unsafe(no_mangle)]
+pub extern "C" fn wol_snap_layouts_dwell_ms() -> u64 {
+    crate::snap::LAYOUTS_DWELL_MS
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,6 +677,84 @@ mod tests {
         ] {
             assert!(header.contains(c), "{c}");
         }
+    }
+
+    #[test]
+    fn snap_abi_matches_snap_rs() {
+        use crate::snap::{Zone, zone_box};
+        assert_eq!(
+            wol_snap_zone_at(0, 0, 1280, 800, 15, 0, 400),
+            Zone::Left as i32
+        );
+        assert_eq!(wol_snap_zone_at(0, 0, 1280, 800, 15 & !1, 0, 400), 0);
+        let (mut x, mut y, mut w, mut h) = (0, 0, 0, 0);
+        assert_eq!(
+            wol_snap_box(
+                Zone::Right as i32,
+                0,
+                28,
+                1280,
+                708,
+                12,
+                6,
+                Some(&mut x),
+                Some(&mut y),
+                Some(&mut w),
+                Some(&mut h)
+            ),
+            0
+        );
+        let area = crate::Rect {
+            x: 0,
+            y: 28,
+            w: 1280,
+            h: 708,
+        };
+        assert_eq!(
+            Some(crate::Rect { x, y, w, h }),
+            zone_box(Zone::Right, area, 12, 6)
+        );
+        assert_eq!(
+            wol_snap_box(0, 0, 0, 10, 10, 0, 0, None, None, None, None),
+            -1
+        );
+        assert_eq!(
+            wol_snap_box(42, 0, 0, 10, 10, 0, 0, None, None, None, None),
+            -1
+        );
+        assert_eq!(
+            wol_snap_key(0, 0, 0, 0),
+            WOL_SNAP_TO | (Zone::Left as i32) << 8
+        );
+        assert_eq!(wol_snap_key(1, 1, 0, 0), WOL_SNAP_RESTORE);
+        assert_eq!(wol_snap_key(0, 3, 0, 0), WOL_SNAP_MINIMISE);
+        assert_eq!(wol_snap_key(0, 0, 1, 0), WOL_SNAP_MOVE_TILED);
+        assert_eq!(wol_snap_key(0, 2, 1, 0), WOL_SNAP_ZOOM_TILED);
+        assert_eq!(wol_snap_key(1, 0, 0, 0), WOL_SNAP_STAY);
+        assert_eq!(wol_snap_key(9, 0, 0, 0), -1);
+        assert_eq!(wol_snap_key(0, 4, 0, 0), -1);
+        let (mut ux, mut uy) = (0, 0);
+        wol_snap_unsnap(
+            12,
+            40,
+            622,
+            684,
+            800,
+            500,
+            12,
+            50,
+            Some(&mut ux),
+            Some(&mut uy),
+        );
+        assert_eq!((ux, uy), (12, 40));
+        assert_eq!(wol_snap_still(1, 2, 3, 4, 1, 2, 3, 4), 1);
+        assert_eq!(wol_snap_still(1, 2, 3, 40, 1, 2, 3, 4), 0);
+        assert!(wol_snap_zone_name(8).is_null());
+        for z in Zone::ALL {
+            let p = wol_snap_zone_name(z as i32);
+            assert_eq!(p, z.wire().as_ptr());
+        }
+        assert!(wol_snap_layouts_dwell_ms() >= 300);
     }
 
     #[test]
