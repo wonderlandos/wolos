@@ -77,14 +77,14 @@ Property value words by type: `f32`, `i32`, `bool`, `enum`, `token`, `str`, `u32
 | TEXT_CHANGED, TEXT_SUBMIT | `u32 caret`, `u32 anchor`, `u32 length`, then the text bytes |
 | TOGGLE | `u32 on` |
 | SLIDER | `f32 value` |
-| SCROLL | `f32 x`, `f32 y` |
+| SCROLL | of a scroll container or list: `f32 x`, `f32 y`, the new offset. Of a `surface` node that binds it (an embedded page, which scrolls itself): `f32 dx`, `f32 dy`, the wheel's distance as the compositor sent it (down is positive), then `f32 x`, `f32 y`, the pointer in window pixels |
 | FOCUS | `u32 gained` |
 | RESIZE | `u32 width`, `u32 height`, `f32 scale` |
 | THEME_CHANGED | `u32 dark`, `u32 accent_rgb`, `u32 flags` |
 | DIAGNOSTIC | `u32 level` (0 note, 1 warning, 2 error), `u32 length`, the text bytes |
 | others | defined with the part that makes them (drop, drag, list range, surface, a11y action) |
 
-The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize, frame tick or hover event replaces the pending one of the same node; when the queue is full the oldest of those is dropped first and the next record carries the overflow flag. A buffer of `WOLKIT_EVENT_MAX_RECORD` (about 64 KiB) bytes always makes progress.
+The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize, frame tick or hover event replaces the pending one of the same node (a surface's wheel record adds its distance to the pending one instead, and keeps the newer point); when the queue is full the oldest of those is dropped first and the next record carries the overflow flag. A buffer of `WOLKIT_EVENT_MAX_RECORD` (about 64 KiB) bytes always makes progress.
 
 ## Backends
 

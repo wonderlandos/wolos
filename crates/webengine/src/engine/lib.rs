@@ -17,6 +17,7 @@
 mod boundary;
 mod channel;
 mod confine;
+mod frame;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_void};
@@ -199,6 +200,8 @@ struct ViewState {
 }
 
 struct Delegate {
+    /// The context the view paints into; each new frame is presented through it ([`frame`]).
+    context: Rc<dyn RenderingContext>,
     host: Host,
     state: Rc<ViewState>,
     channel: Option<Rc<HostChannel>>,
@@ -238,8 +241,13 @@ impl WebViewDelegate for Delegate {
     }
 
     fn notify_new_frame_ready(&self, webview: WebView) {
-        self.state.frames.set(self.state.frames.get() + 1);
-        webview.paint();
+        frame::ready(
+            &self.state.frames,
+            &Painted {
+                webview: &webview,
+                context: &*self.context,
+            },
+        );
     }
 
     fn notify_load_status_changed(&self, _webview: WebView, status: LoadStatus) {
@@ -260,6 +268,25 @@ impl WebViewDelegate for Delegate {
     fn notify_crashed(&self, _webview: WebView, reason: String, _backtrace: Option<String>) {
         log::error!("wolwebengine: content crashed: {reason}");
         self.state.crashed.set(self.state.crashed.get() + 1);
+    }
+}
+
+/// One view and its context, for [`frame::ready`].
+struct Painted<'a> {
+    webview: &'a WebView,
+    context: &'a dyn RenderingContext,
+}
+impl frame::Frame for Painted<'_> {
+    fn make_current(&self) {
+        if let Err(e) = self.context.make_current() {
+            log::error!("wolwebengine: make_current: {e:?}");
+        }
+    }
+    fn paint(&self) {
+        self.webview.paint();
+    }
+    fn present(&self) {
+        self.context.present();
     }
 }
 
@@ -615,6 +642,7 @@ pub unsafe extern "C" fn wwe_view_new(
         let state = Rc::new(ViewState::default());
         let channel = e.channel.borrow().clone();
         let delegate = Rc::new(Delegate {
+            context: context.clone(),
             host: e.host,
             state: state.clone(),
             channel: channel.clone(),

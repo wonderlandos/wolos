@@ -416,6 +416,73 @@ fn scrolled_content_is_hit_where_it_is_drawn() {
     assert!(kinds(&w.events()).contains(&(ev::CLICK, 2)));
 }
 
+fn f32s(b: &[u8]) -> Vec<f32> {
+    (0..b.len() / 4)
+        .map(|i| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap()))
+        .collect()
+}
+
+#[test]
+fn a_surface_that_binds_scroll_gets_the_wheel_with_the_pointer_point() {
+    let mut w = Win::new();
+    w.apply(|p| {
+        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 400.0, 300.0]);
+        p.bind_event(1, event::bit(ev::SCROLL));
+    });
+    w.events();
+    w.ptr(POINTER_MOVE, 120.0, 80.0, 0);
+    w.ptr(POINTER_SCROLL, 0.0, 48.0, 0);
+    let evs = w.events();
+    assert_eq!(
+        kinds(&evs),
+        vec![(ev::SCROLL, 1)],
+        "the wheel reached the surface node"
+    );
+    assert_eq!(
+        f32s(&evs[0].2[..16]),
+        [0.0, 48.0, 120.0, 80.0],
+        "dx, dy as the compositor sent them, then the pointer's x, y"
+    );
+}
+
+#[test]
+fn wheel_steps_pending_for_a_surface_add_up_instead_of_replacing_each_other() {
+    let mut w = Win::new();
+    w.apply(|p| {
+        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 400.0, 300.0]);
+        p.bind_event(1, event::bit(ev::SCROLL));
+    });
+    w.events();
+    w.ptr(POINTER_MOVE, 10.0, 20.0, 0);
+    for dy in [48.0, 48.0, -16.0] {
+        w.ptr(POINTER_SCROLL, 8.0, dy, 0);
+    }
+    let evs = w.events();
+    assert_eq!(evs.len(), 1, "one record for the three steps: {evs:?}");
+    assert_eq!(f32s(&evs[0].2[..16]), [24.0, 80.0, 10.0, 20.0], "their sum");
+}
+
+#[test]
+fn a_surface_that_does_not_bind_scroll_leaves_the_wheel_to_the_container_above() {
+    let mut w = Win::new();
+    w.apply(|p| {
+        place(p, 1, Kind::Scroll, 0, [0.0, 0.0, 200.0, 100.0]);
+        p.set_prop(1, id::OVERFLOW, &[2]);
+        p.bind_event(1, event::bit(ev::SCROLL));
+        place(p, 2, Kind::Surface, 1, [0.0, 0.0, 200.0, 400.0]);
+    });
+    w.events();
+    w.ptr(POINTER_MOVE, 10.0, 50.0, 0);
+    w.ptr(POINTER_SCROLL, 0.0, 30.0, 0);
+    let evs = w.events();
+    assert_eq!(kinds(&evs), vec![(ev::SCROLL, 1)]);
+    assert_eq!(
+        f32s(&evs[0].2[..8]),
+        [0.0, 30.0],
+        "the container's own offset record, not a wheel record"
+    );
+}
+
 #[test]
 fn programmatic_focus_gets_its_state_and_event() {
     let mut w = Win::new();

@@ -70,7 +70,14 @@ pub struct App {
     pub clipboard: Option<Box<dyn Clipboard>>,
     /// Set for a system web app; see [`WebView::has_channel`] for a library that cannot carry it.
     pub channel: Option<Channel>,
+    /// Called from any of the engine's threads when it wants [`WebView::spin`] to run. A host that
+    /// waits on a descriptor (the Wolkit engine's `dispatch(-1)`) sets this to the call that ends
+    /// the wait, and sleeps until then instead of polling; without it the host must spin on a timer.
+    pub on_wake: Option<WakeFn>,
 }
+
+/// What a host runs when the engine wants to be spun (any thread).
+pub type WakeFn = Box<dyn Fn() + Send + Sync>;
 
 impl App {
     pub fn new(id: &str, profile_dir: PathBuf) -> App {
@@ -80,6 +87,7 @@ impl App {
             content_process: true,
             clipboard: None,
             channel: None,
+            on_wake: None,
         }
     }
 }
@@ -133,6 +141,8 @@ struct Shared {
     on_message: RefCell<Option<OnMessage>>,
     /// The only field the waker touches (it runs on the engine's threads).
     woken: AtomicBool,
+    /// The host's wake-up, set once before the engine exists and never changed: any thread reads it.
+    on_wake: Option<WakeFn>,
 }
 
 // SAFETY: called by the engine on the view's thread with the `Shared` this view boxed as `ctx`.
@@ -181,11 +191,18 @@ fn deliver(s: &Shared, bytes: &[u8]) {
     }
 }
 
-// SAFETY: called from any engine thread; touches only the atomic field of `ctx`.
+// SAFETY: called from any engine thread; touches only the two fields of `ctx` that are made for it
+// (the atomic and the host's `Send + Sync` wake-up), through raw places.
 unsafe extern "C" fn wake_cb(ctx: *mut c_void) {
-    // SAFETY: only the atomic field is touched, through a raw place (any thread).
-    let woken = unsafe { &(*ctx.cast::<Shared>()).woken };
+    let shared = ctx.cast::<Shared>();
+    // SAFETY: only those two fields are borrowed, not the struct: `woken` is atomic, and `on_wake` is
+    // written before the engine exists and read-only afterwards, so a shared reference to it is sound
+    // on any thread (it is `Send + Sync`).
+    let (woken, on_wake) = unsafe { (&(*shared).woken, &(*shared).on_wake) };
     woken.store(true, Ordering::Release);
+    if let Some(wake) = on_wake {
+        wake();
+    }
 }
 
 // SAFETY: as allow_cb; `buf` has `cap` writable bytes.
@@ -270,6 +287,7 @@ impl WebView {
             clipboard: app.clipboard,
             on_message: RefCell::new(None),
             woken: AtomicBool::new(false),
+            on_wake: app.on_wake,
         });
         let profile = CString::new(app.profile_dir.to_string_lossy().into_owned())
             .map_err(|_| Error::Policy("the profile directory has a NUL".into()))?;

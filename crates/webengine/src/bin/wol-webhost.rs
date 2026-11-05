@@ -20,18 +20,14 @@ use std::time::{Duration, Instant};
 use webengine::bridge::manifest::{KIT, Manifest, SYSTEM_DIR};
 use webengine::bridge::{AppInfo, Bridge, Theme};
 use webengine::host::{Host, WoldClient, initial_grants, locale};
+use webengine::window::{SURFACE, native_engine, surface_patch, wait_ms};
 use webengine::{App, Channel, Target, WebView, ffi, input, process};
 use wolkit::event::{HEADER, kind};
-use wolkit::scene::Kind;
-use wolkit::scene::patch::{APPEND, Writer};
-use wolkit::scene::prop::{DIM_PERCENT, id};
 
 /// Set on the re-exec into the app's scope, so a system without a user manager does not loop.
 const SCOPED: &str = "WOL_WEBHOST_SCOPED";
 /// First window size (device-independent pixels).
 const SIZE: (u32, u32) = (1040, 720);
-/// The Wolkit node of the page.
-const SURFACE: u32 = 1;
 /// How often the consent file is looked at for a changed grant.
 const GRANTS_EVERY: Duration = Duration::from_secs(2);
 
@@ -94,16 +90,6 @@ fn data_home() -> PathBuf {
     }
 }
 
-/// The patch that gives the window one `surface` node filling it.
-fn surface_patch() -> Vec<u8> {
-    let full = [DIM_PERCENT, 100f32.to_bits()];
-    let mut p = Writer::new();
-    p.create(SURFACE, Kind::Surface).insert(0, SURFACE, APPEND);
-    p.set_prop(SURFACE, id::WIDTH, &full);
-    p.set_prop(SURFACE, id::HEIGHT, &full);
-    p.finish(1).to_vec()
-}
-
 fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     let arg = args.get(1).ok_or("usage: wol-webhost <path/to/app.toml>")?;
     let toml = std::fs::canonicalize(arg).map_err(|e| format!("{arg}: {e}"))?;
@@ -146,7 +132,14 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     let host = Rc::new(RefCell::new(Host::new(bridge, Arc::new(WoldClient::new()))));
 
     // The window and its page surface.
-    let engine = wolkit::engine::Engine::new(&manifest.id, 0).map_err(|e| e.message)?;
+    let engine = native_engine(&manifest.id, env)?;
+    // The loop below sleeps in `engine.dispatch` until something needs it: a worker's reply from
+    // wold ends the sleep through this, the page engine's own threads through `app.on_wake`.
+    let wake = {
+        let e = engine.clone();
+        move || e.wake()
+    };
+    host.borrow_mut().set_notify(Arc::new(wake.clone()));
     let win = engine
         .create_window(&manifest.name, SIZE.0, SIZE.1, 0)
         .map_err(|e| e.message)?;
@@ -166,6 +159,7 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     }
     let profile = wol_core::webapps::profile_dir(&data_home(), &manifest.id);
     let mut app = App::new(&manifest.id, profile);
+    app.on_wake = Some(Box::new(wake));
     let sink = host.clone();
     app.channel = Some(Channel {
         origin: format!("file://{}/", dir.display()),
@@ -185,7 +179,10 @@ fn run(args: &[String], lib: Option<&Path>) -> Result<(), String> {
     let mut last_grants = Instant::now();
     let mut held = host.borrow().bridge().granted().to_vec();
     'run: loop {
-        engine.dispatch(8).map_err(|e| e.message)?;
+        // Asleep until a window event, the page engine or a reply wakes it. Only an app that is
+        // not a system app looks at the clock, for a changed grant.
+        let due = (!system).then(|| GRANTS_EVERY.saturating_sub(last_grants.elapsed()));
+        engine.dispatch(wait_ms(due)).map_err(|e| e.message)?;
         let n = engine.read_events(&mut buf);
         let mut at = 0;
         while at + HEADER <= n {

@@ -104,6 +104,30 @@ pub const fn coalescable(kind: u16) -> bool {
     )
 }
 
+/// A `SCROLL` record for a `surface` node: `f32 dx, f32 dy` (the wheel's distance, the way the
+/// compositor sent it: positive y is down) then `f32 x, f32 y` (the pointer, window pixels).
+/// A `SCROLL` for a scroll container is `f32 x, f32 y`, its new offset, 8 bytes.
+pub const WHEEL_HEAD: usize = 16;
+
+fn f32_at(b: &[u8], at: usize) -> f32 {
+    f32::from_bits(rd32(b, at))
+}
+
+/// The wheel record `old` (in `buf` at `at`) plus the steps in `new`: summed distance, newest point.
+fn wheel_sum(buf: &[u8], at: usize, new: &[u8]) -> [u8; WHEEL_HEAD] {
+    let mut out = [0u8; WHEEL_HEAD];
+    let w = [
+        f32_at(buf, at) + f32_at(new, 0),
+        f32_at(buf, at + 4) + f32_at(new, 4),
+        f32_at(new, 8),
+        f32_at(new, 12),
+    ];
+    for (i, v) in w.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    out
+}
+
 const NONE: usize = usize::MAX;
 const DEAD: u16 = 0;
 
@@ -179,7 +203,14 @@ impl EventQueue {
                 && rd32(&self.buf, at + 12) == node
                 && rd32(&self.buf, at).ix() == total
             {
-                self.write_record(at, total, kind, 0, window, node, seq, head, tail);
+                // A surface's wheel record (`f32 dx, dy, x, y`) carries a distance, not a place:
+                // the steps still waiting add up, the point is the newest.
+                if kind == kind::SCROLL && head.len() == WHEEL_HEAD && tail.is_empty() {
+                    let sum = wheel_sum(&self.buf, at + HEADER, head);
+                    self.write_record(at, total, kind, 0, window, node, seq, &sum, tail);
+                } else {
+                    self.write_record(at, total, kind, 0, window, node, seq, head, tail);
+                }
                 return;
             }
         }

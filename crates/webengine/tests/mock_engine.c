@@ -7,32 +7,56 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdlib.h>
 
 typedef void (*msg_fn)(void *, const uint8_t *, size_t);
-typedef struct { msg_fn fn; void *ctx; int set; } engine;
+typedef void (*wake_fn)(void *);
+/* The first fields of wwe_config (crates/webengine/src/ffi.rs Config), up to the waker and ctx. */
+typedef struct {
+    uint32_t abi, flags, features, heap_mb;
+    const char *profile_dir, *user_agent;
+    void *allow;
+    wake_fn wake;
+    void *clip_get, *clip_set;
+    void *ctx;
+} wwe_config_t;
+typedef struct { msg_fn fn; void *ctx; int set; wake_fn wake; void *wake_ctx; } engine;
 typedef struct { engine *e; } view;
 typedef struct { uint32_t w, h; uint8_t *rgba; } image;
 
 uint32_t wwe_abi_version(void) { return 1; }
 const char *wwe_engine_version(void) { return "mock"; }
 void *wwe_engine_new(const void *config, char *err, size_t n) {
-    static engine e;
-    memset(&e, 0, sizeof e);
-    (void)config; (void)err; (void)n;
-    return &e;
+    /* One per call: tests run in parallel threads of one process. */
+    engine *e = calloc(1, sizeof *e);
+    (void)err; (void)n;
+    e->wake = ((const wwe_config_t *)config)->wake;
+    e->wake_ctx = ((const wwe_config_t *)config)->ctx;
+    return e;
 }
-void wwe_engine_free(void *e) { (void)e; }
+void wwe_engine_free(void *e) { free(e); }
 void wwe_engine_spin(void *e) { (void)e; }
 void *wwe_view_new(void *e, const void *t, const char *url, char *err, size_t n) {
-    static view v;
+    view *v = calloc(1, sizeof *v);
     (void)t; (void)url; (void)err; (void)n;
-    v.e = e;
-    return &v;
+    v->e = e;
+    return v;
 }
-void wwe_view_free(void *v) { (void)v; }
+void wwe_view_free(void *v) { free(v); }
 void wwe_view_state(const void *v, void *out) { (void)v; memset(out, 0, 16); }
 void wwe_view_resize(void *v, uint32_t w, uint32_t h, float s) { (void)v; (void)w; (void)h; (void)s; }
-void wwe_view_input(void *v, const void *ev) { (void)v; (void)ev; }
+/* The real engine wakes the host from its own threads (script, timers, the compositor): so does an input. */
+static void *wake_thread(void *e) {
+    engine *en = e;
+    if (en->wake) en->wake(en->wake_ctx);
+    return NULL;
+}
+void wwe_view_input(void *v, const void *ev) {
+    pthread_t t;
+    (void)ev;
+    if (pthread_create(&t, NULL, wake_thread, ((view *)v)->e) == 0) pthread_join(t, NULL);
+}
 void wwe_view_focus(void *v, bool f) { (void)v; (void)f; }
 void wwe_view_visible(void *v, bool f) { (void)v; (void)f; }
 void wwe_view_theme(void *v, bool d) { (void)v; (void)d; }

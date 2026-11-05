@@ -5,10 +5,10 @@
 //! [`crate::WebView::apply`]. Pure: no engine needed, so the mapping is tested here.
 //!
 //! What record v1 carries for a surface node today: a click (button, mods, x, y), hover enter and
-//! leave with a position, keys (keysym, pressed, mods, repeat), focus, the node's size in device
-//! pixels and the theme. Not carried yet (wolkit gap, docs/modules/webengine.md "Gaps"): pointer
-//! motion inside the node, separate button down and up, wheel deltas, IME preedit and commit for a
-//! surface, and the clipboard. [`Input`] already has those kinds, so the bridge grows without an
+//! leave with a position, keys (keysym, pressed, mods, repeat), the wheel (a `SCROLL` record of
+//! the surface node: distance and point), focus, the node's size in device pixels and the theme.
+//! Not carried yet (wolkit gap, docs/modules/webengine.md "Gaps"): pointer motion inside the node,
+//! separate button down and up, IME preedit and commit for a surface, and the clipboard. [`Input`] already has those kinds, so the bridge grows without an
 //! ABI change when wolkit reports them.
 use wolkit::event::{HEADER, kind};
 
@@ -120,6 +120,19 @@ pub fn bridge(record: &[u8], surface_node: u32) -> Vec<Bridged> {
                     pressed: u32_at(record, p + 4)? != 0,
                     mods: u32_at(record, p + 8)?,
                     repeat: u32_at(record, p + 12)? != 0,
+                })]
+            }
+            kind::SCROLL => {
+                // A surface that binds SCROLL gets the wheel: `f32 dx, dy` (the compositor's:
+                // down is positive) and `f32 x, y`, the pointer. The engine's wheel runs the other
+                // way (as winit's, which servoshell hands it): a negative dy moves the page up.
+                let (dx, dy) = (f32_at(record, p)?, f32_at(record, p + 4)?);
+                let (x, y) = (f32_at(record, p + 8)?, f32_at(record, p + 12)?);
+                vec![Bridged::Input(Input::Wheel {
+                    x,
+                    y,
+                    dx: -dx,
+                    dy: -dy,
                 })]
             }
             kind::FOCUS => vec![Bridged::Focus(u32_at(record, p)? != 0)],
@@ -301,6 +314,38 @@ mod tests {
         assert_eq!(bridge(&r, 7), [Bridged::Theme { dark: true }]);
         let r = record(kind::POINTER_LEAVE, 7, &words(&[0, 0]));
         assert_eq!(bridge(&r, 7), [Bridged::Input(Input::MouseLeave)]);
+    }
+
+    #[test]
+    fn the_wheel_is_the_engines_wheel_at_the_pointer() {
+        // Wolkit: `f32 dx, dy` as the compositor sent them (down is positive), then `f32 x, y`.
+        let r = record(
+            kind::SCROLL,
+            7,
+            &words(&[
+                0.0f32.to_bits(),
+                48.0f32.to_bits(),
+                120.0f32.to_bits(),
+                80.0f32.to_bits(),
+            ]),
+        );
+        assert_eq!(
+            bridge(&r, 7),
+            [Bridged::Input(Input::Wheel {
+                x: 120.0,
+                y: 80.0,
+                dx: 0.0,
+                dy: -48.0
+            })],
+            "the engine's wheel is the other way: a negative dy moves the page up"
+        );
+        assert!(bridge(&r, 8).is_empty(), "another node's wheel");
+        let mut short = record(kind::SCROLL, 7, &words(&[0, 0]));
+        short.truncate(HEADER + 8);
+        assert!(
+            bridge(&short, 7).is_empty(),
+            "a container's offset is not a wheel"
+        );
     }
 
     #[test]
