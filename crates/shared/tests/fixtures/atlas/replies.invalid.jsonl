@@ -1,0 +1,13 @@
+{"reply":"hello","version":0}
+{"reply":"hello"}
+{"reply":"ok","id":0,"outcome":"copied"}
+{"reply":"ok","id":1,"outcome":"printed"}
+{"reply":"ok","id":1}
+{"reply":"ok","id":1,"outcome":"copied","path":"/home/ana/report.pdf"}
+{"reply":"error","id":1,"code":"teapot","text":"No."}
+{"reply":"error","id":1,"code":"failed","text":""}
+{"reply":"error","id":1,"code":"failed"}
+{"reply":"done","id":1}
+{"ok":true}
+not json
+["reply","hello",1]

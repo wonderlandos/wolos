@@ -1,0 +1,5 @@
+# A verb before the hello: refused, and the connection closes.
+file report.pdf
+> {"op":"share","id":1,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":0,"code":"not-browser","text":"Only Atlas can use this service."}
+closed

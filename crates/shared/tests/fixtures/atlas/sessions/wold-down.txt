@@ -1,0 +1,7 @@
+# wold does not run at all.
+file report.pdf
+wold down
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"hello","version":1}
+> {"op":"open_with","id":1,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":1,"code":"unavailable","text":"WolOS could not reach the desktop. Try again in a moment."}

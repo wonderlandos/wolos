@@ -1,0 +1,16 @@
+# Open With: the person picks an app, then cancels the chooser; then no app opens the kind.
+file report.pdf
+wold open.with {"ok":true,"data":{"done":"opened"}}
+wold open.with {"ok":true,"data":{"done":"cancelled"}}
+wold open.with {"ok":false,"code":"internal","message":"No app opens this kind of file."}
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"hello","version":1}
+> {"op":"open_with","id":1,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":1,"outcome":"opened"}
+> {"op":"open_with","id":2,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":2,"outcome":"cancelled"}
+> {"op":"open_with","id":3,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":3,"code":"failed","text":"No app on this computer opens this kind of file."}
+asked {"call":"open.with","path":"@DIR/report.pdf"}
+asked {"call":"open.with","path":"@DIR/report.pdf"}
+asked {"call":"open.with","path":"@DIR/report.pdf"}

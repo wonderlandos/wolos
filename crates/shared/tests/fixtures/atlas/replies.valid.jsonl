@@ -1,0 +1,19 @@
+{"reply":"hello","version":1}
+{"reply":"ok","id":1,"outcome":"copied"}
+{"reply":"ok","id":1,"outcome":"saved"}
+{"reply":"ok","id":1,"outcome":"opened"}
+{"reply":"ok","id":2,"outcome":"cancelled"}
+{"reply":"ok","id":3,"outcome":"trashed"}
+{"reply":"error","id":0,"code":"invalid-request","text":"Atlas sent a request WolOS does not understand."}
+{"reply":"error","id":0,"code":"version","text":"This Atlas and this WolOS do not match. Update both to share files and use the Trash."}
+{"reply":"error","id":0,"code":"not-browser","text":"Only Atlas can use this service."}
+{"reply":"error","id":1,"code":"permission-denied","text":"You have not allowed Atlas to share files or open them in other apps. You can allow it in System Settings, Privacy & Security."}
+{"reply":"error","id":3,"code":"permission-denied","text":"You have not allowed Atlas to move files to the Trash. You can allow it in System Settings, Privacy & Security."}
+{"reply":"error","id":1,"code":"unavailable","text":"Sharing a file from Atlas needs a newer WolOS."}
+{"reply":"error","id":3,"code":"unavailable","text":"Moving to the Trash from Atlas needs a newer WolOS."}
+{"reply":"error","id":1,"code":"unavailable","text":"WolOS could not reach the desktop. Try again in a moment."}
+{"reply":"error","id":1,"code":"not-found","text":"The file is not there any more. It may have been moved or deleted."}
+{"reply":"error","id":1,"code":"busy","text":"Something else is waiting for you to choose. Finish it, then try again."}
+{"reply":"error","id":1,"code":"failed","text":"This item cannot be shared. Only a file can."}
+{"reply":"error","id":2,"code":"failed","text":"No app on this computer opens this kind of file."}
+{"reply":"error","id":3,"code":"failed","text":"This item cannot be moved to the Trash."}

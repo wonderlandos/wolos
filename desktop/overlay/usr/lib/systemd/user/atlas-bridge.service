@@ -1,0 +1,16 @@
+# The Atlas bridge: hands Share, Open With and Move to Trash to wold for the browser
+# (ADR 0043 D4, docs/modules/atlas.md). Started by atlas-bridge.socket, never on its own; it exits
+# after 30 s with no connection and nothing waiting for the person. wold names it by its executable,
+# so the grants share and trash for /usr/lib/atlas-bridge are what Atlas may do.
+[Unit]
+Description=Atlas bridge (Share, Open With, Move to Trash)
+Requires=atlas-bridge.socket
+After=atlas-bridge.socket
+
+[Service]
+ExecStart=/usr/lib/atlas-bridge
+# On a WolOS older than libwol 1.15, Open With falls back to xdg-open, and the app it starts must
+# not end when the bridge leaves.
+KillMode=process
+# Idle it holds a few MB; a leak ends the bridge, never the session.
+MemoryMax=32M

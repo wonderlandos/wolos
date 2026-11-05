@@ -1,0 +1,20 @@
+# Share: the person copies, saves, opens with another app, cancels.
+file report.pdf
+wold share.file {"ok":true,"data":{"done":"copied"}}
+wold share.file {"ok":true,"data":{"done":"saved"}}
+wold share.file {"ok":true,"data":{"done":"opened"}}
+wold share.file {"ok":true,"data":{"done":"cancelled"}}
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"hello","version":1}
+> {"op":"share","id":1,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":1,"outcome":"copied"}
+> {"op":"share","id":2,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":2,"outcome":"saved"}
+> {"op":"share","id":3,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":3,"outcome":"opened"}
+> {"op":"share","id":4,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":4,"outcome":"cancelled"}
+asked {"call":"share.file","path":"@DIR/report.pdf"}
+asked {"call":"share.file","path":"@DIR/report.pdf"}
+asked {"call":"share.file","path":"@DIR/report.pdf"}
+asked {"call":"share.file","path":"@DIR/report.pdf"}

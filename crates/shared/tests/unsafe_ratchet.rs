@@ -133,6 +133,11 @@ const BASELINE: &[(&str, usize)] = &[
     // is macro-expanded, not in the source).
     ("wolkit-render", 0),
     ("wolkit-web", 0),
+    // `atlas` (ADR 0043, ATLAS-BRIDGE, 2026-11-04): 1, `UnixListener::from_raw_fd(3)` in
+    // `src/activation.rs` for the socket systemd passes (LISTEN_PID and LISTEN_FDS checked, as
+    // xguard-clam does); std has no safe way to adopt an inherited descriptor. Everything else in the
+    // crate is safe Rust (`#![deny(unsafe_code)]`).
+    ("atlas", 1),
 ];
 
 fn crates_dir() -> PathBuf {

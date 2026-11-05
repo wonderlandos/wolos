@@ -1,0 +1,16 @@
+# The person has not allowed Atlas to share or to use the Trash.
+file report.pdf
+wold share.file {"ok":false,"code":"permission-denied","message":"This app may not share."}
+wold open.with {"ok":false,"code":"permission-denied","message":"This app may not share."}
+wold file.trash {"ok":false,"code":"permission-denied","message":"This app may not use the Trash."}
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"hello","version":1}
+> {"op":"share","id":1,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":1,"code":"permission-denied","text":"You have not allowed Atlas to share files or open them in other apps. You can allow it in System Settings, Privacy & Security."}
+> {"op":"open_with","id":2,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":2,"code":"permission-denied","text":"You have not allowed Atlas to share files or open them in other apps. You can allow it in System Settings, Privacy & Security."}
+> {"op":"trash","id":3,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":3,"code":"permission-denied","text":"You have not allowed Atlas to move files to the Trash. You can allow it in System Settings, Privacy & Security."}
+asked {"call":"share.file","path":"@DIR/report.pdf"}
+asked {"call":"open.with","path":"@DIR/report.pdf"}
+asked {"call":"file.trash","path":"@DIR/report.pdf"}
