@@ -1,0 +1,8 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Starts hypridle for wolos-hypridle.service: the account's own config (System Settings > Lock &
+# Idle) when it has one, else the WolOS default. A script, so the unit runs no shell string (RS-043).
+set -eu
+c="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hypridle.conf"
+[ -f "$c" ] || c=/usr/share/wolos/hypr/hypridle.conf
+exec hypridle -c "$c"

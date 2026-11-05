@@ -59,7 +59,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 |---|---|---|---|
 | RR-008 | Every `#[allow(` names its reason in a `//` comment on the same line. | An allow with no reason outlives the reason. | rules_rust.rs RR-008 |
 | RR-009 | No crate-wide `#![allow(` in shipped code. | It hides new warnings across the whole crate. | rules_rust.rs RR-009 |
-| RR-010 | No `allow(dead_code)` or `allow(unused…)` outside `tests/support/`. | Dead code is deleted, not silenced. | rules_rust.rs RR-010 |
+| RR-010 | No `allow(dead_code)` or `allow(unused…)` outside `tests/support/` (a ratchet: the rows of rules_rust.rs BASELINE only shrink). | Dead code is deleted, not silenced. | rules_rust.rs RR-010 |
 | RR-011 | No bare `#[ignore]`; write `#[ignore = "reason"]`. | A skipped test with no reason is a test nobody will run. | rules_rust.rs RR-011 |
 | RR-012 | Every `unsafe` has a `// SAFETY:` (or `# Safety`) comment within five lines above. | The invariant is the review. | rules_rust.rs RR-012 |
 | RR-013 | Every `impl Drop` has a comment on, above or below its line saying what it releases. | Drop order bugs are invisible without it. | rules_rust.rs RR-013 |
@@ -69,7 +69,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 | RR-045 | No glob import (`use x::*;`) in shipped code except a `prelude`. | Globs hide where a name comes from and break on upstream additions. | rules_rust.rs RR-045 |
 | RR-043 | No `lazy_static!` or `once_cell::`; use `std::sync::LazyLock` and `OnceLock`. | One less dependency. | rules_rust.rs RR-043 |
 | RR-074 | A crate with no `unsafe` has `#![forbid(unsafe_code)]` in each root file. | The compiler then keeps it at zero. | rules_rust.rs RR-074 |
-| RR-068 | `unsafe` appears only in wol-abi, wolkit, wopkg, xguard, xguard-clam, realtime, webengine (ADR 0042: the engine library's C boundary) and `crates/api/src/os.rs`. | STANDARDS section 1: elsewhere it is a review question. | rules_rust.rs RR-068 |
+| RR-068 | `unsafe` appears only in wol-abi, wolkit, wopkg, xguard, xguard-clam, realtime, webengine (ADR 0042: the engine library's C boundary) and `crates/api/src/os.rs`; elsewhere a ratchet (the rules_rust.rs BASELINE rows of other crates only shrink). | STANDARDS section 1: elsewhere it is a review question. | rules_rust.rs RR-068 |
 | RR-038 | No `mem::forget(` and no `Box::leak(`. | A leak is a bug in a daemon that runs for weeks. | rules_rust.rs RR-038 |
 | RR-039 | `transmute` only in `wol-abi`. | Reinterpreting bytes is an ABI job. | rules_rust.rs RR-039 |
 | RR-040 | No `get_unchecked`, `from_utf8_unchecked`, `unwrap_unchecked` or `unreachable_unchecked`. | Unchecked is UB on bad input. | rules_rust.rs RR-040 |
@@ -83,7 +83,7 @@ Comments, strings and char literals never count (the scanner blanks them first).
 | RR-021 | No `.read_line(`, `.read_to_end(` or `.read_to_string(` on a stream outside `shared::bounded`; a read on `.take(N)` is bounded and does not count. | An unbounded read lets one peer eat memory. | rules_rust.rs RR-021 |
 | RR-078 | A file that connects or accepts on a Unix socket sets a read timeout or uses `shared::bounded`. | A silent peer must not hold a thread. | rules_rust.rs RR-078 |
 | RR-022 | No `thread::sleep(` in the shell crate. | A frame is 8 ms; the GTK main thread never blocks. | rules_rust.rs RR-022 |
-| RR-023 | No `thread::sleep(` in core or shared libraries. | Core is pure and tests run fast. | rules_rust.rs RR-023 |
+| RR-023 | No `thread::sleep(` in core or shared libraries (not in `core/src/system/`, the OS adaptor that waits for children). | Core is pure and tests run fast. | rules_rust.rs RR-023 |
 | RR-037 | No bare `thread::spawn(`; use `thread::Builder::new().name(…)`. | A named thread shows up in a backtrace and `top -H`. | rules_rust.rs RR-037 |
 | RR-027 | A library reads the environment through an `Env` value, not `env::var(`, `var_os(` or `vars(`. | Tests can then set it without touching the process. | rules_rust.rs RR-027 |
 | RR-028 | No `env::set_var(` or `env::remove_var(`. | They are `unsafe` in 2024 and racy with other threads. | rules_rust.rs RR-028 |
@@ -187,7 +187,7 @@ These cannot be decided by a text scan; the reviewer's checklist (`docs/REVIEW.m
 | RR-115 | A bug fix adds the test that would have caught it. | It cannot come back. | review |
 | RR-116 | Every file we ship has a contract test that reads the shipped file. | The file is the product. | review |
 | RR-117 | An error a person reads is one sentence they can act on. | RR-030 and copy_scan catch only the words. | review |
-| RR-118 | No upstream project name in our comments, manifests, scripts' comments, docs prose or Crystal sources (wopkg, wolos-crystal: comments and strings) (Wonderland Doctrine); the allowlist is written in the test. | Our words describe what WolOS does, not whose code it uses. | rules_rust.rs RR-118 |
+| RR-118 | None of the upstream project names listed in rules_rust.rs `UPSTREAM_NAMES` in our comments, manifests, scripts' comments, docs prose or Crystal sources (wopkg, wolos-crystal: comments and strings) (Wonderland Doctrine); the allowlist is written in the test. | Our words describe what WolOS does, not whose code it uses. | rules_rust.rs RR-118 |
 
 ## Root-cause standards (ADR 0051)
 
@@ -226,3 +226,4 @@ files, docs/STANDARDS.md section 9 and the table of ADR 0051 name different ids.
 | RH-223 | No `.spawn(..)` result is followed by `.expect(` or `.unwrap()` in shipped code. | A failed thread or process spawn is an error the caller backs off from, not a panic that freezes state. | RC-22 | rules_rc_22_supervised.rs RH-223 |
 | RH-231 | In the shell and the window kit no size constant named `WIDTH`, `..._W` is above 640 or `HEIGHT`, `..._H` above 400, and no literal `set_size_request` or `set_default_size` is; a larger size is the constant clamped to the screen less its insets. | 640x400 is the smallest logical screen we support, at any scale. | RC-23 | rules_rc_23_fits_the_screen.rs RH-231 |
 | RH-232 | No compositor config we ship pins a number as the monitor scale; the scale is `auto`. | A pinned scale makes a 4K panel unreadable at 100 %. | RC-23 | rules_rc_23_fits_the_screen.rs RH-232 |
+| RH-391 | Every layer window the shell makes (`window(app, ...)` of `ui`, `surface::place(`) gets a child in the function that makes it; one with nothing of its own to show takes `kit::data::presence()`. | GTK maps no layer surface that renders nothing: its empty commits every 16 ms cost the compositor a redraw each (QA-PERF-1). | RC-39 | rules_rc_39_layer_paints.rs RH-391 |

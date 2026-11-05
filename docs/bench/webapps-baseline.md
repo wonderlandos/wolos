@@ -129,6 +129,64 @@ n/m: not meaningful (the app keeps committing frames in the background, so the f
 | `engine-shell` | on | 1474 / 3208 | 490 / 1965 | 273.9 | 274.5 | 85.2 | 184 | 1.18 | 56.72 | 2.34 | 101.8 / 159 | 47.8 / 73.7 | 202.4 / 279.7 | 1272 / 3121 | 361.8 |
 | `engine-shell` | off | 1157 / 2292 | 388 / 1287 | 270.1 | 270.7 | 270.8 | 0 | 0.98 | 51.2 | 1.04 | 53.1 / 70.9 | 54.1 / 85 | 127.8 / 153.9 | 338 / 161 | 392.7 |
 
+## The Servo web-app runtime after ENGINE-FIX (system web apps, 2026-11-05)
+
+Concept: the same system web apps (`webapps/hello`, `webapps/doctor`, the bench-only `long`) on the Servo runtime (ADR 0042), before and after the four defects WEBAPP-bench found were fixed. Why: as shipped on `wave3/int`, a Servo web app showed nothing, so no number existed for the product. How: `.claude/v012/engine-fix/wabench.py run --apps doctor,hello,long --engines servo,fixed --runs 3 --idle 150 --interact 60` in a WolOS 0.12.0 VM set up as in the identity table (4 vCPU, software rendering, 1280x800), forge load 70 to 180 during the run (other agents), medians of 3 (raw: `.claude/v012/engine-fix/results/full.json`, 18 rows, 0 failed).
+
+What was measured against what:
+
+- before = the WEBAPP-bench copy (`wol-webhost-bench`, the shim with `present()` added), which still polls `engine.dispatch(8)`. The shipped `wave3/int` build cannot be measured: with its host the window never opens ("desktop not running"), with only the host fixed it is blank (screenshots in `.claude/v012/engine-fix/shots/before-*.png`).
+- after = the product `wol-webhost` and `libwolwebengine.so.1` of this branch, no bench patch in them. Both run the payload copies of the apps whose `kit/bridge.js` always uses the recorded answers (bench only, so the page work equals the Chromium run of WEBAPP-bench); the "after" host still opens the host channel.
+- Scroll: "before" turned PageDown into a 600 px wheel step in the bench host (two frames per key). "After" sends the bare key and the engine scrolls itself (one frame per key, a different distance), so the scroll rows are not a like-for-like comparison.
+- n is 3 and the VM's compositor takes 250% of its 4 vCPUs with no app open, so key and frame latencies spread by a factor of two to three between runs; first-frame times of one app moved between 290 and 720 ms across runs of the same binary (a separate 3x3 probe of Doctor gave 309 to 507 ms for the fixed host and 322 to 462 ms for the bench host). Read the idle rows, which are stable, as the result. The latency rows are NOT proven better: in this run the Doctor first frame (496 vs 288 ms), settled (2310 vs 893 ms) and key p95 (520 vs 192 ms) read worse after, and the long-page scroll interval has n=0; they must be re-measured on a quiet box before any claim.
+
+#### `hello` (system web app)
+
+| Measure | before: bench-patched host (poll 8 ms) | after: ENGINE-FIX |
+|---|---|---|
+| First frame handed to the compositor (ms) | 454 (n=3) | 407 (n=3) |
+| Page settled (last frame within 10 s, ms) | 1710 (n=3) | 1349 (n=3) |
+| PSS 10 s after first paint (MiB) | 232 (n=3) | 232 (n=3) |
+| RSS 10 s after first paint (MiB) | 303 (n=3) | 304 (n=3) |
+| Idle wakeups per second (last minute of the idle phase) | 133.1 (n=3) | 1.6 (n=3) |
+| Idle CPU, ms per second (last minute) | 6.36 (n=3) | 0.18 (n=3) |
+| CPU over the 60 s scripted use (s) | 1.7 (n=3) | 1.3 (n=3) |
+| Wakeups per second during the scripted use | 186 (n=3) | 84 (n=3) |
+| Key to repaint p50 (ms) | 53 (n=3) | 60 (n=3) |
+| Key to repaint p95 (ms) | 251 (n=3) | 184 (n=3) |
+
+#### `doctor` (system web app)
+
+| Measure | before: bench-patched host (poll 8 ms) | after: ENGINE-FIX |
+|---|---|---|
+| First frame handed to the compositor (ms) | 288 (n=3) | 496 (n=3) |
+| Page settled (last frame within 10 s, ms) | 893 (n=3) | 2310 (n=3) |
+| PSS 10 s after first paint (MiB) | 256 (n=3) | 256 (n=3) |
+| RSS 10 s after first paint (MiB) | 328 (n=3) | 328 (n=3) |
+| Idle wakeups per second (last minute of the idle phase) | 131.4 (n=3) | 1.8 (n=3) |
+| Idle CPU, ms per second (last minute) | 5.91 (n=3) | 0.26 (n=3) |
+| CPU over the 60 s scripted use (s) | 1.7 (n=3) | 1.5 (n=3) |
+| Wakeups per second during the scripted use | 199 (n=3) | 97 (n=3) |
+| Key to repaint p50 (ms) | 141 (n=3) | 49 (n=3) |
+| Key to repaint p95 (ms) | 192 (n=3) | 520 (n=3) |
+
+#### `long` (400 sections, bench-only), 15 PageDown then 15 PageUp
+
+| Measure | before: bench-patched host (poll 8 ms) | after: ENGINE-FIX |
+|---|---|---|
+| First frame (ms) | 337 (n=3) | 370 (n=3) |
+| RSS 3 s after first frame (MiB) | 313 (n=3) | 315 (n=3) |
+| Scroll frame interval p50 (ms) | 28 (n=3) | - (n=0) |
+| Scroll frame interval p95 (ms) | 51 (n=3) | - (n=0) |
+| Scroll key to repaint p50 (ms) | 125 (n=3) | 165 (n=3) |
+| Scroll key to repaint p95 (ms) | 177 (n=3) | 213 (n=3) |
+| CPU for the 30 scroll keys (s) | 2.6 (n=3) | 1.8 (n=3) |
+| Frames for 30 keys | 57 (n=3) | 30 (n=3) |
+
+Idle: wakeups per second 133 to 1.6 (Hello) and 131 to 1.8 (Doctor), against 6 for Chromium in WEBAPP-bench (minute 5; here the last minute of 150 s), idle CPU 6.4 and 5.9 to 0.2 and 0.3 ms per second. The host now sleeps in `Engine::dispatch(-1)` and is woken by the window, the page engine or a reply from wold (`docs/modules/webengine.md`, Loop).
+
+Key and scroll latency, what is ours and what is not. A perf profile of the VM during the Doctor interaction (all CPUs, 1999 Hz, 40 Tab keys) puts 92% of all samples in the compositor's llvmpipe threads (Hyprland, which also uses 250% of the 4 vCPUs with no app open) and 0.5% in `wol-webhost` (host and shim), plus 0.2% in the page engine's own llvmpipe threads. Of one Tab key's 60 to 110 ms to the page's commit, about 22 ms is the compositor handing the key over (`vk` to the `wl_keyboard.key` event) and the rest the engine drawing in software; the host and shim added nothing measurable: the old 8 ms poll and the new blocking wait gave the same 27 ms on the trivial probe page. That part is upstream (WebRender over llvmpipe) plus the test VM, and needs a machine with a GPU to judge.
+
 ## How far to trust it
 
 - One pass, three warm starts per row. Start-up times do not depend on the saver, so the on/off pairs show the noise: the cold window differs by 30 to 40 % for the same app (`helium` 2476 against 3236, `text-editor` 2237 against 1293). Treat start-up differences under about 40 % as noise and repeat before claiming them.

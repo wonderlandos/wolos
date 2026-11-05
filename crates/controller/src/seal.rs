@@ -317,8 +317,21 @@ const SLOT_VIEW: &str = "/run/wolos/seal-root";
 
 /// systemd-sysext has merged layers over /usr (an overlay mounted there).
 fn layers_merged(env: &mut dyn Env) -> bool {
-    env.capture(&["findmnt", "-n", "-o", "FSTYPE", "/usr"])
-        .is_some_and(|t| t.trim() == "overlay")
+    // findmnt exits 1 when nothing is mounted on /usr (no layers); any other failure is said.
+    match env.capture_status(&["findmnt", "-n", "-o", "FSTYPE", "/usr"]) {
+        Some((0, t, _)) => t.trim() == "overlay",
+        Some((1, _, _)) => false,
+        other => {
+            let why = other.map_or_else(
+                || "it did not run".to_owned(),
+                |(c, _, e)| format!("exit {c}: {}", e.trim()),
+            );
+            env.err(&format!(
+                "wol seal: findmnt /usr failed ({why}): checked as if no layers were merged\n"
+            ));
+            false
+        }
+    }
 }
 
 /// A non-recursive bind of `/` at [`SLOT_VIEW`]: the slot's own /usr, nothing mounted over it.

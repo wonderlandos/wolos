@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! System API: what the shell and `wol sys` read about the machine (see docs/modules/system-api.md).
 //! Per topic: pure parser (fixture-tested) + a read through [`Host`]. Snapshots are cached per topic.
+/// The `bluetoothctl` process behind a pairing.
+pub mod bluetoothctl;
 pub mod fake;
 pub mod info;
 pub mod proc;
@@ -131,6 +133,109 @@ pub fn run_input(mut cmd: std::process::Command, input: &str, timeout: Duration)
         let _ = i.write_all(input.as_bytes());
     }
     wait_output(child, timeout)
+}
+
+/// How often [`run_full`] looks whether its child exited.
+const CHILD_POLL: Duration = Duration::from_millis(5);
+
+/// How long [`run_full`] waits for a pipe a grandchild holds open once the child is gone.
+const PIPE_GRACE: Duration = Duration::from_millis(500);
+
+/// How much of a child's stdout or stderr [`run_full`] keeps.
+const ANSWER_CAP: u64 = 8 << 20;
+
+/// The exit status [`run_full`] reports for a child a signal ended (OOM kill, SIGKILL): no exit
+/// code at all, and never the 1 that means "nothing pending" to `pacman -Qu`.
+pub const KILLED: i32 = -1;
+
+/// Why [`run_full`] has no answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunFail {
+    /// The program could not start (the OS's words).
+    Start(String),
+    /// It did not finish within the timeout and was killed.
+    TimedOut,
+}
+
+/// Run argv (never a shell) with `input` on stdin, or stdin closed for None: (exit status, stdout,
+/// stderr), [`KILLED`] when a signal ended it. A child past `timeout` is killed. Each pipe is read
+/// on its own named thread, bounded, so neither can fill and stall; once the child is gone a
+/// grandchild that holds a pipe open is waited for [`PIPE_GRACE`], no more.
+pub fn run_full(
+    argv: &[&str],
+    input: Option<&str>,
+    timeout: Duration,
+) -> Result<(i32, String, String), RunFail> {
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    let (file, args) = argv.split_first().ok_or(RunFail::Start(String::new()))?;
+    let mut child = Command::new(file)
+        .args(args)
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| RunFail::Start(e.to_string()))?;
+    if let (Some(mut i), Some(text)) = (child.stdin.take(), input) {
+        let _ = i.write_all(text.as_bytes());
+    }
+    let drain = |pipe: Option<Box<dyn Read + Send>>, name: &str| {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                let mut v = Vec::new();
+                if let Some(p) = pipe {
+                    let _ = p.take(ANSWER_CAP).read_to_end(&mut v);
+                }
+                let _ = tx.send(v);
+            });
+        spawned.ok().map(|_| rx)
+    };
+    let out = drain(
+        child.stdout.take().map(|p| Box::new(p) as _),
+        "run-full-out",
+    );
+    let err = drain(
+        child.stderr.take().map(|p| Box::new(p) as _),
+        "run-full-err",
+    );
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(CHILD_POLL);
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(RunFail::TimedOut);
+            }
+        }
+    };
+    let text = |rx: Option<std::sync::mpsc::Receiver<Vec<u8>>>| {
+        rx.and_then(|r| r.recv_timeout(PIPE_GRACE).ok())
+            .map(|v| String::from_utf8_lossy(&v).into_owned())
+            .unwrap_or_default()
+    };
+    Ok((status.code().unwrap_or(KILLED), text(out), text(err)))
+}
+
+/// Run argv with `input` on stdin (secrets never in argv): its stdout when it exits 0 within
+/// `timeout`, else its stderr (what `wifi::classify_join_error` reads), the OS's words when it
+/// cannot start, or "timed out" when it was killed.
+pub fn run_input_err(argv: &[&str], input: &str, timeout: Duration) -> Result<String, String> {
+    match run_full(argv, Some(input), timeout) {
+        Ok((0, out, _)) => Ok(out),
+        Ok((_, _, err)) => Err(err),
+        Err(RunFail::Start(e)) => Err(e),
+        Err(RunFail::TimedOut) => Err("timed out".into()),
+    }
 }
 
 /// Stdout of a spawned child (stdout piped) when it exits 0 within `timeout`; killed otherwise.
@@ -401,6 +506,24 @@ pub(crate) fn pairs(s: &str, sep: char) -> std::collections::HashMap<&str, &str>
 
 #[cfg(test)]
 mod tests {
+    /// The Wi-Fi join's runner: stdin reaches the child, a failure answers with its stderr, a
+    /// child past its time is killed and says so.
+    #[test]
+    fn run_input_err_answers_stdout_stderr_or_timed_out() {
+        assert_eq!(
+            run_input_err(&["cat"], "secret", Duration::from_secs(5)).as_deref(),
+            Ok("secret")
+        );
+        let e =
+            run_input_err(&["ls", "/nonexistent-int1"], "", Duration::from_secs(5)).unwrap_err();
+        assert!(e.contains("nonexistent-int1"), "{e}");
+        let t = std::time::Instant::now();
+        assert_eq!(
+            run_input_err(&["sleep", "5"], "", Duration::from_millis(200)).unwrap_err(),
+            "timed out"
+        );
+        assert!(t.elapsed() < Duration::from_secs(3));
+    }
     use super::fake::FakeHost;
     use super::*;
 

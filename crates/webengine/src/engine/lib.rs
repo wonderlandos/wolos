@@ -19,6 +19,7 @@
 mod boundary;
 mod channel;
 mod confine;
+mod frame;
 mod scheme;
 
 use std::cell::{Cell, RefCell};
@@ -28,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use dpi::PhysicalSize;
@@ -203,6 +205,69 @@ pub struct Engine {
     _slot: boundary::Claim<'static>,
 }
 
+/// A page load the host spelled as `fed://` (see `load_web_resource`), waiting to start.
+struct Deferred {
+    webview: WebView,
+    to: Url,
+    tries: u32,
+    next: Instant,
+    /// [`FED_DOCUMENTS`] when the last try was made.
+    seen: u64,
+}
+
+thread_local! {
+    /// Mapped page loads not started yet. Only the engine thread touches the list.
+    static DEFERRED: RefCell<Vec<Deferred>> = const { RefCell::new(Vec::new()) };
+}
+/// How many entries [`DEFERRED`] holds, for the thread that wakes the host while it waits.
+static DEFERRED_N: AtomicUsize = AtomicUsize::new(0);
+/// Documents (pages and frames) the `fed:` handler was asked for. A mapped load that took shows here.
+static FED_DOCUMENTS: AtomicU64 = AtomicU64::new(0);
+/// A mapped load is tried every `RETRY_EVERY`, at most `RETRY_MAX` times (5 s), until it takes.
+const RETRY_EVERY: Duration = Duration::from_millis(100);
+const RETRY_MAX: u32 = 50;
+
+/// Starts the mapped loads that can start. The engine drops `webview.load` while the navigation it
+/// replaces still has a pending change (`Constellation::load_url`: "id that sent load msg is being
+/// changed already; abort"), and the 204 that ends that navigation removes it a moment later, by a
+/// message nobody reports. So a load is tried again until the `fed:` handler is asked for a
+/// document; a second try while the first is pending is dropped the same way, so it is harmless.
+fn start_deferred() {
+    DEFERRED.with(|d| {
+        let mut d = d.borrow_mut();
+        d.retain_mut(|x| {
+            let docs = FED_DOCUMENTS.load(Ordering::Relaxed);
+            if docs != x.seen || x.tries >= RETRY_MAX {
+                return false;
+            }
+            if Instant::now() >= x.next {
+                x.webview.load(x.to.clone());
+                x.tries += 1;
+                x.seen = docs;
+                x.next = Instant::now() + RETRY_EVERY;
+            }
+            true
+        });
+        DEFERRED_N.store(d.len(), Ordering::Relaxed);
+    });
+}
+
+/// Wakes the host every `RETRY_EVERY` while a mapped load waits (a host that sleeps until woken
+/// would not call `wwe_engine_spin` again).
+fn nudge(waker: Waker) {
+    let _ = std::thread::Builder::new()
+        .name("wwe-fed-retry".into())
+        .spawn(move || {
+            for _ in 0..=RETRY_MAX {
+                std::thread::sleep(RETRY_EVERY);
+                if DEFERRED_N.load(Ordering::Relaxed) == 0 {
+                    return;
+                }
+                waker.wake();
+            }
+        });
+}
+
 #[derive(Default)]
 struct ViewState {
     load: Cell<u32>,
@@ -211,10 +276,14 @@ struct ViewState {
 }
 
 struct Delegate {
+    /// The context the view paints into; each new frame is presented through it ([`frame`]).
+    context: Rc<dyn RenderingContext>,
     host: Host,
     state: Rc<ViewState>,
     channel: Option<Rc<HostChannel>>,
     scheme: Arc<scheme::Slot>,
+    /// Wakes the host (see [`nudge`]).
+    waker: Option<Waker>,
 }
 
 /// The engine's protocol handler for [`scheme::SCHEME`]: each load runs the host's handler on its
@@ -233,6 +302,7 @@ impl ProtocolHandler for HostScheme {
         let timing = ResourceFetchTiming::new(request.timing_type());
         // A document may be larger than what it loads (the host caps the two differently).
         let kind = if request.is_navigation_request() {
+            FED_DOCUMENTS.fetch_add(1, Ordering::Relaxed);
             scheme::LOAD_NAVIGATION
         } else {
             scheme::LOAD_RESOURCE
@@ -294,12 +364,30 @@ impl WebViewDelegate for Delegate {
             .is_for_main_frame
             .then(|| self.scheme.map(load.request().url.as_str()))
             .flatten()
-            .and_then(|u| Url::parse(&u).ok());
+            .and_then(|u| Url::parse(&u).ok())
+            .filter(|to| self.host.allows(to, LOAD_NAVIGATION));
         if let Some(to) = mapped {
             let url = load.request().url.clone();
             load.intercept(WebResourceResponse::new(url).status_code(http::StatusCode::NO_CONTENT))
                 .finish();
-            webview.load(to);
+            // Not `webview.load(to)` here: it is dropped while this navigation is pending (see
+            // [`start_deferred`]; measured on the forge guest, ENGINE-FED). It starts from the
+            // engine's spin ([`wwe_engine_spin`]).
+            let first = DEFERRED.with(|d| {
+                let mut d = d.borrow_mut();
+                d.push(Deferred {
+                    webview,
+                    to,
+                    tries: 0,
+                    next: Instant::now(),
+                    seen: FED_DOCUMENTS.load(Ordering::Relaxed),
+                });
+                DEFERRED_N.store(d.len(), Ordering::Relaxed);
+                d.len() == 1
+            });
+            if let (true, Some(w)) = (first, &self.waker) {
+                nudge(w.clone());
+            }
             return;
         }
         if self.host.allows(&load.request().url, LOAD_RESOURCE) {
@@ -316,8 +404,13 @@ impl WebViewDelegate for Delegate {
     }
 
     fn notify_new_frame_ready(&self, webview: WebView) {
-        self.state.frames.set(self.state.frames.get() + 1);
-        webview.paint();
+        frame::ready(
+            &self.state.frames,
+            &Painted {
+                webview: &webview,
+                context: &*self.context,
+            },
+        );
     }
 
     fn notify_load_status_changed(&self, _webview: WebView, status: LoadStatus) {
@@ -338,6 +431,25 @@ impl WebViewDelegate for Delegate {
     fn notify_crashed(&self, _webview: WebView, reason: String, _backtrace: Option<String>) {
         log::error!("wolwebengine: content crashed: {reason}");
         self.state.crashed.set(self.state.crashed.get() + 1);
+    }
+}
+
+/// One view and its context, for [`frame::ready`].
+struct Painted<'a> {
+    webview: &'a WebView,
+    context: &'a dyn RenderingContext,
+}
+impl frame::Frame for Painted<'_> {
+    fn make_current(&self) {
+        if let Err(e) = self.context.make_current() {
+            log::error!("wolwebengine: make_current: {e:?}");
+        }
+    }
+    fn paint(&self) {
+        self.webview.paint();
+    }
+    fn present(&self) {
+        self.context.present();
     }
 }
 
@@ -635,7 +747,10 @@ pub unsafe extern "C" fn wwe_engine_free(engine: *mut Engine) {
 pub unsafe extern "C" fn wwe_engine_spin(engine: *mut Engine) {
     // SAFETY: contract above.
     if let Some(e) = unsafe { engine.as_ref() } {
-        guarded("spin", || e.servo.spin_event_loop());
+        guarded("spin", || {
+            e.servo.spin_event_loop();
+            start_deferred();
+        });
     }
 }
 
@@ -706,10 +821,12 @@ pub unsafe extern "C" fn wwe_view_new(
         let state = Rc::new(ViewState::default());
         let channel = e.channel.borrow().clone();
         let delegate = Rc::new(Delegate {
+            context: context.clone(),
             host: e.host,
             state: state.clone(),
             channel: channel.clone(),
             scheme: e.scheme.clone(),
+            waker: e.waker.clone().map(Waker),
         });
         let scale = if t.scale > 0.0 { t.scale } else { 1.0 };
         let mut builder = WebViewBuilder::new(&e.servo, context.clone())
@@ -755,7 +872,12 @@ pub unsafe extern "C" fn wwe_view_free(view: *mut View) {
     if !view.is_null() {
         // SAFETY: contract above.
         let view = unsafe { Box::from_raw(view) };
-        guarded("view free", move || drop(view));
+        guarded("view free", move || {
+            // A mapped load still waiting holds a handle on a view that is going away.
+            DEFERRED.with(|d| d.borrow_mut().clear());
+            DEFERRED_N.store(0, Ordering::Relaxed);
+            drop(view);
+        });
     }
 }
 

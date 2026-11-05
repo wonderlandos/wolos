@@ -16,7 +16,7 @@ pub enum IfKind {
 /// CONNECTIVITY general`): one definition of online for the tray, Control Center, `wol network`
 /// and wold's facts (QA-NET-12).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
 pub enum Connectivity {
     /// NetworkManager did not say (not running, check disabled).
     #[default]
@@ -236,6 +236,49 @@ pub const DEVICE_DNS_ARGV: [&str; 6] = [
     "show",
 ];
 
+/// Where NetworkManager's connectivity check is configured, in the order it reads them (a later
+/// setting wins): the packaged drop-ins, its own file, the admin's drop-ins.
+pub const NM_CONFS: [&str; 3] = [
+    "/usr/lib/NetworkManager/conf.d",
+    "/etc/NetworkManager/NetworkManager.conf",
+    "/etc/NetworkManager/conf.d",
+];
+
+/// The `uri=` of the `[connectivity]` section in `text`: the plain-HTTP address NetworkManager
+/// probes. A captive portal intercepts it and answers with its sign-in page, so opening it in the
+/// browser lands there (QA-NET2-3). Plain HTTP is the point: a portal cannot answer for HTTPS.
+pub fn connectivity_uri(text: &str) -> Option<String> {
+    let mut inside = false;
+    let mut uri = None;
+    for l in text.lines().map(str::trim) {
+        if l.starts_with('[') {
+            inside = l == "[connectivity]";
+        } else if inside && let Some(v) = l.strip_prefix("uri=") {
+            uri = Some(v.trim().to_owned()).filter(|v| !v.is_empty());
+        }
+    }
+    uri
+}
+
+/// The address NetworkManager's connectivity check uses, from its configuration ([`NM_CONFS`];
+/// in a directory, the `.conf` files by name; the last that sets it wins). None when no check is
+/// configured: then there is no portal state either.
+pub fn nm_connectivity_uri(h: &dyn Host) -> Option<String> {
+    let mut files = Vec::new();
+    for p in NM_CONFS {
+        let inside = h.list_dir(p);
+        if inside.is_empty() {
+            files.push(p.to_owned());
+        } else {
+            files.extend(inside.into_iter().filter(|f| f.ends_with(".conf")));
+        }
+    }
+    files
+        .iter()
+        .rev()
+        .find_map(|f| h.read_text(f).and_then(|t| connectivity_uri(&t)))
+}
+
 /// Interfaces, addresses, DNS (whole computer and per link), the default route, connectivity and
 /// metered (short commands side by side; call off the UI thread).
 pub fn read(h: &dyn Host) -> NetInfo {
@@ -339,12 +382,40 @@ pub fn known_ssids(h: &dyn Host) -> Option<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-NET2-3: the sign-in page is the address NetworkManager probes, the last setting winning.
+    #[test]
+    fn the_portal_page_is_what_networkmanager_probes() {
+        let conf = "[main]\nuri=http://wrong.example\n[connectivity]\nuri=http://ping.archlinux.org/nm-check.txt\n";
+        assert_eq!(
+            connectivity_uri(conf).as_deref(),
+            Some("http://ping.archlinux.org/nm-check.txt")
+        );
+        assert_eq!(connectivity_uri("[connectivity]\nenabled=false\n"), None);
+        let h = FakeHost::linux();
+        assert_eq!(nm_connectivity_uri(&h), None, "no check configured");
+        h.file("/usr/lib/NetworkManager/conf.d/20-connectivity.conf", conf)
+            .file(
+                "/etc/NetworkManager/conf.d/90-mine.conf",
+                "[connectivity]\nuri=http://portal.test/\n",
+            )
+            .file(
+                "/etc/NetworkManager/conf.d/91-other.conf",
+                "[main]\nplugins=keyfile\n",
+            );
+        assert_eq!(
+            nm_connectivity_uri(&h).as_deref(),
+            Some("http://portal.test/")
+        );
+    }
     use crate::system::fake::FakeHost;
 
     #[test]
     fn linux_ip_json() {
-        let j = r#"[{"ifindex":1,"ifname":"lo","operstate":"UNKNOWN","address":"00:00:00:00:00:00","addr_info":[{"family":"inet","local":"127.0.0.1","prefixlen":8}]},
-{"ifindex":2,"ifname":"wlp2s0","operstate":"UP","address":"3c:58:c2:aa:bb:cc","addr_info":[{"family":"inet","local":"192.168.1.5","prefixlen":24},{"family":"inet6","local":"fe80::1","prefixlen":64,"scope":"link"},{"family":"inet6","local":"2001:db8::5","prefixlen":64,"scope":"global"}]},
+        let j = r#"[{"ifindex":1,"ifname":"lo","operstate":"UNKNOWN","address":"00:00:00:00:00:00","addr_info":[{"family":"inet","local":"127.0.0.1",
+"prefixlen":8}]},
+{"ifindex":2,"ifname":"wlp2s0","operstate":"UP","address":"3c:58:c2:aa:bb:cc","addr_info":[{"family":"inet","local":"192.168.1.5",
+"prefixlen":24},{"family":"inet6","local":"fe80::1","prefixlen":64,"scope":"link"},{"family":"inet6","local":"2001:db8::5","prefixlen":64,"scope":"global"}]},
 {"ifindex":3,"ifname":"enp0s31f6","operstate":"DOWN","address":"aa:bb:cc:dd:ee:ff","addr_info":[]},
 {"ifindex":4,"ifname":"docker0","operstate":"DOWN","address":"02:42:00:00:00:01","addr_info":[]},
 {"ifindex":5,"ifname":"veth12ab","operstate":"UP","address":"02:42:00:00:00:02","addr_info":[]}]"#;
@@ -426,8 +497,10 @@ mod tests {
     /// QA-NET-28: an active WireGuard tunnel is a VPN that is up, with its own DNS.
     #[test]
     fn wireguard_is_vpn_with_its_dns() {
-        let j = r#"[{"ifname":"enp0s1","operstate":"UP","link_type":"ether","address":"52:54:00:12:34:56","addr_info":[{"family":"inet","local":"10.0.2.15","prefixlen":24}]},
-{"ifname":"qa-wg0","flags":["POINTOPOINT","NOARP","UP","LOWER_UP"],"operstate":"UNKNOWN","link_type":"none","addr_info":[{"family":"inet","local":"10.77.0.2","prefixlen":32}]}]"#;
+        let j = r#"[{"ifname":"enp0s1","operstate":"UP","link_type":"ether","address":"52:54:00:12:34:56","addr_info":[{"family":"inet","local":"10.0.2.15",
+"prefixlen":24}]},
+{"ifname":"qa-wg0","flags":["POINTOPOINT","NOARP","UP","LOWER_UP"],"operstate":"UNKNOWN","link_type":"none","addr_info":[{"family":"inet",
+"local":"10.77.0.2","prefixlen":32}]}]"#;
         let l = FakeHost::linux();
         l.command("ip -j addr", j).command(
             "nmcli -t -f GENERAL.DEVICE,IP4.DNS,IP6.DNS device show",

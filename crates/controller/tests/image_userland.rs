@@ -2,7 +2,6 @@
 //! Everyday userland from the real-GPU run: sudo for administrators, zsh for every account, user
 //! folders, unlocked keyring, printing, removable media and default apps (Helium the browser).
 //! Scripts run on the host with fakes.
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 
@@ -305,13 +304,38 @@ fn night_light_has_its_program_in_the_image() {
     let unit = read("files/usr/lib/systemd/user/wolos-hyprsunset.service");
     assert!(
         unit.lines()
-            .any(|l| l.starts_with("ExecStart=") && l.contains(&format!("exec {p}"))),
+            .any(|l| l.trim() == "ExecStart=/usr/lib/wolos/hyprsunset-run"),
         "{unit}"
+    );
+    let run = read("files/usr/lib/wolos/hyprsunset-run");
+    assert!(
+        run.contains(&format!("exec {p} -t 4500")) && run.contains(&format!("exec {p} -i")),
+        "{run}"
     );
     assert!(
         read("files/usr/lib/systemd/user/wolos-session.target")
             .contains("wolos-hyprsunset.service")
     );
+}
+
+/// wolos-hypridle.service runs no shell string (RS-043): its script takes the account's own
+/// hypridle.conf (System Settings > Lock & Idle) and falls back to the WolOS default.
+#[test]
+fn hypridle_runs_the_accounts_config_or_the_default() {
+    let unit = read("files/usr/lib/systemd/user/wolos-hypridle.service");
+    assert!(
+        unit.lines()
+            .any(|l| l.trim() == "ExecStart=/usr/lib/wolos/hypridle-run"),
+        "{unit}"
+    );
+    let run = read("files/usr/lib/wolos/hypridle-run");
+    for want in [
+        "/hypr/hypridle.conf\"",
+        "c=/usr/share/wolos/hypr/hypridle.conf",
+        "exec hypridle -c \"$c\"",
+    ] {
+        assert!(run.contains(want), "hypridle-run lacks {want}: {run}");
+    }
 }
 
 /// The live user has no password: a lock screen after five idle minutes could not be left. The

@@ -397,7 +397,8 @@ pub fn protect_session(proc_dir: &Path, procs: &[Proc]) -> usize {
 /// no privilege. Returns how many.
 pub fn reset_inherited_oom_adj(proc_dir: &Path, procs: &[Proc]) -> usize {
     let want = SESSION_OOM_ADJ.to_string();
-    let wold = std::process::id() as i32;
+    // A pid always fits (pid_max is at most 2^22); one that did not would match no process.
+    let wold = i32::try_from(std::process::id()).unwrap_or(-1);
     procs
         .iter()
         .filter(|p| p.pid != wold && !SESSION_COMMS.contains(&p.comm.as_slice()))

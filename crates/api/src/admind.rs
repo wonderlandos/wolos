@@ -502,28 +502,7 @@ pub fn handle_said(
     let on_cache = decision == AdminDecision::Allow && cached && !user_level && known != Some(0);
     match decision {
         AdminDecision::NotAdmin => {
-            // A restart or shut down from the session refused because another account would lose
-            // its session (the lock screen's Restart, audit6 S6-5): the log names who is signed in.
-            let others = known
-                .filter(|_| wol_core::admin::is_user_level(req.action))
-                .map(|u| wol_core::admin::signed_in_others(&req, u, &os.sessions()))
-                .unwrap_or_default();
-            if others.is_empty() {
-                os.log(&format!("{who}: {what}: not an administrator"));
-            } else {
-                let passwd = os.passwd();
-                let names: Vec<String> = others
-                    .iter()
-                    .map(|u| match user_of(&passwd, *u) {
-                        Some((n, _)) => format!("{n}({u})"),
-                        None => format!("uid {u}"),
-                    })
-                    .collect();
-                os.log(&format!(
-                    "{who}: {what}: refused, signed in: {}",
-                    names.join(", ")
-                ));
-            }
+            log_not_admin(os, &req, known, &who, &what);
             return refuse(AdminReply::NotAdmin);
         }
         AdminDecision::NeedPassword => return AdminReply::NeedsAuth,
@@ -573,6 +552,51 @@ pub fn handle_said(
             .is_ok(),
         _ => execute(&req, os),
     };
+    finish(os, &req, ok, cleanup, (&who, &what), said)
+}
+
+/// The log line of a refused request; a restart or shut down from the session refused because
+/// another account would lose its session (the lock screen's Restart, audit6 S6-5) names who is
+/// signed in.
+fn log_not_admin(
+    os: &dyn AdminOs,
+    req: &shared::admin::AdminRequest,
+    known: Option<u32>,
+    who: &str,
+    what: &str,
+) {
+    let others = known
+        .filter(|_| wol_core::admin::is_user_level(req.action))
+        .map(|u| wol_core::admin::signed_in_others(req, u, &os.sessions()))
+        .unwrap_or_default();
+    if others.is_empty() {
+        os.log(&format!("{who}: {what}: not an administrator"));
+        return;
+    }
+    let passwd = os.passwd();
+    let names: Vec<String> = others
+        .iter()
+        .map(|u| match user_of(&passwd, *u) {
+            Some((n, _)) => format!("{n}({u})"),
+            None => format!("uid {u}"),
+        })
+        .collect();
+    os.log(&format!(
+        "{who}: {what}: refused, signed in: {}",
+        names.join(", ")
+    ));
+}
+
+/// After the steps ran (`ok`): the reason, the Wi-Fi cleanup, the log line, the person's sentence
+/// in `said` and the reply.
+fn finish(
+    os: &dyn AdminOs,
+    req: &shared::admin::AdminRequest,
+    ok: bool,
+    cleanup: Option<Vec<String>>,
+    (who, what): (&str, &str),
+    said: &mut Option<String>,
+) -> AdminReply {
     // Why it failed, taken before anything else runs a command: the log and the person get the
     // program's own last line, not "the change failed" alone (QA-100 LIVE3-19, DEV-4).
     let reason = if ok {

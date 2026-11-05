@@ -287,14 +287,12 @@ fn v(a: &[&str]) -> Step {
     Step::Run(a.iter().map(|s| (*s).to_owned()).collect())
 }
 
-/// `umount -R` of [`CHROOT`], detached lazily when a process still holds it (QA-STORE-53): a
-/// chroot left mounted would have the next `wol pkg` stack its mounts on top of it.
+/// `umount -l -R` of [`CHROOT`] (QA-STORE-53): a chroot left mounted would have the next `wol pkg`
+/// stack its mounts on top of it. Lazy: nothing holds it, and it is gone at once; a process still
+/// holds it, and it is detached now and freed when that process lets go (what `umount -R ||
+/// umount -l -R` did, as one argv: no shell string, RR-020).
 fn umount_argv() -> Vec<String> {
-    vec![
-        "sh".into(),
-        "-c".into(),
-        format!("umount -R {CHROOT} || umount -l -R {CHROOT}"),
-    ]
+    ["umount", "-l", "-R", CHROOT].map(String::from).to_vec()
 }
 
 /// The overlay of the layer over one top directory of the chroot (`usr`, `opt`).
@@ -322,12 +320,8 @@ pub fn begin(n: u32, args: &[String]) -> Vec<Step> {
             &format!("{w}/opt"),
             CHROOT,
         ]),
-        // A chroot an earlier run left behind (QA-STORE-53).
-        v(&[
-            "sh",
-            "-c",
-            &format!("! mountpoint -q {CHROOT} || umount -l -R {CHROOT}"),
-        ]),
+        // A chroot an earlier run left behind (QA-STORE-53) is unmounted before this plan runs,
+        // under the update lock (controller pkg.rs, `chroot_mounted`/`unmount_chroot`).
         v(&["mount", "--rbind", "/", CHROOT]),
         v(&["mount", "--make-rprivate", CHROOT]),
         v(&[
@@ -521,8 +515,8 @@ mod tests {
             !t.iter().any(|x| x.contains("extension-release.wolos")),
             "{t:?}"
         );
-        assert_eq!(t[2], "mount --rbind / /run/wolos/layer-root");
-        assert!(t[4].contains(&format!(
+        assert_eq!(t[1], "mount --rbind / /run/wolos/layer-root");
+        assert!(t[3].contains(&format!(
             "lowerdir=/run/wolos/layer-root/usr,upperdir={l}/usr,workdir=/var/lib/wolos/layers/wolos-layer-0003/usr"
         )));
         assert_eq!(
@@ -535,7 +529,7 @@ mod tests {
         };
         let f: Vec<String> = finish(3, &rec).iter().map(|s| s.to_string()).collect();
         assert_eq!(f[0], format!("write {l}/wolos-layer.json"));
-        assert!(f[1].contains("umount -R /run/wolos/layer-root"), "{f:?}");
+        assert_eq!(f[1], "umount -l -R /run/wolos/layer-root", "{f:?}");
         assert_eq!(f.last().unwrap(), "systemd-sysext refresh");
         assert!(
             f.iter()
@@ -579,28 +573,22 @@ extension-release.wolos-layer-0003"
     }
 
     /// QA-STORE-53: a chroot that cannot be unmounted at once (a process still in it) is
-    /// detached lazily, never left stacked; begin detaches one an earlier run left.
+    /// detached lazily, never left stacked, with one argv (no shell string, RR-020). One an earlier
+    /// run left is unmounted before `begin`, under the lock (controller pkg.rs; tests/pkg.rs).
     #[test]
     fn umount_lazy_fallback() {
-        let lazy = format!("umount -R {CHROOT} || umount -l -R {CHROOT}");
+        let lazy = format!("umount -l -R {CHROOT}");
         let f: Vec<String> = finish(3, &Record::default())
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert!(f.iter().any(|s| s.contains(&lazy)), "{f:?}");
+        assert!(f.contains(&lazy), "{f:?}");
         let a: Vec<String> = abort(3).iter().map(|v| v.join(" ")).collect();
-        assert!(a[0].contains(&lazy), "{a:?}");
+        assert_eq!(a[0], lazy, "{a:?}");
         let args: Vec<String> = ["-S", "vim"].map(String::from).to_vec();
         let b: Vec<String> = begin(3, &args).iter().map(|s| s.to_string()).collect();
-        let stale = b
-            .iter()
-            .position(|s| s.contains(&format!("umount -l -R {CHROOT}")))
-            .unwrap();
-        let bind = b
-            .iter()
-            .position(|s| s == &format!("mount --rbind / {CHROOT}"))
-            .unwrap();
-        assert!(stale < bind, "{b:?}");
+        assert!(!b.iter().any(|s| s.starts_with("sh ")), "{b:?}");
+        assert_eq!(b[1], format!("mount --rbind / {CHROOT}"));
     }
 
     /// QA-L2-32: pacman sees /opt writable in the layer chroot too (ROCm and other large
@@ -672,7 +660,7 @@ extension-release.wolos-layer-0003"
     #[test]
     fn a_failed_install_leaves_nothing_behind() {
         let a: Vec<String> = abort(2).iter().map(|v| v.join(" ")).collect();
-        assert!(a[0].contains("umount -R /run/wolos/layer-root"), "{a:?}");
+        assert_eq!(a[0], "umount -l -R /run/wolos/layer-root", "{a:?}");
         assert!(a[1].starts_with("rm -rf /var/lib/extensions/wolos-layer-0002"));
         assert!(a[2].starts_with("rm -rf /var/lib/wolos/layers/wolos-layer-0002"));
     }

@@ -501,11 +501,25 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let copy = dir.join("sleepy");
         std::fs::copy("/bin/sleep", &copy).unwrap();
-        let mut c = std::process::Command::new(&copy)
-            .arg("10")
-            .env_clear()
-            .env("HOME", "/")
-            .spawn()
+        // ETXTBSY: a test thread that forks while the copy is still open for writing gives its
+        // child that descriptor until the child's exec. The race ends with that exec, so the spawn
+        // is tried again until the file is no longer open for writing anywhere (bounded).
+        let spawn = || {
+            std::process::Command::new(&copy)
+                .arg("10")
+                .env_clear()
+                .env("HOME", "/")
+                .spawn()
+        };
+        let mut c = (0..10_000)
+            .find_map(|_| match spawn() {
+                Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::yield_now();
+                    None
+                }
+                other => Some(other),
+            })
+            .expect("the copy stays busy")
             .unwrap();
         let pid = i32::try_from(c.id()).unwrap();
         let want = copy.to_string_lossy().into_owned();

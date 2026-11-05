@@ -39,7 +39,12 @@ pub struct Host {
     out: Sender<String>,
     ready: Receiver<String>,
     in_flight: Arc<AtomicUsize>,
+    /// Run (on the worker's thread) after a reply is queued: the window loop sleeps until woken.
+    notify: Notify,
 }
+
+/// A wake-up for whoever drains [`Host::take_ready`].
+pub type Notify = Arc<dyn Fn() + Send + Sync>;
 
 fn busy(id: u64) -> String {
     reply_text(
@@ -88,7 +93,14 @@ impl Host {
             out,
             ready,
             in_flight: Arc::default(),
+            notify: Arc::new(|| {}),
         }
+    }
+
+    /// Runs `f` on the worker's thread each time a reply it queued is ready. The window loop waits
+    /// for events with no timeout, so this is what ends that wait for a reply from wold.
+    pub fn set_notify(&mut self, f: Notify) {
+        self.notify = f;
     }
 
     pub fn bridge(&self) -> &Bridge {
@@ -115,6 +127,7 @@ impl Host {
         }
         let slot = Slot(self.in_flight.clone());
         let (wold, out, app) = (self.wold.clone(), self.out.clone(), self.app_id.clone());
+        let notify = self.notify.clone();
         let spawned = std::thread::Builder::new()
             .name("webhost-call".into())
             .spawn({
@@ -124,6 +137,7 @@ impl Host {
                     // Before the reply is queued: whoever sees the reply may call again at once.
                     drop(slot);
                     let _ = out.send(reply_text(call.id, r));
+                    notify();
                 }
             });
         if spawned.is_err() {
@@ -338,6 +352,28 @@ mod tests {
         };
         let g: Vec<String> = granted.iter().map(|s| s.to_string()).collect();
         Host::new(Bridge::new(m, app, &g), Arc::new(wold))
+    }
+
+    #[test]
+    fn a_workers_reply_wakes_the_window_loop() {
+        let (wold, release) = gated();
+        let mut h = host(wold, &["audio.read"]);
+        let (tx, woken) = std::sync::mpsc::channel();
+        h.set_notify(Arc::new(move || {
+            let _ = tx.send(std::thread::current().id());
+        }));
+        h.on_page_message(r#"{"id":7,"call":"audio.doctor","params":{}}"#);
+        assert!(woken.try_recv().is_err(), "nothing is ready yet");
+        release.send(()).unwrap();
+        let by = woken
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the reply was queued but nothing woke the loop, which waits with no timeout");
+        assert_ne!(by, std::thread::current().id(), "from the worker's thread");
+        assert_eq!(
+            h.take_ready().len(),
+            1,
+            "and the reply is there when it wakes"
+        );
     }
 
     #[test]

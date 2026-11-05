@@ -36,6 +36,7 @@ pub mod policy;
 pub mod process;
 pub mod sandbox;
 mod view;
+pub mod window;
 
 pub use policy::{Policy, TelemetryOff};
 pub use view::{App, Channel, Error, Image, OnMessage, Target, WebView};

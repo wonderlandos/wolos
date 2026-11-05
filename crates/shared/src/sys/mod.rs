@@ -306,14 +306,29 @@ pub fn flock_held_by(path: &std::path::Path, owner: u32) -> bool {
 /// Whether `/proc/locks` text lists an exclusive `FLOCK` held (not waited for) on the file with
 /// device `dev` (as `st_dev`) and inode `ino`. A line reads
 /// `1: FLOCK  ADVISORY  WRITE 4242 08:01:131074 0 EOF`, the device in hex `major:minor`.
+///
+/// The kernel prints the superblock's device; `st_dev` of a file on a btrfs subvolume is the
+/// subvolume's own anonymous device (major 0), never that one (WolOS's root is btrfs: the update
+/// lock was never seen held there). A block device must match exactly; an anonymous one (major 0:
+/// btrfs, overlay, tmpfs) matches any anonymous device with the inode.
 pub fn flock_write_held(locks: &str, dev: u64, ino: u64) -> bool {
     // glibc's dev_t layout, as the kernel prints it.
     let major = ((dev >> 8) & 0xfff) | ((dev >> 32) & !0xfff);
     let minor = (dev & 0xff) | ((dev >> 12) & !0xff);
-    let want = format!("{major:02x}:{minor:02x}:{ino}");
     locks.lines().any(|l| {
         let f: Vec<&str> = l.split_whitespace().collect();
-        matches!(f.get(1..), Some(["FLOCK", _, "WRITE", _, id, ..]) if *id == want)
+        let Some(["FLOCK", _, "WRITE", _, id, ..]) = f.get(1..) else {
+            return false;
+        };
+        let mut parts = id.splitn(3, ':');
+        let (Some(maj), Some(min), Some(i)) = (parts.next(), parts.next(), parts.next()) else {
+            return false;
+        };
+        let hex = |t: &str| u64::from_str_radix(t, 16).ok();
+        let (Some(a), Some(b)) = (hex(maj), hex(min)) else {
+            return false;
+        };
+        i.parse::<u64>().ok() == Some(ino) && ((a == 0 && major == 0) || (a == major && b == minor))
     })
 }
 

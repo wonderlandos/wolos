@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 // The lexer and the per-file scanners are the test's own (one copy: CR-8 and later rules change
 // them there, and `wol app check` follows).
-// TODO(CR-5): move crystal_scan.rs into src/ once CR-8 has merged (CTO, 2026-11-03).
+// TODO(ADR 0036, CR-5): move crystal_scan.rs into src/ once CR-8 has merged (CTO, 2026-11-03).
 #[path = "../tests/support/crystal_scan.rs"]
 mod crystal_scan;
 

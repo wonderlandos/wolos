@@ -4,7 +4,7 @@
 # start, so a command not named here never starts `wol`. One row per line, four columns separated by
 # one tab: command, condition, sentence, suggestion. The first row that matches wins.
 #
-# command: the program name as typed (its last path part; `sudo X` is looked up as X too).
+# command: the program name as typed (its last path part; a `wraps` command's line is looked up as the command behind it too).
 # condition: words that must all hold; `!` in front of one means it must not:
 #   missing      the command is not installed (the shell's command-not-found)
 #   failed       it ran and its exit status was not 0
@@ -16,6 +16,8 @@
 #   sealed       the system files are read-only (a WolOS slot, not developer mode)
 #   nowheel      the account is not in the administrators' group (wheel)
 #   managed      an argument names a service in /usr/lib/systemd/system-preset/50-wolos.preset
+#   wraps        the command runs the rest of the line (the administrator word): the line is looked
+#                up as that command too. Never matches, so it is not a hint of its own.
 #   PATTERN: `*` is any text, `|` separates choices.
 # sentence, suggestion: {cmd} the command, {args} all its arguments, {targets} the ones that are not
 # options, {names} the targets after the first (apt install NAME), {first} the first target. An empty
@@ -86,6 +88,7 @@ pacman	failed user arg=-S*|-R*|-U* !arg=-S*s*|-S*i*|-S*l*|-S*g*|-S*p*|-Q*|-F*|-T
 pacman	failed root sealed typed=/usr/bin/pacman arg=-S*u*	The system files of WolOS are read-only, so updates go through wol update, which keeps the running system as a restore point.	wol update install
 pacman	failed root sealed typed=/usr/bin/pacman arg=-S*|-R*|-U* !arg=-S*s*|-S*i*|-S*l*|-S*g*|-S*p*|-Q*|-F*|-T*|-V|--version|-h|--help	The system files of WolOS are read-only; wol pkg makes the same change in a layer that works at once and comes along with the next update.	wol pkg -- {args}
 su	failed	On WolOS the root account has no password, so su cannot sign in to it; sudo -i opens the same root shell with your own password, and sudo passwd root turns classic su on.	sudo -i
+sudo	wraps	This word runs the rest of the line as an administrator, so the hint looks that command up too.	-
 sudo	failed nowheel	Your account is not an administrator on this computer, so sudo cannot run commands for it; an administrator can change that in Settings > Users & Groups.	-
 systemctl	failed managed arg=enable|disable|mask|unmask|preset	WolOS sets this service up itself; if something it does is not working, wol doctor finds out why.	wol doctor
 systemctl	failed user arg=enable|disable|start|stop|restart|reload|mask|unmask	Turning a system service on or off needs administrator rights.	sudo systemctl {args}

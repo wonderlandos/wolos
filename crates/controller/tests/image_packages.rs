@@ -2,7 +2,6 @@
 //! What the image must ship for what the code relies on: `.wol` double-click wiring (ADR 0011), script
 //! interpreters, fonts, devices, phones and shares, optional module records. Reads the overlaid
 //! sibling root (wolos + wolos-pkgbuilds + wolos-iso, `support/siblings.rs`).
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 
@@ -338,7 +337,7 @@ fn fwupd_ships_without_auto_download() {
 
 /// QA-FILES-6: phones, cameras and shares in Files.
 #[test]
-fn gvfs_backends() {
+fn files_has_the_gvfs_backends() {
     for p in ["gvfs", "gvfs-mtp", "gvfs-gphoto2", "gvfs-smb", "gvfs-afc"] {
         assert!(ships(p), "{p}");
     }

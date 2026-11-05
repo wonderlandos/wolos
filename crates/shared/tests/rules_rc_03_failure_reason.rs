@@ -11,12 +11,12 @@ use rc::{Hits, Row, Src, after, assert_ratchet, close_of, find_words, hit};
 /// Debt at the start of 0.13 (2026-11-04, mid-merge tree). Only shrinks.
 const BASELINE: &[Row] = &[
     ("RH-031", "api", 4, "B1"),
-    ("RH-031", "controller", 22, "C3"),
+    ("RH-031", "controller", 21, "C3"),
     ("RH-031", "realtime", 1, "B2"),
     ("RH-031", "shell", 4, "C1"),
     ("RH-031", "webengine", 1, "C4"),
     ("RH-031", "xguard", 1, "B1"),
-    ("RH-032", "crates/shell/src/copy.rs", 5, "C1"),
+    ("RH-032", "crates/shell/src/copy.rs", 4, "C1"),
     ("RH-032", "crates/shell/src/copy_settings.rs", 3, "A2"),
 ];
 

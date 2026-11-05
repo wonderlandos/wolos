@@ -159,10 +159,26 @@ fn hover(w: &mut WindowCore, s: &mut Sink, st: &mut InputState, hit: Idx, x: f32
 fn scroll(w: &mut WindowCore, s: &mut Sink, st: &InputState, dx: f32, dy: f32) {
     let (px, py) = w.pointer;
     let mut n = hit::hit_test(&w.scene, &st.layers, px, py);
-    while n != NIL && !matches!(w.scene.kind(n), Kind::Scroll | Kind::Vlist) {
+    // A surface (an embedded page) that binds SCROLL takes the wheel itself: it has its own
+    // scrolling, so it gets the distance and the point, and moves nothing here.
+    let wheel_for = |scene: &dyn SceneRead, n: Idx| {
+        scene.kind(n) == Kind::Surface && scene.event_mask(n) & crate::event::bit(ev::SCROLL) != 0
+    };
+    while n != NIL
+        && !matches!(w.scene.kind(n), Kind::Scroll | Kind::Vlist)
+        && !wheel_for(&w.scene, n)
+    {
         n = w.scene.parent(n);
     }
     if n == NIL {
+        return;
+    }
+    if w.scene.kind(n) == Kind::Surface {
+        let mut head = [0u8; crate::event::WHEEL_HEAD];
+        for (i, v) in [dx, dy, px, py].iter().enumerate() {
+            head[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        s.emit(ev::SCROLL, w.scene.id(n).0, &head, &[]);
         return;
     }
     let cur = w.scene.prop(n, id::SCROLL_OFFSET).map_or((0.0, 0.0), |v| {

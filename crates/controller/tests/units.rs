@@ -1416,7 +1416,7 @@ fn sudoers_no_insults() {
 }
 
 /// QA-CRASH-5 (B3): the session helpers hypridle (lock on idle and before sleep), hyprsunset,
-/// wol-realtime and the polkit agent are user units that come back after a crash, part of
+/// wol-realtime, the polkit agent and the warm Search are user units that come back after a crash, part of
 /// wolos-session.target, which the compositor's start lines (re)start; the portal is the package's
 /// own unit, started with the other portals. No compositor start line runs one of them bare.
 #[test]
@@ -1428,6 +1428,8 @@ fn session_helpers_have_restart() {
         ("wolos-hyprsunset.service", "hyprsunset"),
         ("wolos-realtime.service", "wol-realtime"),
         ("wolos-polkit-agent.service", "lxqt-policykit-agent"),
+        // QA-LN-3: the warm Search, kept by the session the same way.
+        ("wolos-search.service", "wol-search --warm"),
     ] {
         let u = repo_text(&format!("{dir}/{unit}"));
         let lines: Vec<&str> = u.lines().map(str::trim).collect();
@@ -1475,7 +1477,7 @@ fn session_helpers_have_restart() {
 /// (exit 0) nor on a compositor with no session lock (69, shell lock.rs LOCK_UNSUPPORTED).
 #[test]
 fn wold_restarts_wol_lock_when_session_locked() {
-    let u = repo_text("files/usr/lib/systemd/user/wol-lock.service");
+    let u = repo_text("files/usr/lib/systemd/user/wolos-lock.service");
     let lines: Vec<&str> = u.lines().map(str::trim).collect();
     for want in [
         "ExecStart=/usr/bin/wol-lock",
@@ -1483,10 +1485,13 @@ fn wold_restarts_wol_lock_when_session_locked() {
         "RestartPreventExitStatus=69",
         "PartOf=wolos-session.target",
     ] {
-        assert!(lines.contains(&want), "wol-lock.service lacks {want}: {u}");
+        assert!(
+            lines.contains(&want),
+            "wolos-lock.service lacks {want}: {u}"
+        );
     }
     let lock = repo_text("crates/shell/src/ui/lock.rs");
-    assert!(lock.contains("pub const LOCK_UNIT: &str = \"wol-lock.service\";"));
+    assert!(lock.contains("pub const LOCK_UNIT: &str = \"wolos-lock.service\";"));
     assert!(lock.contains("pub const LOCK_UNSUPPORTED: i32 = 69;"));
 }
 

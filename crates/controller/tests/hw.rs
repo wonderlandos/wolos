@@ -372,6 +372,39 @@ fn first_boot_installs_missing_driver_packages_online_then_loads_them() {
 /// start timeout, so it is never the unit that kills it mid-transaction; a lock left by a kill
 /// (this boot's bound, or an earlier boot's timeout) is removed when no pacman runs, so the next
 /// try is not refused for good.
+/// RC-03: pacman's lock is removed only when pgrep says no pacman runs (exit 1). A pgrep that
+/// could not run says nothing, so the lock stays and the reason is said.
+#[test]
+fn a_pacman_lock_stays_when_pgrep_cannot_tell() {
+    let lock = PathBuf::from("/usr/lib/pacman/db.lck");
+    let mut env = FakeEnv {
+        root: true,
+        hw: vec![
+            HardwareSnapshot {
+                devices: vec![dev(
+                    Kind::Gpu,
+                    "NVIDIA GeForce",
+                    State::NeedsDriver,
+                    &[],
+                    &["nvidia-open-dkms"],
+                )],
+            };
+            2
+        ],
+        files: vec![
+            (
+                PathBuf::from("/etc/pacman.conf"),
+                "[options]\nDBPath = /usr/lib/pacman/\n".into(),
+            ),
+            (lock.clone(), String::new()),
+        ],
+        ..Default::default()
+    };
+    run("hw boot --online", &mut env);
+    assert!(!env.removed.contains(&lock), "{:?}", env.removed);
+    assert!(env.err.contains("pgrep could not tell"), "{}", env.err);
+}
+
 #[test]
 fn firstboot_pacman_bounded_stale_lock_cleaned() {
     let need = HardwareSnapshot {
@@ -396,6 +429,8 @@ fn firstboot_pacman_bounded_stale_lock_cleaned() {
         ],
         // The bound ran out.
         exec_codes: vec![124],
+        // No pacman runs (pgrep's exit 1): the lock is stale.
+        statuses: vec![("pgrep -x pacman".into(), 1, String::new())],
         ..Default::default()
     };
     // A failed install is the exit code, so firstboot and the network hook try again

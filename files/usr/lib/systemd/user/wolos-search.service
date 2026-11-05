@@ -7,13 +7,15 @@
 Description=WolOS Search, kept warm (wol-search --warm)
 PartOf=wolos-session.target
 After=wolos-session.target
-# A helper that cannot reach the display any more (the session ended) stops retrying after 5 tries.
-StartLimitIntervalSec=60
-StartLimitBurst=5
+# A crash burst never leaves it dead (RH-221): restarts slow down to one every 30 s instead of a
+# start limit, and the unit stops with the session (PartOf).
+StartLimitIntervalSec=0
 
 [Service]
 ExecStart=/usr/bin/wol-search --warm
 Restart=on-failure
 RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
 # The budget with a margin: a leak ends this process, not the session.
 MemoryMax=96M

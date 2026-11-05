@@ -236,14 +236,17 @@ pub fn restart_pending(list_jobs: &str) -> bool {
     })
 }
 
+/// How long wold asks systemd whether its stop is the first half of a restart.
+const JOBS_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// Ask systemd whether wold is being restarted (SIGTERM comes for a stop and a restart alike).
-/// Unanswered is a stop.
-pub fn restarting() -> bool {
-    crate::privileged::capture(
+/// None when systemd did not answer within [`JOBS_WAIT`] (the caller says so; unanswered is a stop).
+pub fn restarting() -> Option<bool> {
+    let jobs = crate::privileged::capture(
         &["systemctl", "list-jobs", "--no-legend", "--no-pager"],
-        std::time::Duration::from_secs(2),
-    )
-    .is_some_and(|out| restart_pending(&out))
+        JOBS_WAIT,
+    )?;
+    Some(restart_pending(&jobs))
 }
 
 pub fn alive(pid: i32) -> bool {

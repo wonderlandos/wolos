@@ -58,6 +58,8 @@ files/usr/lib/wolos/etc-settle
 files/usr/lib/wolos/etc-units
 files/usr/lib/wolos/firstboot
 files/usr/lib/wolos/gpu
+files/usr/lib/wolos/hypridle-run
+files/usr/lib/wolos/hyprsunset-run
 files/usr/lib/wolos/install-boot
 files/usr/lib/wolos/install-channel
 files/usr/lib/wolos/install-check

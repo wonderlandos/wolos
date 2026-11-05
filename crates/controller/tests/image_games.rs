@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The image ships what the Steam client checks before it starts, a Steam launcher that runs
 //! `wol games steam`, and a handler that opens Windows programs on Wine.
-#![allow(dead_code)] // siblings.rs helpers this file does not call
 #[path = "support/siblings.rs"]
 mod siblings;
 

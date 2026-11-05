@@ -185,7 +185,7 @@ const BOB: Option<Caller> = Some(Caller {
 const ROOT: Option<Caller> = Some(Caller { uid: 0, session: 1 });
 
 #[test]
-fn decision_table() {
+fn the_decision_table_answers_each_request() {
     let up = encode(&req(AdminAction::PkgUpgrade, &[]), b"");
     let up_good = encode(&req(AdminAction::PkgUpgrade, &[]), b"good");
     let up_bad = encode(&req(AdminAction::PkgUpgrade, &[]), b"bad");
@@ -706,7 +706,8 @@ fn passwd_lookup_and_atomic_write() {
 }
 
 const SEED: [u8; 32] = [7; 32];
-const INFO: &str = r#"{"id":"org.wolos.Fixture","version":"1.0","package":"wol-fixture","targets":[{"abi":"freebsd-native","arch":"amd64","entry":"bin/fixture"}]}"#;
+const INFO: &str = r#"{"id":"org.wolos.Fixture","version":"1.0","package":"wol-fixture","targets":[{"abi":"freebsd-native","arch":"amd64",
+"entry":"bin/fixture"}]}"#;
 
 /// A `.wol` file on disk, signed with `seed` when given.
 fn wol_file(name: &str, seed: Option<&[u8; 32]>, payload: &[u8]) -> String {
@@ -1226,6 +1227,15 @@ fn proc_locks_lines_are_read() {
     assert!(
         !flock_write_held(text, (9 << 8) | 1, 131074),
         "other device"
+    );
+    // btrfs (WolOS's root): the kernel prints the filesystem's anonymous device (00:2f), stat says
+    // the subvolume's (00:45). Seen held; a block device with that inode is not.
+    let btrfs = "1: FLOCK  ADVISORY  WRITE 4242 00:2f:268 0 EOF\n";
+    assert!(flock_write_held(btrfs, 0x45, 268), "btrfs subvolume");
+    assert!(!flock_write_held(btrfs, 0x45, 269), "another inode");
+    assert!(
+        !flock_write_held(btrfs, dev, 268),
+        "a block device must match"
     );
 }
 

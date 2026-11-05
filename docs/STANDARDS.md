@@ -19,7 +19,8 @@ the rest with the checklist in `docs/REVIEW.md`.
 - **CI** `cargo clippy --workspace --all-targets --locked -- -D warnings` plus this allow list, and
   nothing else: `clippy::too_many_arguments`, `clippy::type_complexity`. A new `#[allow]` in code
   names its reason on the same line (`#[allow(clippy::zombie_processes)] // reaped by wold`).
-  `#![allow(dead_code)]` is allowed only in `tests/support/*.rs` and generated bindings.
+  `#![allow(dead_code)]` is allowed only in `tests/support/*.rs` and generated bindings (RR-010, a
+  ratchet: the rows elsewhere only shrink).
 - **CI** `cargo fmt --all --check`. Do not reformat lines you did not change in a commit that does
   something else.
 - **CI** `cargo audit` on `Cargo.lock` (RustSec advisories). An advisory with no fix is ignored by
@@ -297,7 +298,7 @@ brackets; `cargo test` runs in the `test` job).
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
   `BASELINE` row (that table is the record and its comment gives the reason for every raise;
   the rows: wol-abi 482, wolkit 314, wopkg 103, realtime 42, xguard 65, controller 56, api 33,
-  core 13, xguard-clam 13, shared 17, shell 8, proxy 3, wol-lua 3, webengine 173, federate 0, wolcrypt 0, audio 0, aurlaws 0).
+  core 13, xguard-clam 13, shared 17, shell 9, proxy 3, wol-lua 3, webengine 173, federate 0, wolcrypt 0, audio 0, aurlaws 0).
   Controller went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
   no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap and `_exit` in that handler. A raise
   is justified there and each new block has its `// SAFETY:` line (RR-012); lowering a count
@@ -355,3 +356,4 @@ with its proof: the class rule or its own regression test, red before the fix an
 8. **RC-19** Code that reads or writes system paths says which view it needs (sealed base, merged, layer root, writable state) and gets it from one helper; writable state lives under `/var/lib/wolos` or `/run`; the mounts of a transaction live in a private mount namespace and are undone; a measurement runs against the unmerged base. **CI** RH-191, RH-192.
 9. **RC-07** A view is driven by one live model: an event source, or a poll that updates the model and redraws only when the shape changed; a widget the person touched holds its value until the host confirms it, and a page reads its facts again when it is shown. **CI** RH-071.
 10. **RC-02** In-flight state is keyed by its request: a queue for approvals, a generation number for asynchronous results, an exclusive lock on a named file for every transaction on a shared resource; never one optional slot in a window or a daemon that a second request overwrites. **CI** RH-021.
+11. **RC-39** Every layer window the shell shows paints in its first frame: one with nothing of its own to show takes `kit::data::presence()` (one pixel at 1/255), because GTK never maps a layer surface that renders nothing and its empty commits every 16 ms cost the compositor a redraw each (QA-PERF-1, CRIT-2). **CI** RH-391.

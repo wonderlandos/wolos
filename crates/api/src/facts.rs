@@ -139,7 +139,7 @@ mod tests {
 
     /// QA-NET-12 / NET2-3: `{online, limited, portal}` from NetworkManager; IPv6-only is online.
     #[test]
-    fn limited_state() {
+    fn limited_and_portal_states_are_told_apart() {
         let h = FakeHost::linux();
         h.command(
             "ip route show default",

@@ -79,14 +79,13 @@ fn an_install_is_a_live_layer_without_a_restart() {
 #[test]
 fn a_failed_install_removes_the_layer_and_touches_nothing_else() {
     let mut env = sealed("vim\n", IDLE);
-    // mkdir, a stale-chroot check, 4 mounts (/ bind, private, /usr and /opt overlays) ok;
-    // pacman fails.
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 1];
+    // mkdir, 4 mounts (/ bind, private, /usr and /opt overlays) ok; pacman fails.
+    env.exec_codes = vec![0, 0, 0, 0, 0, 1];
     assert_ne!(run("pkg -- -S vim", &mut env), 0);
     let l = lines(&env);
     assert!(
         l.iter()
-            .any(|x| x.contains("umount -R /run/wolos/layer-root")),
+            .any(|x| x.contains("umount -l -R /run/wolos/layer-root")),
         "{l:?}"
     );
     assert!(l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()));
@@ -584,10 +583,9 @@ fn a_layer_records_its_database_even_under_usr() {
 
 #[test]
 fn a_layer_pacman_committed_is_kept_when_the_merge_fails() {
-    // CORE-5: mkdir, the stale-chroot check, 4 mounts, pacman, umount, rm work ok;
-    // `systemd-sysext refresh` fails.
+    // CORE-5: mkdir, 4 mounts, pacman, umount, rm work ok; `systemd-sysext refresh` fails.
     let mut env = sealed("vim\n", IDLE);
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 1];
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert_eq!(l.last().unwrap(), "systemd-sysext refresh");

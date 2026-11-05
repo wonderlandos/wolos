@@ -44,8 +44,11 @@ A host process starts as `<host> --content-process TOKEN` when the engine wants 
 | Pump | `webengine::host::Host` | page message to `Bridge` (refuses what the app did not declare or hold), an allowed call on a worker thread (at most 8 in flight, then `unavailable`), the reply queued for the window loop; no text over 64 KiB either way |
 | wold | `host::WoldClient` | one `webapp-call <method> <params>` request per call on `/var/run/wold.sock` after the hello of ADR 0033; the app id is not in the request |
 | Start-up | `host::initial_grants`, `host::locale` | a system app starts with what it declares, an app of others with the consent grants for its folder; locale from `LC_ALL`, `LC_MESSAGES`, `LANG` |
+| Window | `webengine::window` | `native_engine` opts in to Wolkit's native Wayland backend and sets its session (the host calls `Engine::new` itself, not the C entry point that reads `WOLKIT_BACKEND`; without the opt-in `create_window` fails with "The WolOS desktop is not running"); `surface_patch` is the one `surface` node filling the window, bound to the events the page needs (CLICK, POINTER_ENTER and LEAVE, KEY, SCROLL, FOCUS, SURFACE_RESIZED), focusable and focused from the first frame |
+| Loop | `wol-webhost` `'run`, `window::wait_ms`, `App::on_wake`, `Host::set_notify`, `wolkit::engine::Engine::wake` | the loop sleeps in `Engine::dispatch(-1)` and is woken by a window event, by the page engine's `wake` (any of its threads) or by a worker's reply from wold; a system app has no timer at all, another app wakes every 2 s for a changed grant. It used to poll `dispatch(8)`: 125 wakeups a second by construction |
+| Frames | `src/engine/frame.rs`, `Delegate::notify_new_frame_ready` | each new frame is made current, painted into the back buffer and presented (the Wayland surface gets its buffer); painting alone left the window blank while the engine reported `load=3 frames=5` |
 
-Tests without the engine: `tests/engine_channel.rs` (the injected script in a JavaScript interpreter), `tests/host_path.rs` (the real `bridge.js` and the Hello app's calls through the shim's scripts, the host and recorded answers), `tests/shim_loader_10.rs` and `tests/shim_loader_11.rs` (the loader and the view against a C stand-in library, with and without the channel).
+Tests without the engine: `tests/engine_channel.rs` (the injected script in a JavaScript interpreter), `tests/host_path.rs` (the real `bridge.js` and the Hello app's calls through the shim's scripts, the host and recorded answers), `tests/shim_loader_10.rs` and `tests/shim_loader_11.rs` (the loader and the view against a C stand-in library, with and without the channel; the second also checks that the engine's wake reaches `App::on_wake` from the engine's thread), `tests/host_window.rs` (the native opt-in, and the page surface taking keys), `tests/engine_frame.rs` (a new frame is painted and then presented).
 
 ## The origin gate (`src/sandbox.rs`)
 
@@ -64,7 +67,7 @@ A host or path prefix in `telemetry_off` (`hosts`, `beacon_paths`; a path covers
 
 ## Federate Network addresses (`src/fed.rs`, ADR 0052)
 
-Every view serves `fed://label.tld/path` natively: no setting, no extension. The library registers the `fed` scheme with the engine when the engine is made (`src/engine/scheme.rs`, std only); `WebView::new` hands it `fed::load_cb` and `fed::map_cb` whenever the library has WWE_1.2. Each load runs the `federate` crate on its own thread: the signed root zone (pinned root key), the TLD record, the domain record, the owner-signed manifest and the content block, every signature and BLAKE3 address checked before a byte is served; a failed check is a page naming the layer and the reason (502), never the content. A page load of `http://home.fed` (the network's compatibility spelling, a TLD of the verified zone) ends with `204` and loads `fed://home.fed`. Which names an app may open is still its policy's (`fed://label.tld` origins in the gate). Tests without the engine: `tests/engine_scheme.rs` (the library's half) and `tests/shim_loader_12.rs` (the loader, the view and the host's handler against the C stand-in, on the network's captured data); the chain itself is `cargo test -p federate`.
+Every view serves `fed://label.tld/path` natively: no setting, no extension. The library registers the `fed` scheme with the engine when the engine is made (`src/engine/scheme.rs`, std only); `WebView::new` hands it `fed::load_cb` and `fed::map_cb` whenever the library has WWE_1.2. Each load runs the `federate` crate on its own thread: the signed root zone (pinned root key), the TLD record, the domain record, the owner-signed manifest and the content block, every signature and BLAKE3 address checked before a byte is served; a failed check is a page naming the layer and the reason (502), never the content. A page load of `http://home.fed` (the network's compatibility spelling, a TLD of the verified zone) ends with `204` and loads `fed://home.fed`. The load of `fed://home.fed` is started from the engine's spin and tried again every 100 ms (at most 5 s) until the `fed:` handler is asked for a document: the engine drops an embedder load while the navigation the 204 ended is still pending (`Constellation::load_url`), and nothing reports when that is over. Which names an app may open is still its policy's (`fed://label.tld` origins in the gate). Tests without the engine: `tests/engine_scheme.rs` (the library's half) and `tests/shim_loader_12.rs` (the loader, the view and the host's handler against the C stand-in, on the network's captured data); the chain itself is `cargo test -p federate`.
 
 ## Process model and sandbox
 
@@ -87,18 +90,19 @@ Every view serves `fed://label.tld/path` natively: no setting, no extension. The
 | CLICK | move, press, release at the point |
 | POINTER_ENTER, POINTER_LEAVE | move to the point, leave |
 | KEY | key value and code from the keysym (US layout for printable codes: the record has no scancode), modifiers, repeat |
+| SCROLL (the surface node binds it) | the wheel at the pointer: `f32 dx, dy` as the compositor sends them (down is positive), then `f32 x, y`; the engine's wheel runs the other way, so the bridge negates. The queue adds the steps of two pending records of one node instead of replacing one with the other. The keys need nothing more from the host: the engine scrolls on PageDown (measured in the VM), and by its source on Space, the arrows, Home and End, once the key reaches the focused page |
 | FOCUS, SURFACE_RESIZED, THEME_CHANGED | focus, size and scale, dark or light |
 
 ## Gaps
 
 | Gap | Where it is fixed |
 |---|---|
-| Pointer motion inside a surface, separate button presses, wheel deltas | wolkit record v1 (the engine side takes them: `input::Input::{MouseMove, MouseButton, Wheel}`) |
+| Pointer motion inside a surface and separate button presses (a click is move, press, release at once; the wheel is carried since ENGINE-FIX) | wolkit record v1 (the engine side takes them: `input::Input::{MouseMove, MouseButton}`) |
 | IME preedit and commit for a surface; an app clipboard | wolkit (`input::Input::{ImePreedit, ImeCommit}`, `view::Clipboard`) |
-| On-screen presentation through the surface (`Target::surface`) | not run yet: needs a compositor on the test machine (CR-8) |
+| Key to repaint (about 50 to 100 ms in the VM against 22 ms in Chromium) and scroll frame interval (about 50 ms against 27) in the no-GPU test VM | not the host or the shim: a profile of the interaction (perf, all CPUs, 2026-11-04) puts 92% of the samples in the compositor's llvmpipe threads (which burns 250% CPU of the 4 vCPUs with no app open) and under 1% in `wol-webhost`; the page's own WebRender also rasterises in llvmpipe there. Revisit on hardware with a GPU |
 | Pathname unix sockets of the user below Landlock ABI 9 | the kernel (`RESOLVE_UNIX`); `confine::REQUIRE_UNIX_RESOLVE` |
 | Media (`<video>`, audio) | the shim is built without the engine's media feature; WA-6's probes |
-| `fed:` through the real engine (the shim's `HostScheme` and the http(s) mapping) | not built yet: needs a webengine-wolos build at the pin (forge) |
+| `fed:` through the real engine (the shim's `HostScheme` and the http(s) mapping) | built at the pin and run on the forge guest (ENGINE-FED, 2026-11-05): `fed://home.fed`, `fed://lobo.pagina`, `fed://voce.pagina` open from the live network, a changed byte shows the failing layer, and a page's link to `http://home.fed` opens `fed://home.fed`. Not covered: the start URL of a view cannot itself be `http://name.tld` (the host gate checks it before the library maps it), and only a page's own navigation is mapped, not a frame's |
 | Federate's native transport (TCP 4077), delegated TLD registries, a disk cache of verified data | ADR 0052 follow-ups; today the HTTPS door and root-managed TLDs |
 
 ## Verify

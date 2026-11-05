@@ -121,7 +121,17 @@ fn rs_008_no_quiet_failure_on_disk_key_boot_db_writes() {
         "-keyout",
         "shred",
     ];
-    let f = any_code(|l| l.contains("2>/dev/null") && WRITERS.iter().any(|w| l.contains(w)));
+    // Reads of the same tools are not writes: `bootctl list` and `bootctl status` only look.
+    const READS: &[&str] = &[
+        "bootctl --esp-path=\"$ESP\" list",
+        "bootctl list",
+        "bootctl status",
+    ];
+    let f = any_code(|l| {
+        l.contains("2>/dev/null")
+            && WRITERS.iter().any(|w| l.contains(w))
+            && !READS.iter().any(|r| l.contains(r))
+    });
     ratchet("RS-008", f, B_QUIET_WRITES);
 }
 

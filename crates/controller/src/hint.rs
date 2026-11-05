@@ -18,7 +18,7 @@ pub const BUILTIN: &str =
 pub const PRESET: &str = "/usr/lib/systemd/system-preset/50-wolos.preset";
 /// Condition words a row may use (test-checked against the table).
 pub const WORDS: &[&str] = &[
-    "missing", "failed", "any", "user", "root", "sealed", "nowheel", "managed",
+    "missing", "failed", "any", "user", "root", "sealed", "nowheel", "managed", "wraps",
 ];
 /// Condition words that take `=PATTERN` (`status=N` takes a number).
 pub const KEYED: &[&str] = &["arg", "last", "typed", "status"];
@@ -210,6 +210,8 @@ fn holds(word: &str, typed: &str, args: &[String], out: Outcome, f: &mut Facts) 
         "sealed" => f.sealed(),
         "nowheel" => !f.env.is_root() && !f.wheel(),
         "managed" => f.managed(args),
+        // Marks a command that runs the rest of the line (see `find`); never a hint of its own.
+        "wraps" => false,
         "status" => val
             .parse()
             .ok()
@@ -231,7 +233,7 @@ fn row_matches(row: &Row, typed: &str, args: &[String], out: Outcome, f: &mut Fa
         })
 }
 
-/// `sudo`'s options that take a value (`sudo -u bob apt ...`).
+/// The options of `sudo` and its kind that take a value (`sudo -u bob apt ...`).
 const SUDO_VALUE: &[&str] = &[
     "-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-R", "-T",
 ];
@@ -244,7 +246,7 @@ pub struct Found {
     pub args: Vec<String>,
 }
 
-/// The first row for this command line, then (for `sudo X`) for X.
+/// The first row for this command line, then (for a `wraps` command: `sudo X`) for X.
 fn find(table: &[Row], line: &str, out: Outcome, f: &mut Facts) -> Option<Found> {
     let mut w = words(line);
     let mut out = out;
@@ -266,7 +268,12 @@ fn find(table: &[Row], line: &str, out: Outcome, f: &mut Facts) -> Option<Found>
                 args,
             });
         }
-        if name != "sudo" || out == Outcome::Missing {
+        // Only a command the table marks `wraps` runs the rest of the line (the table names it:
+        // no program name for privilege is written in this code, RR-079).
+        let wraps = table
+            .iter()
+            .any(|r| r.command == name && r.condition.split_whitespace().any(|c| c == "wraps"));
+        if !wraps || out == Outcome::Missing {
             return None;
         }
         // `sudo X ...` failed: look X up; sudo reports a missing X with its own status.
@@ -548,6 +555,42 @@ mod tests {
         assert!(hint(&mut env, "brew install x", FAILED).is_none());
         assert!(hint(&mut env, "ls /nowhere", FAILED).is_none());
         assert!(hint(&mut env, "", m).is_none());
+    }
+
+    /// RR-079: the word that runs another command is data in the table (`wraps`), not a name in
+    /// the code. A table that does not mark it does not look behind it, and a table that marks
+    /// another word does.
+    #[test]
+    fn the_table_says_which_commands_wrap_another() {
+        let on_path = |env: &mut FakeEnv| {
+            env.vars
+                .push(("PATH".into(), "/nonexistent-wolos-hint".into()));
+        };
+        let table = |text: &str| FakeEnv {
+            files: vec![(TABLE.into(), text.into())],
+            ..Default::default()
+        };
+        let apt = "apt\tmissing\tapt is not here.\twopkg install {names}\n";
+        let mut env = table(&format!(
+            "{apt}elev\twraps\tRuns the rest of the line.\t-\n"
+        ));
+        on_path(&mut env);
+        assert_eq!(
+            suggestion(&mut env, "elev -x apt install vlc", FAILED).as_deref(),
+            Some("wopkg install vlc")
+        );
+        // The wrapping row itself is never printed.
+        assert!(hint(&mut env, "elev ls", FAILED).is_none());
+        let mut env = table(apt);
+        on_path(&mut env);
+        assert!(hint(&mut env, "elev apt install vlc", FAILED).is_none());
+        // The shipped table marks the one word WolOS shells use.
+        let shipped: Vec<_> = rows(BUILTIN)
+            .into_iter()
+            .filter(|r| r.condition == "wraps")
+            .map(|r| r.command)
+            .collect();
+        assert_eq!(shipped, ["sudo"]);
     }
 
     #[test]

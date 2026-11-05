@@ -114,7 +114,8 @@ pub fn console_failure_notice(
     };
     let retry = retry_words(retry_in);
     format!(
-        "{TEXT_VISIBLE}{SHOW_CURSOR}\x1b[2J\x1b[H\r\n  WolOS\r\n\r\n  {headline}\r\n\r\n  Reason: {reason}.\r\n  Trying again in {retry}.\r\n  Details: journalctl -b -u wold\r\n\r\n  Restart: press Ctrl+Alt+Delete, or hold the power button.\r\n"
+        "{TEXT_VISIBLE}{SHOW_CURSOR}\x1b[2J\x1b[H\r\n  WolOS\r\n\r\n  {headline}\r\n\r\n  Reason: {reason}.\r\n  Trying again in {retry}.\r\n  \
+            Details: journalctl -b -u wold\r\n\r\n  Restart: press Ctrl+Alt+Delete, or hold the power button.\r\n"
     )
 }
 
