@@ -23,7 +23,7 @@
     "base-devel",
     "libwol",
     "cryswol",
-    "wolos-crystal"
+    "wolkit"
   ],
   "flatpaks": [],
   "recipes": [],
