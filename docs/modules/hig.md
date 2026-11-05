@@ -41,7 +41,7 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 
 ## 3. Behaviour
 
-- Shortcuts (Super = ⌘): N new, O open, S save, Shift+S save as, W close window, Q quit, F find, Z/Shift+Z undo/redo, C/X/V/A, comma settings, Backspace delete/trash, I info, Space Quick Look (file lists). Same key, same meaning in every app.
+- Shortcuts (Super = ⌘): N new, O open, S save, Shift+S save as, W close window, Q quit, F find, Z/Shift+Z undo/redo, C/X/V/A, comma settings, Shift+E share (File > Share…: the selection goes to the share sheet, `wol-share`; an app with nothing to share greys the row), Backspace delete/trash, I info, Space Quick Look (file lists). Same key, same meaning in every app.
 - Selection: click selects, double-click/Enter opens, Shift/Super extend. Right-click → context `Menu` with the same verbs as the toolbar.
 - Destructive actions: confirm in a Sheet with the destructive button on the right in `destructive` style; prefer undo over confirm.
 - Long work (> 1 s): progress in place (row ProgressBar or toolbar Spinner), cancellable, off the UI thread. Never freeze.
