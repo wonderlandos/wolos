@@ -16,6 +16,7 @@ ignore = [
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: pulled by zbus 5, no maintained alternative (2026-11-02, review 2027-02-01)" },
     { id = "RUSTSEC-2023-0071", reason = "rsa (Marvin): only yara-x Authenticode signature verify, no private-key operation; no fixed release (2026-11-03, review 2027-02-01)" },
     { id = "RUSTSEC-2025-0141", reason = "bincode 2 unmaintained: only via yara-x (xguard yara), no alternative there (2026-11-03, review 2027-02-01)" },
+    { id = "RUSTSEC-2026-0293", reason = "ringbuf 0.4 Consumer::skip/clear not panic-safe when an element's Drop panics: only via librqbit-utp 0.7 (atlas-torrent), whose ring holds u8 (no Drop); the fix is ringbuf 0.5, which librqbit-utp does not take yet (2026-11-05, ATLAS-DL proposal for the CTO, review 2027-02-01)" },
 ]
 
 [licenses]

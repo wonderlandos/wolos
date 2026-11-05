@@ -157,6 +157,10 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/atlas-torrent/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "crates/wolcrypt/**",
       "spdx": "BSD-2-Clause"
     },

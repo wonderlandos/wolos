@@ -26,6 +26,7 @@ members = [
     "crates/wolkeyring",
     "crates/atlas",
     "crates/atlas-fed",
+    "crates/atlas-torrent",
 ]
 # The engine library's source (ADR 0042): built in the engine's own workspace by webengine-wolos.
 exclude = ["crates/webengine/engine"]

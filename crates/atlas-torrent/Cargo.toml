@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# atlas-torrent (ADR 0064): the Atlas browser's torrent helper. A process beside the browser binary
+# that runs magnet links and .torrent files as downloads for the browser's download list, over a Unix
+# socket, confined to the downloads folder (no Rust in the browser, ADR 0043 D4). Protocol: src/proto.rs.
+# The torrent engine is librqbit (Apache-2.0, GPL-3.0-compatible: the binary is distributed under the
+# GPL-3.0-or-later terms of the combined work, which GPL-2.0-or-later allows; deny.toml lists Apache-2.0).
+[package]
+name = "atlas-torrent"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "atlas-torrent: magnet links and .torrent files as Atlas downloads, confined to the downloads folder"
+publish = false
+
+[lib]
+name = "atlas_torrent"
+
+[features]
+# Test tools (DL-SEC-17): `make`, `seed`, `serve --unconfined` and `--local-peers` (loopback swarm).
+# Off in the package; tests/swarm.rs and the e2e build with it (`--features tools`).
+tools = []
+
+[[bin]]
+name = "atlas-torrent"
+path = "src/main.rs"
+
+[[test]]
+name = "swarm"
+required-features = ["tools"]
+
+[dependencies]
+shared.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# No HTTP API, no UPnP, no web UI; rustls for HTTP trackers; `disable-upload` gives the session-wide
+# switch that keeps sharing off until the person allows it.
+librqbit = { version = "=9.1.0", default-features = false, features = ["rust-tls", "disable-upload"] }
+tokio = { version = "1.54", features = ["rt-multi-thread", "net", "io-util", "time", "sync", "macros", "signal"] }

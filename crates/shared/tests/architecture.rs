@@ -84,6 +84,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The browser's Federate helper (ADR 0052 "Atlas"): a process beside the browser that
                 // answers fed:// loads with the one verifier; it links nothing else of the workspace.
                 "atlas-fed" => dep == "federate",
+                // The browser's torrent helper (ADR 0064): the shared types for SO_PEERCRED and the
+                // browser's path; the torrent engine is librqbit, outside the workspace.
+                "atlas-torrent" => dep == "shared",
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",
