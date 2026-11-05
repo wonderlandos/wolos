@@ -12,7 +12,7 @@ describe "the HIG components" do
     window.title.should eq "Notes"
     ops = window.ops
     ops.should contain("SET_PROP 2 height px:52.0")
-    ops.any?(&.includes?("width px:220.0")).should be_true
+    ops.any?(&.includes?("width px:240.0")).should be_true
     golden("kit_mounted.ops", ops.join("\n") + "\n")
   end
 

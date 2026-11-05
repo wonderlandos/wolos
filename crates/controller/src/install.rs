@@ -700,6 +700,19 @@ pub fn settings_files(p: &Plan) -> Option<Vec<(String, String)>> {
     ])
 }
 
+/// Every language Settings offers, generated in the new system (`locale-gen` in its chroot), with no
+/// plan to ask: a system installed by autoinstall has no plan, and without this its only locales
+/// are C and POSIX while the Setup Assistant writes LANG=pt_BR.UTF-8 into /etc/locale.conf
+/// (QA-SET-27, QA-FDAY-2). This is the only time it can happen: the root is sealed afterwards
+/// and `/usr/lib/locale` with it. 0: done.
+pub fn generate_locales(t: &mut dyn Tools, root: &Path) -> i32 {
+    if std::fs::write(root.join("etc/locale.gen"), region::locale_gen("")).is_err() {
+        return 1;
+    }
+    let rooted = root.to_string_lossy();
+    i32::from(!t.run(&["arch-chroot", &rooted, "locale-gen"], None).ok)
+}
+
 /// The account's request for `login::setup_plan`.
 pub fn new_account(p: &Plan, password: &str) -> Option<NewAccount> {
     let a = p.account.as_ref()?;
@@ -932,6 +945,9 @@ pub fn verb(env: &mut dyn Env, inv: &Invocation) -> i32 {
         };
         env.out(&serde_json::to_string(&d).unwrap_or_default());
         return 0;
+    }
+    if inv.action == "install.locales" {
+        return generate_locales(&mut t, Path::new(inv.get("root").unwrap_or_default()));
     }
     let Some((plan, text)) = plan_of(env, inv) else {
         return fail(env, ErrorCode::Usage, "no readable plan file");
@@ -1832,6 +1848,30 @@ mod tests {
             }
             assert!(gen_file.1.contains(&format!("{chosen} UTF-8\n")));
         }
+    }
+
+    /// QA-FDAY-2: an install without a plan (autoinstall) generates every language too.
+    #[test]
+    fn locales_are_generated_without_a_plan() {
+        let d = std::env::temp_dir().join(format!("wol-locales-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("etc")).unwrap();
+        let mut t = Fake::new(Disk::default());
+        assert_eq!(generate_locales(&mut t, &d), 0);
+        let gen_file = std::fs::read_to_string(d.join("etc/locale.gen")).unwrap();
+        for (l, _) in region::LANGUAGES {
+            assert!(gen_file.contains(&format!("{l} UTF-8\n")), "{l}");
+        }
+        assert_eq!(
+            t.log,
+            vec![format!("arch-chroot {} locale-gen", d.display())]
+        );
+        t.refuse = Some("arch-chroot");
+        assert_eq!(
+            generate_locales(&mut t, &d),
+            1,
+            "a failed locale-gen is a failed install"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     /// The default US layout the app ships is `us(intl)`: a plan with it must install.

@@ -6,11 +6,11 @@ module Wolkit
   module Scaffold
     TOOLBAR_HEIGHT  =  52
     TOOLBAR_PADDING =  16
-    SIDEBAR_WIDTH   = 220
+    SIDEBAR_WIDTH   = 240
     LIST_ROW        =  40
     CONTROL_HEIGHT  =  24
-    RADIUS_CONTROL  =   6
-    RADIUS_CARD     =  10
+    RADIUS_CONTROL  =   8
+    RADIUS_CARD     =  12
     WINDOW_RADIUS   =  12
   end
 end
