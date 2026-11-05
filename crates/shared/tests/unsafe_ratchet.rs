@@ -91,6 +91,8 @@ use std::path::{Path, PathBuf};
 /// no fadvise, no new dependency was wanted for one call.
 /// controller 56 -> 58 (JS-RUNTIME-X, ADR 0061, `src/bin/wolos-mm.rs`): `prctl(PR_SET_MEMORY_MERGE)`
 /// before an exec and `pidfd_open` + `process_madvise` for the page-out; std wraps none of them.
+/// api 33 -> 32 (MEMSAVER-X2): `memsaver/pageout.rs` owns its pidfd as an `OwnedFd` (closed on drop, so the
+/// explicit `close` block is gone) and makes one `process_madvise` call per range.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 482),
@@ -99,7 +101,7 @@ const BASELINE: &[(&str, usize)] = &[
     ("realtime", 42),
     ("xguard", 65),
     ("controller", 58),
-    ("api", 33),
+    ("api", 32),
     ("audio", 0),
     ("aurlaws", 0),
     ("core", 14),

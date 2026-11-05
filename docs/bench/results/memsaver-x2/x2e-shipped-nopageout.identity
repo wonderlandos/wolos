@@ -1,0 +1,5 @@
+-rwxr-xr-x 1 aliceliddell aliceliddell 18490808 Nov  5 01:47 /usr/bin/wol-shell
+-rwxr-xr-x 1 aliceliddell aliceliddell  3340592 Nov  5 03:14 /usr/bin/wold
+4096
+1
+12988 /usr/bin/wold /etc/wolos/jobs

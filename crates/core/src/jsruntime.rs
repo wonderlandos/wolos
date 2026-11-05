@@ -482,12 +482,33 @@ pub fn pageout_allowed(
     Ok(())
 }
 
+/// Whether a pidfd still names `pid`, from its `/proc/self/fdinfo/<fd>` text: the `Pid:` line
+/// says `-1` once the process is gone (and the line is missing on a kernel without pidfds). Both
+/// page-out callers ask it before every `process_madvise` call, so a process that exits halfway
+/// is left at once.
+pub fn pidfd_names(fdinfo: &str, pid: u32) -> bool {
+    fdinfo
+        .lines()
+        .find_map(|l| l.strip_prefix("Pid:"))
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        == Some(i64::from(pid))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn rt(c: Class, m: Mode) -> Runtime {
         runtime_flags(c, m)
+    }
+
+    #[test]
+    fn a_pidfd_names_its_process_until_it_is_gone() {
+        let live = "pos:\t0\nflags:\t02000002\nmnt_id:\t15\nino:\t1057\nPid:\t4242\nNSpid:\t4242\n";
+        assert!(pidfd_names(live, 4242));
+        assert!(!pidfd_names(live, 4243), "another pid");
+        assert!(!pidfd_names("Pid:\t-1\nNSpid:\t-1\n", 4242), "exited");
+        assert!(!pidfd_names("pos:\t0\n", 4242), "no Pid line: not a pidfd");
     }
 
     #[test]

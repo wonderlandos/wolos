@@ -36,6 +36,8 @@ struct M {
     cgs: BTreeMap<String, C>,
     adopted: Vec<Vec<String>>,
     given: Vec<(String, u64, Vec<i32>)>,
+    /// Every `page_out` (scope, pids), in order.
+    paged: Vec<(String, Vec<i32>)>,
     cancelled: Vec<String>,
     swapped: BTreeMap<i32, u64>,
 }
@@ -156,6 +158,9 @@ impl Sys for Model {
     }
     fn give_back(&self, scope: &str, bytes: u64, pids: Vec<i32>) {
         self.0.borrow_mut().given.push((scope.into(), bytes, pids));
+    }
+    fn page_out(&self, scope: &str, pids: Vec<i32>) {
+        self.0.borrow_mut().paged.push((scope.into(), pids));
     }
     fn cancel(&self, scope: &str) {
         self.0.borrow_mut().cancelled.push(scope.into());
@@ -750,4 +755,163 @@ fn behind_discord_is_limited_and_not_frozen_by_default() {
     assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Back));
     assert!(!e.sys.cg(DISCORD).freezes.contains(&true));
     assert_eq!(e.due(), None);
+}
+
+// ---- the budget's page-out behind (ADR 0061 §4) ----
+
+/// Times (ms after the window first showed) at which Discord, behind from `away`, has passed its
+/// start and the saver's delay: the tick that turns it to Saving with the background limit.
+fn behind_from(e: &mut Engine<Model>, away: u64) -> u64 {
+    let b = budget::of("discord").unwrap();
+    assert!(away >= b.start_ms);
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.snapshot(dsnap(99, false));
+    e.tick(away);
+    let saving = away + Config::default().delay_ms;
+    e.tick(saving);
+    assert_eq!(e.sys.cg(DISCORD).high, b.high(Place::Back));
+    saving
+}
+
+fn paged(e: &Engine<Model>) -> Vec<(String, Vec<i32>)> {
+    e.sys.0.borrow().paged.clone()
+}
+
+#[test]
+fn the_page_out_runs_every_thirty_seconds() {
+    assert_eq!(PAGEOUT_EVERY_MS, 30_000);
+}
+
+/// Behind, Discord gives back once (the saver's Save) and is then paged out every 30 s, each time
+/// the scope's processes as they are now; in front again nothing more is asked and a page-out
+/// still running is stopped.
+#[test]
+fn behind_a_budgeted_app_is_paged_out_every_thirty_seconds_until_it_is_used() {
+    let mut e = discord();
+    let saving = behind_from(&mut e, 61_000);
+    assert_eq!(
+        e.sys.0.borrow().given.len(),
+        1,
+        "the Save is the first page-out"
+    );
+    assert!(paged(&e).is_empty());
+    e.tick(saving + PAGEOUT_EVERY_MS - 1);
+    assert!(paged(&e).is_empty(), "not before 30 s");
+    e.tick(saving + PAGEOUT_EVERY_MS);
+    assert_eq!(paged(&e), [(DISCORD.to_owned(), vec![30, 31, 32])]);
+    // A renderer that started meanwhile is in the next one.
+    e.sys.add(33, 30, "Discord");
+    e.sys.0.borrow_mut().procs.get_mut(&33).unwrap().cg = DISCORD.into();
+    e.tick(saving + PAGEOUT_EVERY_MS + 2_000);
+    assert_eq!(paged(&e).len(), 1, "one per 30 s, not per tick");
+    e.tick(saving + 2 * PAGEOUT_EVERY_MS);
+    assert_eq!(paged(&e)[1], (DISCORD.to_owned(), vec![30, 31, 32, 33]));
+    let st = e.tick(saving + 2 * PAGEOUT_EVERY_MS + 10);
+    assert_eq!(st.apps[0].pageouts, 2, "{st:?}");
+    // Used again: no page-out, the running one is stopped.
+    e.focus(30);
+    e.tick(saving + 2 * PAGEOUT_EVERY_MS + 100);
+    assert!(e.sys.0.borrow().cancelled.contains(&DISCORD.to_owned()));
+    for t in [3, 4, 5, 10] {
+        e.tick(saving + t * PAGEOUT_EVERY_MS);
+    }
+    assert_eq!(paged(&e).len(), 2, "never in front");
+}
+
+/// A call (a capture stream) or sound: never paged out, however long it is behind.
+#[test]
+fn a_budgeted_app_playing_or_in_a_call_is_never_paged_out() {
+    let mut e = discord();
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    let mut s = dsnap(99, false);
+    s.playing = vec![31];
+    e.snapshot(s);
+    for t in (61..=900).step_by(2).map(|s| s * 1_000) {
+        e.tick(t);
+    }
+    assert!(paged(&e).is_empty(), "{:?}", paged(&e));
+    // The call ends behind: the saver's delay, then the page-outs.
+    e.snapshot(dsnap(99, false));
+    let quiet = 902_000;
+    e.tick(quiet);
+    e.tick(quiet + Config::default().delay_ms);
+    e.tick(quiet + Config::default().delay_ms + PAGEOUT_EVERY_MS);
+    assert_eq!(paged(&e).len(), 1);
+    // A call starts while it is behind: the page-outs stop at once.
+    let mut s = dsnap(99, false);
+    s.playing = vec![32];
+    e.snapshot(s);
+    for k in 2..10 {
+        e.tick(quiet + Config::default().delay_ms + k * PAGEOUT_EVERY_MS);
+    }
+    assert_eq!(paged(&e).len(), 1, "{:?}", paged(&e));
+}
+
+/// Saver off, Discord excluded, a game, still starting (`start_ms`), or adopted instead of born in
+/// its scope: no page-out.
+#[test]
+fn no_page_out_when_the_saver_is_off_excluded_a_game_starting_or_adopted() {
+    let long = |e: &mut Engine<Model>, from: u64| {
+        for k in 0..20 {
+            e.tick(from + k * PAGEOUT_EVERY_MS / 2);
+        }
+    };
+    // Off.
+    let mut e = discord();
+    let saving = behind_from(&mut e, 61_000);
+    let mut s = dsnap(99, false);
+    s.enabled = false;
+    e.snapshot(s);
+    long(&mut e, saving + 1);
+    assert!(paged(&e).is_empty(), "saver off");
+    // Excluded.
+    let mut e = discord();
+    let saving = behind_from(&mut e, 61_000);
+    let mut s = dsnap(99, false);
+    s.exclude = vec!["discord".into()];
+    e.snapshot(s);
+    long(&mut e, saving + 1);
+    assert!(paged(&e).is_empty(), "excluded");
+    // A game.
+    let mut e = discord();
+    e.sys.0.borrow_mut().procs.get_mut(&31).unwrap().game = true;
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.snapshot(dsnap(99, false));
+    long(&mut e, 61_000);
+    assert!(paged(&e).is_empty(), "game");
+    // Behind before its start is over: the saver's Save, no page-out until start_ms has passed.
+    let mut e = discord();
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.snapshot(dsnap(99, false));
+    for t in (1..60).map(|s| s * 1_000) {
+        e.tick(t);
+    }
+    assert!(paged(&e).is_empty(), "still starting");
+    // Adopted (started the usual way): a plain Memory Saver app.
+    let mut e = discord();
+    for pid in 30..=32 {
+        e.sys.0.borrow_mut().procs.get_mut(&pid).unwrap().cg = ADOPTED.into();
+    }
+    e.sys.set(ADOPTED, |_| {});
+    e.snapshot(dsnap(30, true));
+    e.tick(0);
+    e.snapshot(dsnap(99, false));
+    long(&mut e, 61_000);
+    assert!(paged(&e).is_empty(), "adopted");
+}
+
+/// An app that is not in the budget table is never paged out by the budget, only given back once.
+#[test]
+fn apps_without_a_budget_are_given_back_once_and_never_paged_out() {
+    let mut e = adopted();
+    e.snapshot(snap(99, false));
+    for t in (0..=600).step_by(2).map(|s| s * 1_000) {
+        e.tick(t);
+    }
+    assert!(paged(&e).is_empty());
+    assert_eq!(e.sys.0.borrow().given.len(), 1);
 }

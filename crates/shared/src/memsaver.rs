@@ -152,6 +152,11 @@ pub struct AppStatus {
     pub memory: u64,
     /// Of which compressed away (memory.swap.current).
     pub swap: u64,
+    /// Page-outs Memory Saver made of an app with a memory budget while it was behind (one every
+    /// 30 s, `crates/api/src/memsaver/engine.rs` `PAGEOUT_EVERY_MS`); 0 for every other app. A
+    /// status file from a wold before it reads as 0.
+    #[serde(default)]
+    pub pageouts: u32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -246,10 +251,17 @@ mod tests {
                 saved: 5,
                 memory: 10,
                 swap: 3,
+                pageouts: 2,
             }],
         };
         let j = serde_json::to_string(&st).unwrap();
         assert!(j.contains(r#""state":"saving""#), "{j}");
         assert_eq!(serde_json::from_str::<Status>(&j).unwrap(), st);
+        // A status file written before page-outs were counted still reads.
+        let old = r#"{"enabled":true,"saved":0,"apps":[{"app":"x","state":"active","saved":0,"memory":1,"swap":0}]}"#;
+        assert_eq!(
+            serde_json::from_str::<Status>(old).unwrap().apps[0].pageouts,
+            0
+        );
     }
 }

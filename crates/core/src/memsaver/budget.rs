@@ -159,33 +159,43 @@ fn launch_argv_with(b: &Budget, pid: u32, argv: &[String], flags: &[String]) -> 
     a
 }
 
-/// [`launch_argv`] for a launcher that cannot know the pid: `sh -c 'exec systemd-run ...
-/// --unit=app-<name>-$$.scope ... -- "$@" <lean switches>' sh <argv...>`. The shell's `$$` is the
-/// pid systemd-run, the app's start script and the app keep through their execs.
-pub fn launch_sh(b: &Budget, argv: &[String]) -> Vec<String> {
-    let flags = if b.lean {
+/// The shell [`launch_sh`] runs, by its path: the launch may sit behind
+/// `wolos-mm exec-merge --` (`jsruntime::Runtime::prefix`), which runs only an absolute path.
+pub const SH: &str = "/bin/sh";
+/// The `systemd-run` the script execs, by its path (the same rule: nothing looked up in `PATH`).
+pub const SYSTEMD_RUN: &str = "/usr/bin/systemd-run";
+
+/// [`launch_argv`] for a launcher that cannot know the pid: `/bin/sh -c 'exec /usr/bin/systemd-run
+/// ... --unit=app-<name>-$$.scope ... -- "$@" <switches>' sh <argv...>`. The shell's `$$` is the
+/// pid systemd-run, the app's start script and the app keep through their execs. `extra` are
+/// more switches for the app (`jsruntime::Runtime::args`), after the lean ones.
+pub fn launch_sh(b: &Budget, argv: &[String], extra: &[String]) -> Vec<String> {
+    let mut flags = if b.lean {
         crate::webruntime::third_party_flags()
     } else {
         Vec::new()
     };
-    launch_sh_with(b, argv, &flags)
+    flags.extend(extra.iter().cloned());
+    launch_sh_with(b, SYSTEMD_RUN, argv, &flags)
 }
 
-/// [`launch_sh`] with the engine switches given.
-fn launch_sh_with(b: &Budget, argv: &[String], flags: &[String]) -> Vec<String> {
+/// [`launch_sh`] with the `systemd-run` program and the engine switches given.
+fn launch_sh_with(b: &Budget, systemd_run: &str, argv: &[String], flags: &[String]) -> Vec<String> {
     fn q(w: &str) -> String {
         format!("'{}'", w.replace('\'', "'\\''"))
     }
     let mut script = format!(
-        "exec systemd-run --user --scope --quiet --collect --unit=app-{}-$$.scope \
+        "exec {} --user --scope --quiet --collect --unit=app-{}-$$.scope \
          --property=MemorySwapMax={}M -- \"$@\"",
-        b.engine_name, b.swap_max_mib
+        q(systemd_run),
+        b.engine_name,
+        b.swap_max_mib
     );
     for f in flags {
         script.push(' ');
         script.push_str(&q(f));
     }
-    let mut a = vec!["sh".to_owned(), "-c".to_owned(), script, "sh".to_owned()];
+    let mut a = vec![SH.to_owned(), "-c".to_owned(), script, "sh".to_owned()];
     a.extend(argv.iter().cloned());
     a
 }
@@ -353,16 +363,17 @@ mod tests {
             "--renderer-process-limit=1".to_owned(),
             "--js-flags=--optimize-for-size --x='y'".to_owned(),
         ];
-        let a = launch_sh_with(d, &["discord".into(), "it's".into()], &flags);
-        assert_eq!(a[..2], ["sh", "-c"]);
-        let path = format!(
-            "{}:{}",
-            dir.display(),
-            std::env::var("PATH").unwrap_or_default()
+        let a = launch_sh_with(
+            d,
+            &fake.to_string_lossy(),
+            &["discord".into(), "it's".into()],
+            &flags,
         );
+        assert_eq!(a[..2], ["/bin/sh", "-c"]);
+        // Nothing is looked up in PATH: an empty one runs the same.
         let out = std::process::Command::new(&a[0])
             .args(&a[1..])
-            .env("PATH", path)
+            .env("PATH", "")
             .output()
             .unwrap();
         let text = String::from_utf8(out.stdout).unwrap();
@@ -375,10 +386,15 @@ mod tests {
         for f in &flags {
             assert!(text.contains(&format!("[{f}]")), "{f}: {text}");
         }
+        let shipped = launch_sh(d, &["discord".into()], &[]);
+        assert!(shipped[2].ends_with("-- \"$@\""), "no engine switch ships");
         assert!(
-            launch_sh(d, &["discord".into()])[2].ends_with("-- \"$@\""),
-            "no engine switch ships"
+            shipped[2].starts_with("exec '/usr/bin/systemd-run' --user"),
+            "by its path: {}",
+            shipped[2]
         );
+        let more = launch_sh(d, &["discord".into()], &["--x=1".into()]);
+        assert!(more[2].ends_with("-- \"$@\" '--x=1'"), "{}", more[2]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

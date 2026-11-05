@@ -12,7 +12,7 @@ app. Numbers: [bench/js-runtime-x.md](../bench/js-runtime-x.md); decision: [0061
 | Tables and pure logic | `crates/core/src/jsruntime.rs` | `ROWS` (every engine knob measured, shipped or not, with its MiB), `runtime_flags(class, mode)` -> `Runtime {args, env, ksm_merge}`, `Runtime::prefix()`, `MM_WRITES`, `ksm_policy(passwd)`, `pageout_ranges(maps, what)` (the one range filter), `pageout_allowed(cgroup, uid, caller, any)` |
 | Boot | `files/usr/lib/systemd/system/wolos-mm.service` | oneshot `wolos-mm apply` after `sys-kernel-debug.mount`; enabled by the preset, runs on the live medium too |
 | Kernel calls | `crates/controller/src/bin/wolos-mm.rs` (`/usr/bin/wolos-mm`) | `apply`, `ksm` (status dump, printed once; no loop), `exec-merge -- /abs/path CMD...`, `pageout [--any] PID [anon|all]`; the only `unsafe` of this module (2 blocks) |
-| Memory Saver's page-out | `crates/api/src/memsaver/pageout.rs` | calls `jsruntime::pageout_ranges(maps, Pageout::Anon)`; decides when |
+| Memory Saver's page-out | `crates/api/src/memsaver/pageout.rs`, `engine.rs` | calls `jsruntime::pageout_ranges(maps, Pageout::Anon)` for the one give-back and `Pageout::All` every 30 s (`PAGEOUT_EVERY_MS`) for a budgeted app behind; one range per `process_madvise` call, the pidfd asked before each; decides when |
 
 ## KSM only with one human account
 

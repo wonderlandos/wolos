@@ -39,7 +39,10 @@ pub trait Sys {
     fn adopt(&self, args: &[String]) -> bool;
     /// Reclaim `bytes` from the scope and page out `pids`, in the background: returns at once.
     fn give_back(&self, scope: &str, bytes: u64, pids: Vec<i32>);
-    /// Stop a [`Sys::give_back`] of this scope.
+    /// Page out `pids` (every private mapping, code included: [`pageout::Pageout::All`]) in the
+    /// background, without a reclaim: returns at once. The budget's page-out while behind.
+    fn page_out(&self, scope: &str, pids: Vec<i32>);
+    /// Stop a [`Sys::give_back`] or [`Sys::page_out`] of this scope.
     fn cancel(&self, scope: &str);
     /// Bytes of these processes that are compressed away (swap), wherever they were charged.
     fn swapped(&self, pids: &[i32]) -> u64;
@@ -106,6 +109,59 @@ impl Real {
     fn dir(&self, cg: &str) -> PathBuf {
         self.root.join(cg.trim_start_matches('/'))
     }
+
+    /// The one worker of [`Sys::give_back`] (a reclaim of `reclaim` bytes first, then the
+    /// [`pageout::Pageout::Anon`] ranges) and [`Sys::page_out`] (no reclaim, every private range):
+    /// a named thread at the lowest priority, under the scope's stop flag, logged once.
+    fn spawn_pageout(
+        &self,
+        scope: &str,
+        reclaim: Option<u64>,
+        pids: Vec<i32>,
+        what: pageout::Pageout,
+    ) {
+        let stop = self.paging.start(scope);
+        let (proc, dir) = (self.proc.clone(), self.dir(scope));
+        let (paging, key) = (self.paging.clone(), scope.to_owned());
+        let scope = scope.to_owned();
+        let work = move || {
+            // The compression runs on this thread: it must not compete with what is in use.
+            // SAFETY: setpriority on the calling thread (who = 0) with plain integers.
+            unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) };
+            let t = std::time::Instant::now();
+            if let Some(bytes) = reclaim {
+                reclaim_steps(&dir, bytes, &stop);
+            }
+            let paged: usize = pids
+                .iter()
+                .map(|p| pageout::pageout_what(&proc, *p, &stop, what))
+                .sum();
+            eprintln!(
+                "wold: memsaver {} {scope} in {} ms ({} MiB of ranges){}",
+                if reclaim.is_some() {
+                    "gave back"
+                } else {
+                    "paged out"
+                },
+                t.elapsed().as_millis(),
+                paged >> 20,
+                if stop.load(Ordering::Relaxed) {
+                    " (stopped)"
+                } else {
+                    ""
+                }
+            );
+            paging.end(&scope, &stop);
+        };
+        if std::thread::Builder::new()
+            .name("wol-memsaver-pageout".into())
+            .spawn(work)
+            .is_err()
+        {
+            // No thread: nothing is paged out this time, and the scope's entry goes with it.
+            self.paging.cancel(&key);
+        }
+    }
 }
 
 impl Sys for Real {
@@ -159,31 +215,10 @@ impl Sys for Real {
             .is_ok_and(|s| s.success())
     }
     fn give_back(&self, scope: &str, bytes: u64, pids: Vec<i32>) {
-        let stop = self.paging.start(scope);
-        let (proc, dir) = (self.proc.clone(), self.dir(scope));
-        let (paging, scope) = (self.paging.clone(), scope.to_owned());
-        std::thread::spawn(move || {
-            // The compression runs on this thread: it must not compete with what is in use.
-            // SAFETY: setpriority on the calling thread (who = 0) with plain integers.
-            unsafe { libc::setpriority(libc::PRIO_PROCESS, 0, 19) };
-            let t = std::time::Instant::now();
-            reclaim(&dir, bytes, &stop);
-            let paged: usize = pids
-                .iter()
-                .map(|p| pageout::pageout(&proc, *p, &stop))
-                .sum();
-            eprintln!(
-                "wold: memsaver gave back in {} ms ({} MiB of ranges){}",
-                t.elapsed().as_millis(),
-                paged >> 20,
-                if stop.load(Ordering::Relaxed) {
-                    " (stopped)"
-                } else {
-                    ""
-                }
-            );
-            paging.end(&scope, &stop);
-        });
+        self.spawn_pageout(scope, Some(bytes), pids, pageout::Pageout::Anon);
+    }
+    fn page_out(&self, scope: &str, pids: Vec<i32>) {
+        self.spawn_pageout(scope, None, pids, pageout::Pageout::All);
     }
     fn cancel(&self, scope: &str) {
         self.paging.cancel(scope);
@@ -198,7 +233,7 @@ impl Sys for Real {
 
 /// Reclaim in steps so `stop` is seen quickly; a step that barely helps means only hot or shared
 /// pages are left.
-fn reclaim(dir: &Path, bytes: u64, stop: &AtomicBool) {
+fn reclaim_steps(dir: &Path, bytes: u64, stop: &AtomicBool) {
     const STEP: u64 = 64 << 20;
     let mut left = bytes;
     while left > 0 && !stop.load(Ordering::Relaxed) {
@@ -483,6 +518,7 @@ mod tests {
                                     saved: k,
                                     memory: k << 20,
                                     swap: 0,
+                                    pageouts: 0,
                                 })
                                 .collect(),
                         };
@@ -561,6 +597,9 @@ mod tests {
             panic!("engine bug")
         }
         fn give_back(&self, _scope: &str, _bytes: u64, _pids: Vec<i32>) {
+            panic!("engine bug")
+        }
+        fn page_out(&self, _scope: &str, _pids: Vec<i32>) {
             panic!("engine bug")
         }
         fn cancel(&self, _scope: &str) {

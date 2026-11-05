@@ -297,7 +297,7 @@ brackets; `cargo test` runs in the `test` job).
   crate (code only: comments, strings and char literals stripped by a lexer; `src/` with the
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
   `BASELINE` row (that table is the record and its comment gives the reason for every raise;
-  the rows: wol-abi 482, wolkit 314, wopkg 103, realtime 42, xguard 65, controller 58, api 33,
+  the rows: wol-abi 482, wolkit 314, wopkg 103, realtime 42, xguard 65, controller 58, api 32,
   core 14, xguard-clam 13, shared 17, shell 9, proxy 3, wol-lua 3, webengine 135, audio 0, aurlaws 0).
   Controller went 56 -> 58 for `wolos-mm` (ADR 0061: `prctl(PR_SET_MEMORY_MERGE)` before an exec, `pidfd_open` and
   `process_madvise`; std wraps none). It went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
