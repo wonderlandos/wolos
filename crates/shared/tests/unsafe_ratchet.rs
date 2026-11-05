@@ -102,9 +102,15 @@ use std::path::{Path, PathBuf};
 /// the terminal) and `_exit` in that handler, each with a SAFETY line; no new dependency.
 /// Merged (rel/0.12.1 into wave3, STEP-0, 2026-11-04): realtime is the 0.12.1 audit8 refactor (32)
 /// plus DT-2 (+10); xguard and controller are the 0.12.1 rows; the others are wave3 rows.
+/// wol-abi 482 -> 513 (libwol 1.16, E2E-LIB-1): eleven C exports (`wol_media_publish`,
+/// `_set_handler`, `_set_track`, `_set_art`, `_set_state`, `_set_capabilities`, `_retain`,
+/// `_release`, `wol_recent_add`, `wol_color_pick`, `wol_print_file`), each `#[unsafe(no_mangle)]
+/// pub unsafe extern`, plus the checked out-pointer writes (`wol_media_publish`, `wol_color_pick`,
+/// `wol_print_file`), the handle borrows (`string::borrow` in `media::change`/`set_handler`),
+/// `retain`/`release` and the one callback call (`media::pressed`), each with a SAFETY line.
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
-    ("wol-abi", 482),
+    ("wol-abi", 513),
     ("wolkit", 314),
     ("wopkg", 103),
     ("realtime", 42),

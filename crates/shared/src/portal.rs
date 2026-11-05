@@ -45,8 +45,20 @@ pub const MAX_ENDPOINT: usize = 64;
 pub const MAX_PEER: usize = 1024;
 pub const MAX_MESSAGE: usize = 24 * 1024;
 
-/// A file's full path in [`Call::FileTrash`], [`Call::ShareFile`] and [`Call::OpenWith`].
+/// A file's full path in [`Call::FileTrash`], [`Call::ShareFile`], [`Call::OpenWith`],
+/// [`Call::RecentAdd`] and [`Call::PrintFile`].
 pub const MAX_PATH: usize = 4096;
+
+/// Longest time in a player's state or a seek (microseconds): 100 days. A podcast fits, a bad
+/// number does not.
+pub const MAX_MEDIA_US: i64 = 100 * 24 * 3600 * 1_000_000;
+/// The player can go to the next track; with [`CAN_PREVIOUS`] and [`CAN_SEEK`] these are what
+/// it can do besides play and pause ([`MediaState::can`]).
+pub const CAN_NEXT: u8 = 1;
+/// The player can go to the previous track.
+pub const CAN_PREVIOUS: u8 = 2;
+/// The player can seek.
+pub const CAN_SEEK: u8 = 4;
 
 /// Services one account can run.
 pub const MAX_SERVICES: usize = 8;
@@ -73,6 +85,10 @@ pub const CAPABILITIES: &[&str] = &[
     "share",
     "background",
     "trash",
+    "media",
+    "recents",
+    "print",
+    "color-picker",
 ];
 
 /// A row a search provider offers: `key` comes back to the app when the person opens it.
@@ -98,6 +114,81 @@ impl SearchResult {
         }
         Ok(())
     }
+}
+
+/// Where a player is ([`MediaState::status`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum MediaStatus {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+/// What a player shows other apps: all of it the app's word except what the desktop adds (the
+/// player's name and icon come from the executable the kernel reported, never from here).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MediaState {
+    pub status: MediaStatus,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    /// A picture's full path, or empty. The desktop shows it only if it is a small image.
+    #[serde(default)]
+    pub art: String,
+    /// 0: not known (a stream).
+    #[serde(default)]
+    pub length_us: i64,
+    #[serde(default)]
+    pub position_us: i64,
+    /// [`CAN_NEXT`], [`CAN_PREVIOUS`], [`CAN_SEEK`].
+    #[serde(default)]
+    pub can: u8,
+}
+
+impl MediaState {
+    /// Every text is one short line, the picture a full path, the times and abilities in range.
+    pub fn check(&self) -> Result<(), String> {
+        for t in [&self.title, &self.artist, &self.album] {
+            if !clean(t, MAX_TITLE, false) {
+                return Err(format!(
+                    "A title, artist or album is one line of at most {MAX_TITLE} bytes."
+                ));
+            }
+        }
+        if !self.art.is_empty() {
+            file_path(&self.art)?;
+        }
+        if !(0..=MAX_MEDIA_US).contains(&self.length_us)
+            || !(0..=MAX_MEDIA_US).contains(&self.position_us)
+        {
+            return Err("A length or position is 0 to 100 days.".into());
+        }
+        if self.can & !(CAN_NEXT | CAN_PREVIOUS | CAN_SEEK) != 0 {
+            return Err("Unknown player abilities.".into());
+        }
+        Ok(())
+    }
+}
+
+/// A remote control for a player (playerctl, media keys, Control Center), from the desktop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub enum MediaKey {
+    Play,
+    Pause,
+    Toggle,
+    Stop,
+    Next,
+    Previous,
+    /// `value_us` more or less than now.
+    Seek,
+    /// `value_us` from the start.
+    SetPosition,
 }
 
 /// What wold checks before a call runs.
@@ -241,6 +332,30 @@ pub enum Call {
     /// Let the person pick the app that opens a file.
     #[serde(rename = "open.with")]
     OpenWith { path: String },
+    /// Publish a player (a held call: it lasts as long as the connection). The desktop gives it
+    /// the name `org.mpris.MediaPlayer2.wol.<app>` on the session bus.
+    #[serde(rename = "media.publish")]
+    MediaPublish {},
+    /// The published player's state, whole.
+    #[serde(rename = "media.state")]
+    MediaState { state: MediaState },
+    /// A remote control reached player `player` (a process id): from the desktop, to its owner.
+    #[serde(rename = "media.key")]
+    MediaKey {
+        player: i32,
+        key: MediaKey,
+        #[serde(default)]
+        value_us: i64,
+    },
+    /// Add a file to the person's recent files, as the app that asks.
+    #[serde(rename = "recent.add")]
+    RecentAdd { path: String },
+    /// Let the person pick a colour from the screen.
+    #[serde(rename = "color.pick")]
+    ColorPick {},
+    /// Offer a file to print (the print dialog).
+    #[serde(rename = "print.file")]
+    PrintFile { path: String },
     /// Run the caller's own executable as a service called `name`.
     #[serde(rename = "service.start")]
     ServiceStart { name: String },
@@ -363,6 +478,17 @@ pub enum Ask {
     },
     /// The chooser of apps that open a file, as `{"done": "opened" or "cancelled"}`.
     OpenWith {
+        path: String,
+    },
+    /// Add `path` to the recent files, as app `app` (the executable the kernel reported).
+    RecentAdd {
+        path: String,
+        app: String,
+    },
+    /// The person picks a colour on screen, as `{"color": "#rrggbb"}` or `{"cancelled": true}`.
+    ColorPick,
+    /// The print dialog for a file, as `{"done": "printed" or "cancelled"}`.
+    PrintFile {
         path: String,
     },
     ClipboardRead,
@@ -568,6 +694,11 @@ impl Call {
                 Need::Grant("share")
             }
             Self::FileTrash { .. } => Need::Grant("trash"),
+            Self::MediaPublish {} | Self::MediaState { .. } => Need::Grant("media"),
+            Self::RecentAdd { .. } => Need::Grant("recents"),
+            Self::ColorPick {} => Need::Grant("color-picker"),
+            Self::PrintFile { .. } => Need::Grant("print"),
+            Self::MediaKey { .. } => Need::Shower,
             Self::ServiceStart { .. } | Self::ServiceStop { .. } | Self::ServiceStatus { .. } => {
                 Need::Grant("background")
             }
@@ -684,8 +815,21 @@ impl Call {
                 }
                 message_body(text)
             }
-            Self::FileTrash { path } | Self::ShareFile { path } | Self::OpenWith { path } => {
-                file_path(path)
+            Self::FileTrash { path }
+            | Self::ShareFile { path }
+            | Self::OpenWith { path }
+            | Self::RecentAdd { path }
+            | Self::PrintFile { path } => file_path(path),
+            Self::MediaPublish {} | Self::ColorPick {} => Ok(()),
+            Self::MediaState { state } => state.check(),
+            Self::MediaKey { key, value_us, .. } => {
+                if value_us.abs() > MAX_MEDIA_US || (*key == MediaKey::SetPosition && *value_us < 0)
+                {
+                    return Err(
+                        "A seek is at most 100 days, and a position is not negative.".into(),
+                    );
+                }
+                Ok(())
             }
             Self::ServiceStart { name }
             | Self::ServiceStop { name }
@@ -1192,6 +1336,170 @@ mod tests {
         })
         .unwrap();
         assert_eq!(ask, r#"{"ask":"open-with","path":"/h/a"}"#);
+    }
+
+    fn state(status: MediaStatus) -> MediaState {
+        MediaState {
+            status,
+            title: "Song".into(),
+            artist: "Band".into(),
+            album: "Record".into(),
+            art: "/home/a/.cache/p/cover.png".into(),
+            length_us: 215_000_000,
+            position_us: 3_000_000,
+            can: CAN_NEXT | CAN_SEEK,
+        }
+    }
+
+    #[test]
+    fn media_calls_need_their_grants_and_the_shell_relays_keys() {
+        let publish = Call::MediaPublish {};
+        let st = Call::MediaState {
+            state: state(MediaStatus::Playing),
+        };
+        assert_eq!(publish.need(), Need::Grant("media"));
+        assert_eq!(st.need(), Need::Grant("media"));
+        let key = Call::MediaKey {
+            player: 7,
+            key: MediaKey::Next,
+            value_us: 0,
+        };
+        assert_eq!(
+            key.need(),
+            Need::Shower,
+            "an app cannot press another's keys"
+        );
+        assert_eq!(
+            Call::RecentAdd {
+                path: "/h/a".into()
+            }
+            .need(),
+            Need::Grant("recents")
+        );
+        assert_eq!(
+            Call::PrintFile {
+                path: "/h/a".into()
+            }
+            .need(),
+            Need::Grant("print")
+        );
+        assert_eq!(Call::ColorPick {}.need(), Need::Grant("color-picker"));
+        for c in [CAPABILITIES] {
+            for g in ["media", "recents", "print", "color-picker"] {
+                assert!(c.contains(&g), "{g}");
+            }
+        }
+    }
+
+    #[test]
+    fn media_wire_is_fixed_and_round_trips() {
+        let st = Call::MediaState {
+            state: MediaState {
+                status: MediaStatus::Paused,
+                title: "T".into(),
+                artist: String::new(),
+                album: String::new(),
+                art: String::new(),
+                length_us: 0,
+                position_us: 5,
+                can: 0,
+            },
+        };
+        assert_eq!(
+            st.encode(),
+            r#"{"call":"media.state","state":{"status":"paused","title":"T","artist":"","album":"","art":"","length_us":0,"position_us":5,"can":0}}"#
+        );
+        let key = Call::MediaKey {
+            player: 7,
+            key: MediaKey::SetPosition,
+            value_us: 9,
+        };
+        assert_eq!(
+            key.encode(),
+            r#"{"call":"media.key","player":7,"key":"set-position","value_us":9}"#
+        );
+        for c in [
+            Call::MediaPublish {},
+            st,
+            key,
+            Call::ColorPick {},
+            Call::RecentAdd {
+                path: "/h/a".into(),
+            },
+            Call::PrintFile {
+                path: "/h/a".into(),
+            },
+        ] {
+            assert_eq!(Call::decode(c.encode().as_bytes()), Ok(c.clone()), "{c:?}");
+        }
+        // Only the state, with nothing else on the line, and only known words.
+        for bad in [
+            r#"{"call":"media.publish","name":"x"}"#,
+            r#"{"call":"media.state","state":{"status":"flying"}}"#,
+            r#"{"call":"media.state","state":{"status":"playing","app":"x"}}"#,
+            r#"{"call":"media.state"}"#,
+            r#"{"call":"media.key","player":7,"key":"explode"}"#,
+            r#"{"call":"color.pick","at":[1,2]}"#,
+            r#"{"call":"recent.add","path":"rel/x"}"#,
+            r#"{"call":"print.file","path":"/a/../b"}"#,
+        ] {
+            assert!(Call::decode(bad.as_bytes()).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn media_state_is_bounded() {
+        let ok = state(MediaStatus::Stopped);
+        assert_eq!(ok.check(), Ok(()));
+        let long = "x".repeat(MAX_TITLE + 1);
+        let mut cases: Vec<MediaState> = Vec::new();
+        for f in 0..8 {
+            let mut m = ok.clone();
+            match f {
+                0 => m.title = long.clone(),
+                1 => m.artist = "a\nb".into(),
+                2 => m.album = "a\u{7}".into(),
+                3 => m.art = "cover.png".into(),
+                4 => m.art = "/a/../b.png".into(),
+                5 => m.length_us = -1,
+                6 => m.position_us = MAX_MEDIA_US + 1,
+                _ => m.can = 8,
+            }
+            cases.push(m);
+        }
+        for m in cases {
+            assert!(m.check().is_err(), "{m:?}");
+            let c = Call::MediaState { state: m };
+            assert!(c.validate().is_err());
+        }
+        // Seeking back is allowed; a negative position is not.
+        let key = |key, value_us| Call::MediaKey {
+            player: 1,
+            key,
+            value_us,
+        };
+        assert_eq!(key(MediaKey::Seek, -5_000_000).validate(), Ok(()));
+        assert!(key(MediaKey::SetPosition, -1).validate().is_err());
+        assert!(key(MediaKey::Seek, MAX_MEDIA_US + 1).validate().is_err());
+    }
+
+    #[test]
+    fn new_asks_have_a_fixed_wire() {
+        let ask = |a: &Ask| serde_json::to_string(a).unwrap();
+        assert_eq!(
+            ask(&Ask::RecentAdd {
+                path: "/h/a".into(),
+                app: "/usr/bin/p".into()
+            }),
+            r#"{"ask":"recent-add","path":"/h/a","app":"/usr/bin/p"}"#
+        );
+        assert_eq!(ask(&Ask::ColorPick), r#"{"ask":"color-pick"}"#);
+        assert_eq!(
+            ask(&Ask::PrintFile {
+                path: "/h/a".into()
+            }),
+            r#"{"ask":"print-file","path":"/h/a"}"#
+        );
     }
 
     #[test]

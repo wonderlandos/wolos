@@ -17,12 +17,14 @@ pub mod audio;
 pub mod client;
 pub mod clipboard;
 pub mod context;
+pub mod desktop;
 pub mod device;
 pub mod error;
 pub mod file;
 pub mod handle;
 pub mod info;
 pub mod kit;
+pub mod media;
 pub mod menu;
 pub mod message;
 pub mod network;
@@ -36,7 +38,7 @@ pub mod string;
 pub mod system;
 
 /// libwol's own version (not the WolOS version): major.minor.patch, packed 0xMMmmpp.
-pub const VERSION: (u32, u32, u32) = (1, 15, 0);
+pub const VERSION: (u32, u32, u32) = (1, 16, 0);
 
 /// Every `#define` in `wol.h` (test-checked against the header).
 pub mod abi {
@@ -58,6 +60,20 @@ pub mod abi {
             "WOL_APPEARANCE_DARK",
             crate::system::Appearance::Dark as i64,
         ),
+        ("WOL_MEDIA_STOPPED", crate::media::STATUS_STOPPED),
+        ("WOL_MEDIA_PLAYING", crate::media::STATUS_PLAYING),
+        ("WOL_MEDIA_PAUSED", crate::media::STATUS_PAUSED),
+        ("WOL_MEDIA_KEY_PLAY", crate::media::KEY_PLAY),
+        ("WOL_MEDIA_KEY_PAUSE", crate::media::KEY_PAUSE),
+        ("WOL_MEDIA_KEY_TOGGLE", crate::media::KEY_TOGGLE),
+        ("WOL_MEDIA_KEY_STOP", crate::media::KEY_STOP),
+        ("WOL_MEDIA_KEY_NEXT", crate::media::KEY_NEXT),
+        ("WOL_MEDIA_KEY_PREVIOUS", crate::media::KEY_PREVIOUS),
+        ("WOL_MEDIA_KEY_SEEK", crate::media::KEY_SEEK),
+        ("WOL_MEDIA_KEY_SET_POSITION", crate::media::KEY_SET_POSITION),
+        ("WOL_MEDIA_CAN_NEXT", 1),
+        ("WOL_MEDIA_CAN_PREVIOUS", 2),
+        ("WOL_MEDIA_CAN_SEEK", 4),
     ];
 }
 
@@ -70,7 +86,7 @@ pub extern "C" fn wol_version() -> u32 {
 /// The version as text, static.
 #[unsafe(no_mangle)]
 pub extern "C" fn wol_version_string() -> *const std::ffi::c_char {
-    c"1.15.0".as_ptr()
+    c"1.16.0".as_ptr()
 }
 
 #[cfg(test)]

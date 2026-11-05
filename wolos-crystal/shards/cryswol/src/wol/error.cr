@@ -92,4 +92,15 @@ module Wol
     check(status, err)
     ptr
   end
+
+  # Run one fallible libwol call with two number out-parameters (`wol_color_pick`): the block gets
+  # the two pointers and the `wol_error**`. Returns the two values. Raises on failure.
+  def self.scalars(a : A.class, b : B.class, & : Pointer(A), Pointer(B), LibWol::Error** -> Int32) : {A, B} forall A, B
+    x = A.zero
+    y = B.zero
+    err = Pointer(LibWol::Error).null
+    status = yield pointerof(x), pointerof(y), pointerof(err)
+    check(status, err)
+    {x, y}
+  end
 end

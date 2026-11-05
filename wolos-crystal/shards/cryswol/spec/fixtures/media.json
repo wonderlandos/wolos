@@ -1,0 +1,14 @@
+{
+  "app": "org.example.player",
+  "answers": {
+    "media.publish": [{"ok": true}, {"ok": false, "code": "permission-denied", "message": "Player is not allowed to show a player for the media keys. Allow it in System Settings > Privacy & Security."}],
+    "media.state": [{"ok": true}]
+  },
+  "events": [
+    {"after": "media.publish", "emit": [
+      {"event": "media-key", "uid": 1000, "pid": 1, "key": "seek", "value_us": -5000000},
+      {"event": "media-key", "uid": 1000, "pid": 1, "key": "toggle", "value_us": 0},
+      {"event": "media-key", "uid": 1000, "pid": 1, "key": "set-position", "value_us": 90500000}
+    ]}
+  ]
+}

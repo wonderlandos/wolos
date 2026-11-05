@@ -81,6 +81,27 @@ pub enum Event {
         name: String,
         body: String,
     },
+    /// A libwol app's player (`portal::Call::MediaState`), made by wold after its permission
+    /// check. Reaches only the desktop of account `uid`; `app` is the executable the kernel
+    /// reported for process `pid`, which is where the player's name and icon come from.
+    MediaState {
+        uid: u32,
+        pid: i32,
+        app: String,
+        state: crate::portal::MediaState,
+    },
+    /// The player of process `pid` is gone (its connection closed): same audience.
+    MediaGone {
+        uid: u32,
+        pid: i32,
+    },
+    /// A remote control for the player of process `pid` (from the desktop): reaches only that process.
+    MediaKey {
+        uid: u32,
+        pid: i32,
+        key: crate::portal::MediaKey,
+        value_us: i64,
+    },
     /// A notification button pressed: reaches only process `pid` (the one that posted `id`).
     NotificationAction {
         uid: u32,
@@ -118,10 +139,13 @@ impl Event {
         match self {
             Self::Notification { uid, .. }
             | Self::NotificationWithdrawn { uid, .. }
+            | Self::MediaState { uid, .. }
+            | Self::MediaGone { uid, .. }
             | Self::SessionAsk { uid, .. } => Audience::Account(*uid),
             Self::NotificationAction { uid, pid, .. }
             | Self::SearchQuery { uid, pid, .. }
             | Self::SearchOpen { uid, pid, .. }
+            | Self::MediaKey { uid, pid, .. }
             | Self::Message { uid, pid, .. } => Audience::Process {
                 uid: *uid,
                 pid: *pid,
@@ -154,6 +178,9 @@ impl Event {
             Self::SearchQuery { .. } => "search-query",
             Self::SearchOpen { .. } => "search-open",
             Self::Message { .. } => "message",
+            Self::MediaState { .. } => "media-state",
+            Self::MediaGone { .. } => "media-gone",
+            Self::MediaKey { .. } => "media-key",
             Self::SessionAsk { .. } => "session-ask",
             Self::NotificationAction { .. } => "notification-action",
         }
@@ -205,6 +232,44 @@ mod tests {
         ] {
             assert_eq!(e.audience(), Audience::Process { uid, pid });
             assert!(!e.client_may_publish());
+            assert_eq!(Event::parse(&e.to_line()), Some(e));
+        }
+    }
+
+    #[test]
+    fn a_player_reaches_the_desktop_and_its_keys_reach_one_process() {
+        use crate::portal::{MediaKey, MediaState, MediaStatus};
+        let state = Event::MediaState {
+            uid: 1000,
+            pid: 7,
+            app: "/usr/bin/toy".into(),
+            state: MediaState {
+                status: MediaStatus::Playing,
+                title: "T".into(),
+                artist: String::new(),
+                album: String::new(),
+                art: String::new(),
+                length_us: 0,
+                position_us: 0,
+                can: 0,
+            },
+        };
+        let gone = Event::MediaGone { uid: 1000, pid: 7 };
+        let key = Event::MediaKey {
+            uid: 1000,
+            pid: 7,
+            key: MediaKey::Next,
+            value_us: 0,
+        };
+        assert_eq!(state.audience(), Audience::Account(1000));
+        assert_eq!(gone.audience(), Audience::Account(1000));
+        assert_eq!(key.audience(), Audience::Process { uid: 1000, pid: 7 });
+        for e in [state, gone, key] {
+            assert!(!e.client_may_publish(), "{e:?} is wold's alone");
+            assert!(
+                e.to_line()
+                    .contains(&format!("\"event\":\"{}\"", e.topic()))
+            );
             assert_eq!(Event::parse(&e.to_line()), Some(e));
         }
     }
