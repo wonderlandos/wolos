@@ -10,14 +10,19 @@
 #   what=iso run=<vX.Y.Z>: the release of that tag (put on all four repos by `wolos-build release`):
 #       ISO from [wolos-testing], VM test, release.json signed, the latest release.
 #   what=cdn run=<run>: copy a signed repo to the CDN's bucket after main uploaded it by hand.
-#   what=iso-s3 run=<S3 run id> tag=<vX.Y.Z>: publish an ISO already built and VM-tested on the build
-#       box (s3://$BUCKET/runs/<run>/: the .iso, its manifest .json and the VM test's checks.txt,
-#       which must say BOOT PASS and no FAIL) as a pre-release of this repo:
-#       `wolos-build release --do --iso --prerelease` (the same signer and writes as what=iso).
+#   what=iso-s3 run=<S3 run id> tag=<vX.Y.Z> [prerelease=false]: publish an ISO already built and
+#       VM-tested on the build box (s3://$BUCKET/runs/<run>/: the .iso, its manifest .json and the VM
+#       test's checks.txt, which must say BOOT PASS and no FAIL) as a pre-release of this repo
+#       (default): `wolos-build release --do --iso --prerelease`. With prerelease=false it is the
+#       STABLE release: the ISO (over 2 GiB: the CDN only) goes to cdn.wolos.org/v<version>/ and
+#       latest/ with stable.json, the packages' files and notes to GitHub as `releases/latest`, and
+#       the manifest must say it was built from [wolos] (the channel gate of `release_iso`). Same
+#       signer and writes as what=iso.
 # The ISO's primary download is the CDN (https://cdn.wolos.org/v<version>/<iso>, release.json `image`);
 # the GitHub release keeps the packages' files, the checksum and release.json, and an ISO of 2 GiB or
-# more is not uploaded there (its notes link the CDN). That needs WOLOS_CDN_UPLOAD_TOKEN (iso-s3 passes
-# it; the iso job passes it once its pinned release.yml declares it: bump the pin after the wolos-iso push).
+# more is not uploaded there (its notes link the CDN). That needs WOLOS_CDN_UPLOAD_TOKEN: iso and
+# iso-s3 pass it (the pinned release.yml must declare it: bump the pins after the wolos-iso push;
+# tests/test_rules_ci.py RC-071 in wolos-build holds a caller to what its callee declares).
 # Every write is `wolos-build publish|release` (lib/publish.sh in wolos-build, from the builder
 # image); the jobs here and the reusable workflows only check out, assume the role and pass keys.
 # Without WOLOS_RELEASES_TOKEN nothing is written to the releases repo: the run ends with a
@@ -41,6 +46,10 @@ on:
       tag:
         description: release tag vX.Y.Z (iso-s3 only)
         required: false
+      prerelease:
+        description: iso-s3 only - true (default) publishes a pre-release; false the stable release (needs an ISO built from [wolos])
+        type: boolean
+        default: true
 
 concurrency:
   group: publish
@@ -58,7 +67,7 @@ defaults:
 jobs:
   packages:
     if: inputs.what == 'packages'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # wolos-pkgbuilds main 2026-11-05 (the old pin is not on any branch); bump after each wolos-pkgbuilds push
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # main 2026-11-05 wolos-pkgbuilds (the old pin is not on any branch); bump after each wolos-pkgbuilds push
     with:
       run: ${{ inputs.run }}
       mode: sign
@@ -67,22 +76,22 @@ jobs:
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   cdn:
     if: inputs.what == 'cdn'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # wolos-pkgbuilds main 2026-11-05 (the old pin is not on any branch); bump after each wolos-pkgbuilds push
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/publish.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # main 2026-11-05 wolos-pkgbuilds (the old pin is not on any branch); bump after each wolos-pkgbuilds push
     with:
       run: ${{ inputs.run }}
       mode: cdn
     secrets:
-      WOLOS_GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
+      # No WOLOS_GPG_KEY: mode=cdn only copies an already signed repo (RC-072, least privilege).
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   promote:
     if: inputs.what == 'promote'
-    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # wolos-pkgbuilds main 2026-11-05 (the old pin is not on any branch); bump after each wolos-pkgbuilds push
+    uses: wonderlandos/wolos-pkgbuilds/.github/workflows/promote.yml@d7f7b85d7ceb6c7c9ab53f77fa085f09b8dc87fb # main 2026-11-05 wolos-pkgbuilds (the old pin is not on any branch); bump after each wolos-pkgbuilds push
     secrets:
       WOLOS_GPG_KEY: ${{ secrets.WOLOS_GPG_KEY }}
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   iso:
     if: inputs.what == 'iso'
-    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@6208242782b359946cefd66eac6c7e85829c566a # wolos-iso main 2026-11-05 (the old pin is not on any branch); bump after each wolos-iso push
+    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@6208242782b359946cefd66eac6c7e85829c566a # main 2026-11-05 wolos-iso (the old pin is not on any branch); bump after each wolos-iso push
     with:
       tag: ${{ inputs.run }}
     secrets:
@@ -90,6 +99,9 @@ jobs:
       WOLOS_SB_KEY: ${{ secrets.WOLOS_SB_KEY }}
       WOLOS_SB_CERT: ${{ secrets.WOLOS_SB_CERT }}
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
+      # The ISO is over 2 GiB: it is published on cdn.wolos.org only (GitHub keeps the packages' files,
+      # the checksum and release.json), so the upload token is needed (QA-A9-IMAGE-02).
+      WOLOS_CDN_UPLOAD_TOKEN: ${{ secrets.WOLOS_CDN_UPLOAD_TOKEN }}
   iso-s3:
     if: inputs.what == 'iso-s3'
     runs-on: ubuntu-latest
@@ -101,6 +113,7 @@ jobs:
     env:
       RUN: ${{ inputs.run }}
       TAG: ${{ inputs.tag }}
+      PRERELEASE: ${{ inputs.prerelease }}
       BUCKET: ${{ vars.BUCKET }}
       GH_REPO: ${{ github.repository }}
       GH_TOKEN: ${{ github.token }}
@@ -114,7 +127,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: wonderlandos/wolos-iso
-          ref: 6208242782b359946cefd66eac6c7e85829c566a # wolos-iso main 2026-11-05; bump with the iso job's pin
+          ref: 6208242782b359946cefd66eac6c7e85829c566a # main 2026-11-05 wolos-iso; bump with the iso job's pin
           path: wolos-iso
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
@@ -122,7 +135,7 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
       - name: Builder registry
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-      - name: ISO, release.json, signature, pre-release
+      - name: ISO, release.json, signature, release
         env:
           WOLOS_RELEASE_KEY: ${{ secrets.WOLOS_RELEASE_KEY }}
           # cdn.wolos.org is the primary download; an ISO of 2 GiB or more goes there only.
@@ -131,5 +144,6 @@ jobs:
           mkdir -p out/iso && aws s3 sync --quiet --exclude '*' --include '*.iso' --include '*.json' --include checks.txt "s3://$BUCKET/runs/$RUN/" out/iso/
           export WOLOS_ISO=$PWD/wolos-iso WOLOS_SUMMARY=$PWD/out/summary.md WOLOS_WORK=$PWD/out/work
           # --checks: the box's VM test (checks.txt: BOOT PASS, no FAIL) gates the signing (I7-5).
-          wolos-iso/.github/builder wolos-build release --do --iso out/iso --prerelease --checks out/iso/checks.txt "$TAG"
+          pre=(--prerelease); [ "$PRERELEASE" = true ] || pre=()
+          wolos-iso/.github/builder wolos-build release --do --iso out/iso "${pre[@]}" --checks out/iso/checks.txt "$TAG"
           [ ! -f out/summary.md ] || cat out/summary.md >> "$GITHUB_STEP_SUMMARY"

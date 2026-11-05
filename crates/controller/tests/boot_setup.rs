@@ -108,7 +108,10 @@ fn setup_out(
     fake(
         &d,
         "openssl",
-        "while [ $# -gt 0 ]; do case $1 in -keyout|-out) echo x > \"$2\"; shift ;; esac; shift; done",
+        concat!(
+            "case $1 in passwd) cat > /dev/null; echo '$6$salt$hashed'; exit 0 ;; esac; ",
+            "while [ $# -gt 0 ]; do case $1 in -keyout|-out) echo x > \"$2\"; shift ;; esac; shift; done",
+        ),
     );
     fake(
         &d,
@@ -154,13 +157,16 @@ fn setup_out(
     fake(
         &d,
         "mokutil",
-        "case \"$*\" in *generate-hash*) echo hash ;; esac",
+        &format!(
+            "case \"$*\" in --import*) cp \"$4\" {}/hash-seen ;; esac",
+            d.display()
+        ),
     );
     fake(
         &d,
         "wol",
         &format!(
-            "case \"$*\" in \"boot detect\"*) echo {tier} ;; \"boot key-screen\"*) echo {screen} ;; \"boot words\"*) echo protected ;; \"boot password\"*) echo boot ;; \"boot note\"*) echo \"$3 $4\" ;; esac"
+            "case \"$*\" in \"boot detect\"*) echo {tier} ;; \"boot key-screen\"*) echo {screen} ;; \"boot words\"*) echo protected ;; \"boot password\"*) echo s3cr3t-MOK-pw ;; \"boot note\"*) echo \"$3 $4\" ;; esac"
         ),
     );
     for (n, body) in fakes {
@@ -225,7 +231,7 @@ fn the_key_screen_route_uses_the_unaltered_first_stage_and_queues_our_key() {
         l.contains("mokutil --import") && l.contains("--hash-file"),
         "{l}"
     );
-    assert!(l.contains("mokutil --generate-hash=boot"), "{l}");
+    no_password_in_argv(&d, &l);
     let esp = d.join("t/efi");
     assert_eq!(
         fs::read_to_string(esp.join("EFI/BOOT/BOOTX64.EFI")).unwrap(),
@@ -654,6 +660,22 @@ fn a_module_built_here_is_signed_with_this_computers_key() {
     );
 }
 
+/// QA-A9-IMAGE-12: the MOK password that protects enrolling this computer's key is never a command
+/// line argument of any program (visible in /proc/*/cmdline to every local process): `mokutil
+/// --generate-hash=PASSWORD` was. The hash is made from stdin and handed over as a file, and what
+/// mokutil got is a crypt(3) SHA-512 hash, not the password.
+fn no_password_in_argv(d: &std::path::Path, log: &str) {
+    assert!(
+        !log.contains("s3cr3t-MOK-pw") && !log.contains("--generate-hash"),
+        "the MOK password is on a command line: {log}"
+    );
+    let h = fs::read_to_string(d.join("hash-seen")).expect("mokutil --import got a hash file");
+    assert!(
+        h.trim().starts_with("$6$") && !h.contains("s3cr3t-MOK-pw"),
+        "hash file: {h}"
+    );
+}
+
 fn enroll(name: &str, test_key: &str) -> (PathBuf, std::process::Output) {
     let d = std::env::temp_dir().join(format!("wol-enroll-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&d);
@@ -664,13 +686,14 @@ fn enroll(name: &str, test_key: &str) -> (PathBuf, std::process::Output) {
         &d,
         "mokutil",
         &format!(
-            "case \"$*\" in --test-key*) echo '{test_key}' ;; --generate-hash*) echo '$6$h' ;; esac"
+            "case \"$*\" in --test-key*) echo '{test_key}' ;; --import*) cp \"$4\" {}/hash-seen ;; esac",
+            d.display()
         ),
     );
     fake(
         &d,
         "wol",
-        "case \"$*\" in 'boot password') echo boot ;; esac",
+        "case \"$*\" in 'boot password') echo s3cr3t-MOK-pw ;; esac",
     );
     let o = Command::new("sh")
         .arg(lib("boot-enroll"))
@@ -688,7 +711,7 @@ fn enrollment_queues_itself_and_the_blue_screen_waits_for_the_person() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout), "queued\n");
     let l = fs::read_to_string(d.join("log")).unwrap();
-    assert!(l.contains("mokutil --generate-hash=boot"), "{l}");
+    no_password_in_argv(&d, &l);
     assert!(
         l.contains(&format!(
             "--import {}/db.der --hash-file",

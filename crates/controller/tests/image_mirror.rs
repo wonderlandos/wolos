@@ -32,14 +32,6 @@ const V3: &str = "flags\t\t: cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3 avx avx
 
 const V2: &str = "flags\t\t: cx16 lahf_lm popcnt pni sse4_1 sse4_2 ssse3\n";
 
-/// `https://<host>` of a `Server = https://<host>/...` value.
-fn host(server: &str) -> &str {
-    let rest = server
-        .strip_prefix("https://")
-        .unwrap_or_else(|| panic!("https only: {server}"));
-    &server[..8 + rest.find('/').unwrap_or(rest.len())]
-}
-
 /// First hit wins: [wolos], then the three CachyOS v3 sections (off until the gate), then Arch at
 /// the snapshot. Both pacman.conf copies accept x86_64_v3 packages.
 #[test]
@@ -82,10 +74,11 @@ fn repos_in_order_with_the_wolos_mirrorlists() {
             "{f}: CachyOS v3 packages are arch x86_64_v3"
         );
     }
-    // [wolos]: the CDN first (<domain>/<repo>-<date>/<file>, the bucket layout), the release
-    // assets second; every line at the release date. The CDN line stays commented out until its
-    // CloudFront domain exists (audit CA-8): a name that does not resolve costs every sync a DNS
-    // failure. Active or not, never the literal placeholder.
+    // [wolos]: the WolOS CDN first (cdn::PRIMARY, `<repo>-<date>/<file>`: one directory per
+    // release, named like the release's tag, written by wolos-build `publish`), the release
+    // assets of the same tag second; every line at the release date and both active (QA-A9-
+    // IMAGE-05: the file used to name a CloudFront placeholder, the CDN docs another layout and
+    // the GitHub tag it fell back to was a 404, so no layout owner agreed with the others).
     let list = read("wolos-mirrorlist/wolos-mirrorlist");
     let uncomment = |l: &str| {
         l.strip_prefix('#')
@@ -94,48 +87,35 @@ fn repos_in_order_with_the_wolos_mirrorlists() {
     };
     let all: Vec<String> = m::servers(&list.lines().map(uncomment).collect::<Vec<_>>().join("\n"));
     assert_eq!(all.len(), 2, "{all:?}");
+    let active = m::servers(&list);
     assert_eq!(
-        all[0],
-        format!("{}/$repo-{}", host(&all[0]), snapshot()),
-        "primary = the WolOS CDN"
-    );
-    let cdn = host(&all[0]).to_owned();
-    assert!(
-        cdn == "https://REPO_DOMAIN" || cdn.ends_with(".cloudfront.net"),
-        "{cdn}: the CloudFront domain (placeholder until terraform apply)"
+        active.first().map(String::as_str),
+        Some(format!("{}/$repo-{}", wol_core::cdn::PRIMARY, snapshot()).as_str()),
+        "the first active Server names cdn::PRIMARY and the snapshot date"
     );
     let fallback = format!(
         "https://github.com/wonderlandos/wolos-packages/releases/download/$repo-{}",
         snapshot()
     );
     assert_eq!(
-        all[1], fallback,
-        "fallback = the release assets the CDN falls back to as well"
+        active,
+        [active[0].clone(), fallback],
+        "CDN first, release assets second"
     );
-    let s = m::servers(&list);
-    if cdn.ends_with(".cloudfront.net") {
-        assert_eq!(s, all, "the CDN is set: both lines active");
-    } else {
-        assert_eq!(
-            s,
-            [fallback],
-            "placeholder: only the release assets are active"
-        );
-    }
+    assert_eq!(active, all, "both lines active");
     assert!(
-        !list.contains("squareweb"),
-        "the old CDN is gone (ADR 0030)"
+        !list.contains("squareweb")
+            && !list.contains("cloudfront")
+            && !list.contains("REPO_DOMAIN"),
+        "no old CDN and no placeholder in the [wolos] list (ADR 0030, amended)"
     );
-    // The CachyOS list: one server, the same CDN's /cachy/ redirect, active only with the real
-    // domain; no date (the repos roll).
+    // The CachyOS list: one server, the CDN's /cachy/ redirect, no date (the repos roll). It
+    // keeps its own placeholder, commented out, until that redirect has a domain.
     let cachy = read("wolos-mirrorlist/wolos-cachy-mirrorlist");
     let cachy_all = m::servers(&cachy.lines().map(uncomment).collect::<Vec<_>>().join("\n"));
-    assert_eq!(cachy_all, [format!("{cdn}/cachy/$repo")]);
-    if cdn.ends_with(".cloudfront.net") {
-        assert_eq!(m::servers(&cachy), cachy_all);
-    } else {
-        assert!(m::servers(&cachy).is_empty(), "placeholder: commented out");
-    }
+    assert_eq!(cachy_all.len(), 1, "{cachy_all:?}");
+    assert!(cachy_all[0].ends_with("/cachy/$repo"), "{cachy_all:?}");
+    assert!(m::servers(&cachy).is_empty(), "placeholder: commented out");
     for (f, t) in [
         ("wolos-mirrorlist", &list),
         ("wolos-cachy-mirrorlist", &cachy),

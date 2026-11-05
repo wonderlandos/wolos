@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 (2026-11-05)
 
 - Web app ids are now at most 47 letters (it was 48), so the app's whole id fits the name its process group carries. Once, when you upgrade: a web app whose name made an id of exactly 48 letters no longer shows in the launcher or in `wol webapp list`; add it again with the same name and it gets the shorter id. Apps with shorter names are not touched.
 - Search understands what you mean (docs/modules/search.md): Settings search, the Search bar and `wol help` find rows, apps, manual sections and commands by meaning, in your language, on the computer (a 15 MB table of word pieces, nothing is sent). Word matches still come first. The Search bar offers "Did you mean" when nothing matches. `wol help <words>` where the words are not a command now lists the commands and manual pages that mean them (it used to print the usage with nothing in it) and exits 66 when nothing matches; `wol <word>` with an unknown first word suggests the command that means it.
@@ -38,6 +38,7 @@ Scripts
 - Ruby scripts in the tree have their own rules (docs/RULES-ruby.md, `RB-nnn`), checked in CI with `ruby -wc` and one explicit RuboCop list (`tools/ruby/lint.sh`).
 
 Packages and updates
+- The packages of a release are read from the WolOS CDN first (`cdn.wolos.org`, one folder per release, named like the release's date) and from GitHub second, so a computer keeps the packages of its own release until it updates. The installer media of a stable release is built from the stable package repository, and the enrollment password of Secure Boot no longer shows on a command line.
 - WolOS 0.13 has one update channel, Stable. Settings > Software Update shows it, `wol update channel` prints it, and `wopkg channel` offers it; a testing channel is not offered, and an old `/etc/wolos/channel` that names one reads as Stable.
 - A full disk is named ("There is no room left on the disk") when a download, an index, an update or a plugin cannot be written, instead of a path or the system's error text.
 - `sudo wol pkg -- -Sw <package>` (download only) works on the sealed system: it runs against a temporary copy of the package database instead of failing on the read-only lock.
@@ -57,7 +58,7 @@ Everyday apps
 - Photos in the Dock is Gallery, and PNG and JPEG pictures open in it. GIF, WebP and SVG pictures open in the image viewer, with the browser as the second choice. The image viewer and the two graphics benchmarks stay on the image; Shotwell is in the App Store.
 - The screen reader (Orca) and its voice are on the image.
 
-## 0.12.1 (unreleased)
+## 0.12.1 (2026-11-03)
 A fixes-only release after a hunt for stalls, races and weak spots in 0.12.0. Nothing new to learn.
 
 Security

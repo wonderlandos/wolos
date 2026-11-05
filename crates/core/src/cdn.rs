@@ -10,7 +10,9 @@
 //! order), the daily update check (`files/usr/lib/wolos/update-check`: `URL`, `MIRROR`,
 //! `FALLBACK` = [`latest`]`("release.json")`) and error reports (`files/usr/lib/wolos/report`:
 //! [`REPORT`]). The shell scripts cannot import this; tests hold their defaults to it. The
-//! `[wolos]` package repo is CloudFront (ADR 0030), not this server.
+//! `[wolos]` package repo is this server too (lead decision 2026-11-03, ADR 0030 amended): one
+//! directory per release, `/<repo>-<date>/<file>` (`/wolos-2026-11-02/`, `/wolos-testing/`), the
+//! tag the same files carry on GitHub; wolos-mirrorlist names [`PRIMARY`] first.
 //!
 //! Also here, as the one place for the project's own addresses: [`SHARD_INDEX`], the Crystal shard
 //! index (a Cloudflare Worker on the project's domain, not the CDN server).

@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 # pin-lint [--online] [REPO...]: fail on any GitHub Actions `uses:` not pinned to a full commit
 # SHA, and on any container image (`container:`, `image:`, Dockerfile FROM, .github/builder-image)
-# not pinned by digest (@sha256:). Workflows (.github/workflows) and composite or docker actions
+# not pinned by digest (@sha256:), also the image of a `docker run|create|pull` in a workflow's
+# run: script (QA-A9-IMAGE-03: the Secure Boot key was handed to `archlinux:latest`). Workflows (.github/workflows) and composite or docker actions
 # (.github/actions/**/action.yml, a root action.yml) are read. Audit A3/A12/B11/S13. Local actions
 # (./...) and docker:// with a digest pass.
 #   --online    also ask each pinned repository (`git ls-remote --tags`) that the SHA is a tag
@@ -34,8 +35,51 @@ def local_image(value):
     return "://" not in value and (value.endswith("Dockerfile") or value.startswith("./"))
 
 
+# `docker run` options that take a value in the next word: skipped to find the image.
+DOCKER_VALUE_OPTS = {
+    "-v", "-w", "-e", "-u", "-p", "-h", "-l", "-m", "-a", "--volume", "--workdir", "--env", "--user",
+    "--publish", "--name", "--hostname", "--entrypoint", "--network", "--net", "--platform", "--mount",
+    "--device", "--env-file", "--cap-add", "--cap-drop", "--security-opt", "--label", "--memory", "--cpus",
+    "--group-add", "--tmpfs", "--pull", "--add-host", "--ulimit", "--shm-size", "--pid", "--ipc", "--log-driver",
+}
+
+
+def docker_images(text):
+    """(line, image) of every `docker run|create|pull IMAGE` in `text` (a line ending in a backslash
+    continues). An image given by a shell variable (`"$img"`) cannot be read here and is skipped."""
+    lines = text.splitlines()
+    out, i = [], 0
+    while i < len(lines):
+        start, cmd = i + 1, lines[i]
+        while cmd.rstrip().endswith("\\") and i + 1 < len(lines):
+            i += 1
+            cmd = cmd.rstrip()[:-1] + " " + lines[i]
+        i += 1
+        if cmd.lstrip().startswith("#"):
+            continue
+        for m in re.finditer(r"\bdocker\s+(run|create|pull)\b(.*)", cmd):
+            words = m.group(2).split()
+            j = 0
+            while j < len(words):
+                w = words[j]
+                if w in ("--", "|", "&&", ";") or w.startswith("#"):
+                    break
+                if w.startswith("-"):
+                    j += 2 if w in DOCKER_VALUE_OPTS else 1
+                    continue
+                img = w.strip("'\"")
+                if img and not img.startswith(("$", "`")) and "@" not in img.split("/")[-1].split(":")[0]:
+                    if not DIGEST.search(img):
+                        out.append((start, img))
+                break
+    return out
+
+
 def lint_file(path, errors, pins, action=False):
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    text = path.read_text(encoding="utf-8")
+    for n, img in docker_images(text):
+        errors.append(f"{path}:{n}: docker image not pinned by digest: {img}")
+    for n, line in enumerate(text.splitlines(), 1):
         m = USES.match(line)
         if m:
             ref = m.group(1)
@@ -210,6 +254,23 @@ def selftest():
         expect("the workflow line passes", "ci.yml" not in text)
         expect("exactly three problems", len(errors) == 3)
         expect("pins are collected from workflows and actions", len(pins) == 2)
+
+    expect("docker run :latest is caught", docker_images("docker run --rm -v a:b archlinux:latest bash -c x") == [(1, "archlinux:latest")])
+    expect("docker run with options and a continuation", docker_images("echo\ndocker run --rm --device /dev/kvm \\\n  -v a:/b -w /src ghcr.io/o/i:1 sh") == [(2, "ghcr.io/o/i:1")])
+    expect("a digest passes", docker_images("docker run --rm -e A archlinux:latest@sha256:" + "a" * 64 + " bash") == [])
+    expect("a variable image is skipped", docker_images('docker run --rm -v "$ws:$ws" "$img" sh') == [])
+    expect("docker pull is read", docker_images("docker pull alpine:3") == [(1, "alpine:3")])
+    expect("a docker run in prose with no image is quiet", docker_images("# docker run is used here") == [])
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / ".github" / "workflows").mkdir(parents=True)
+        (root / ".github" / "workflows" / "r.yml").write_text(
+            "jobs:\n  x:\n    steps:\n      - run: |\n          docker run --rm -v \"$PWD:/src\" archlinux:latest bash -c x\n",
+            encoding="utf-8",
+        )
+        errors = []
+        lint_repo(root, errors, [])
+        expect("a workflow's docker run is linted", len(errors) == 1 and "r.yml:5: docker image not pinned" in errors[0])
 
     refs = {
         "refs/tags/v4.4.0": a,

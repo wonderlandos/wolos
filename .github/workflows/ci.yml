@@ -115,6 +115,7 @@ jobs:
         env:
           WOLOS_REQUIRE_RUBOCOP: "1"
         run: |
+          set -o pipefail
           bash tools/check-headers.sh
           find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lZE '^#!/(usr/)?bin/(env )?(sh|bash)' {} + | xargs -0 -r shellcheck -S error
           find files/usr/lib/wolos desktop/overlay/usr/bin -type f -exec grep -lZE '^#!/(usr/)?bin/(env )?ruby' {} + | xargs -0 -r bash tools/ruby/lint.sh

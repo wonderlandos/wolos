@@ -315,7 +315,7 @@ brackets; `cargo test` runs in the `test` job).
   a target is a review finding. (B10)
 - **Supply chain**: **CI** [lint] `cargo deny --locked check` (`deny.toml`) and `cargo audit`;
   [supply-chain] `tools/ci/pin-lint.py` checks that every GitHub Action `uses:` is pinned to a
-  commit SHA and every container image to a digest, plus a pinned `actionlint`. Every git source
+  commit SHA and every container image to a digest (`container:`, `image:`, Dockerfile `FROM`, and the image of a `docker run|create|pull` in a workflow's `run:` script: the Secure Boot key was once handed to `archlinux:latest`), plus a pinned `actionlint`. Every git source
   in a PKGBUILD has `#commit=` and a real checksum, never `SKIP` (pin lint in
   `wolos-pkgbuilds/tools/lint.sh`). Release workflows take secrets through the GitHub environment
   `release` with reviewers, never `secrets: inherit` on a workflow referenced by branch. (B11)
