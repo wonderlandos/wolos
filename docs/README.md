@@ -124,6 +124,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |
+| [modules/quicklook.md](modules/quicklook.md) | wol-quicklook: Space on a file in Files shows it (the previewer D-Bus name Files calls, the kinds it shows, its limits) | none yet (experience ADR draft) |
 | [modules/scripting.md](modules/scripting.md) | scripts in sh, bash and Ruby: `wol script check|run|on`, the clean environment, the helper gate, ssh | [0041](adr/0041-ruby-scripts.md) |
 | [modules/security.md](modules/security.md) | firewall, hardening, update check, malware check, encrypted homes, app permissions, what runs as root | [0040](adr/0040-security-defaults-on-linux.md), [0024](adr/0024-first-use-malware-check.md) |
 | [modules/shards.md](modules/shards.md) | Crystal shards: the signed curated list, `wol shard list|add|update|check`, pins by commit and `shard.lock` (libwopkg 1.1) | [0036](adr/0036-crystal-userland.md) |

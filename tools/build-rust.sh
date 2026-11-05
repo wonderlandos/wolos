@@ -27,6 +27,11 @@ for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search
   [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
   install -m 755 "$B/$b" "$DEST/usr/bin/$b"
 done
+# Quick Look (E2E-QL): the previewer Files calls for Space; D-Bus activates it (desktop/overlay/usr/share/dbus-1/services).
+for b in wol-quicklook; do
+  [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
+  install -m 755 "$B/$b" "$DEST/usr/bin/$b"
+done
 # The malware check: rule sets only here, and the signature data it ships with (ADR 0024).
 eval cargo build --release -p xguard --features yara --bin wol-xguard --locked $F
 [ -x "$B/wol-xguard" ] || { echo "build-rust.sh: binary wol-xguard not produced" >&2; exit 1; }
