@@ -13,28 +13,29 @@ use wolkit::window::native;
 /// The Wolkit node of the page.
 pub const SURFACE: u32 = 1;
 
-/// The events the page's surface node asks for.
-pub const EVENTS: u32 = bit(kind::CLICK)
+/// What the page hears of the pointer, from the surface node: a click, motion (the position on each
+/// move), leaving, and the wheel (QA-WEB-13: wolkit sends a part only the events it asked for, and
+/// this one asked for none, so the page got no pointer at all). The one input path of a web app:
+/// `crates/wolkit/src/input/pointer.rs` emits these records and [`crate::input::Mapper`] turns them
+/// into page input (the wheel as the node's running offset, so a coalesced record loses no distance).
+pub const SURFACE_EVENTS: u32 = bit(kind::CLICK)
     | bit(kind::POINTER_ENTER)
     | bit(kind::POINTER_LEAVE)
-    | bit(kind::KEY)
     | bit(kind::SCROLL)
-    | bit(kind::FOCUS)
-    | bit(kind::SURFACE_RESIZED);
+    | bit(kind::FOCUS);
+/// What the page hears of the keyboard, from the window: nothing in the page takes wolkit's focus,
+/// so a key goes to the window node.
+pub const WINDOW_EVENTS: u32 = bit(kind::KEY);
 
-/// The patch that gives the window one `surface` node filling it.
+/// The patch that gives the window one `surface` node filling it, and asks for the input above.
 pub fn surface_patch() -> Vec<u8> {
     let full = [DIM_PERCENT, 100f32.to_bits()];
     let mut p = Writer::new();
     p.create(SURFACE, Kind::Surface).insert(0, SURFACE, APPEND);
     p.set_prop(SURFACE, id::WIDTH, &full);
     p.set_prop(SURFACE, id::HEIGHT, &full);
-    // What [`crate::input::bridge`] turns into page input. A node binds no event by default, so
-    // without this Wolkit sends the host no key, click, hover, focus or size record for the page.
-    p.bind_event(SURFACE, EVENTS);
-    // The surface takes the keyboard from the start: the window is the page.
-    p.set_prop(SURFACE, id::FOCUSABLE, &[1]);
-    p.focus(SURFACE);
+    p.bind_event(SURFACE, SURFACE_EVENTS);
+    p.bind_event(0, WINDOW_EVENTS);
     p.finish(1).to_vec()
 }
 

@@ -5,7 +5,7 @@
 {
 const { t, localize, explain } = window.wolkit;
 
-const AREAS = ["sound", "games", "updates", "security", "storage", "network", "power", "display"];
+const AREAS = ["sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware"];
 const RANK = { fail: 0, warn: 1, ok: 2, skipped: 3 };
 const BADGE = { ok: "ok", warn: "warn", fail: "fail", skipped: "info" };
 
@@ -63,6 +63,8 @@ function commandBlock(c) {
   } else {
     d.append(make("p", null, t("command.check")), make("code", null, `wol doctor ${c.area}`));
   }
+  // A check that could not run says what it stopped with (the report is never only "failed").
+  if (c.error) d.append(make("p", null, t("command.error")), make("code", null, c.error));
   return d;
 }
 
@@ -185,8 +187,16 @@ function replaceCheck(c) {
   if (i >= 0) state.data.checks[i] = c;
 }
 
+// The check's header, the one control of a row that stays enabled while a fix runs.
+function headOf(id) { return document.querySelector(`.dr-check[data-id="${CSS.escape(id)}"] .dr-head`); }
+
 async function runFix(c) {
   if (state.busy.has(c.id)) return;
+  // A busy button is disabled, and a disabled control drops the keyboard to the page body: take
+  // the person's place to the row's header first, and give it back there when the fix is over
+  // (QA-WEB-25).
+  const had = document.activeElement && document.activeElement.closest && document.activeElement.closest(`.dr-check[data-id="${CSS.escape(c.id)}"]`);
+  if (had && headOf(c.id)) headOf(c.id).focus();
   state.busy.add(c.id);
   state.results.delete(c.id);
   render();
@@ -197,16 +207,31 @@ async function runFix(c) {
     const after = r && r.check && r.check.id === c.id ? r.check : null;
     if (r && r.ok) res = { ok: true, text: t("fix.done") };
     else if (r && !r.ran) res = { ok: false, text: t("fix.nothing") };
+    // A step of the fix stopped (QA-DOC-2): which one, in the controller's own sentence, and the
+    // row as it is now (the steps before it may have changed things).
+    else if (r && typeof r.message === "string" && r.message) res = { ok: false, text: [r.message, after ? after.detail : ""].filter(Boolean).join(" ") };
     else res = { ok: false, text: [t("fix.notyet"), after ? after.detail : ""].filter(Boolean).join(" ") };
+    // What to do next, in the controller's words when it gave them, else ours.
+    if (!res.ok && r && r.ran !== false) res.text += " " + (typeof r.next === "string" && r.next ? r.next : t("fix.next"));
     replaceCheck(after);
   } catch (e) {
-    res = { ok: false, text: explain(e) };
+    // wold refused or did not answer: the reason, then what to do.
+    res = { ok: false, text: [explain(e), t("fix.next")].filter(Boolean).join(" ") };
   }
   state.busy.delete(c.id);
   state.results.set(c.id, res);
   state.open.add(c.id);
   render();
+  if (had && headOf(c.id)) headOf(c.id).focus();
   announce(res.text);
+}
+
+// What the bridge said, for "Show what happened": the code, its message and its hint, or the error's own text.
+function rawOf(e) {
+  if (!e) return "";
+  if (e.empty) return "doctor.check: no checks in the answer";
+  if (e.code) return [`${e.code}:`, e.message, e.hint ? `(${e.hint})` : ""].filter(Boolean).join(" ");
+  return String(e.message || e);
 }
 
 async function load(again) {
@@ -217,13 +242,20 @@ async function load(again) {
   $("#checking").hidden = false;
   $("#error").hidden = true;
   try {
-    state.data = await wolos.call("doctor.check", {});
+    const r = await wolos.call("doctor.check", {});
+    // Anything but a report with its list is a fault, not a page with nothing on it (QA-WEB-30).
+    if (!r || !Array.isArray(r.checks)) throw new Error("no report");
+    // A report with no checks is not "everything is fine" either: nothing was looked at.
+    if (!r.checks.length) throw { empty: true };
+    state.data = r;
     state.results.clear();
     render();
     if (again) announce(t("announce.checked", { summary: summaryOf(state.data.checks) }));
   } catch (e) {
     $("#error").setAttribute("heading", t("error.title"));
-    $("#error-text").textContent = explain(e);
+    $("#error-text").textContent = e && e.empty ? t("error.empty") : explain(e);
+    $("#error-checked").textContent = t("error.checked", { area: t("area." + view()) });
+    $("#error-raw").textContent = rawOf(e);
     $("#error").hidden = false;
     $("#lists").hidden = true;
     $("#fine").hidden = true;
@@ -268,7 +300,7 @@ $("#checking").setAttribute("label", t("checking"));
 $("#again").addEventListener("click", () => load(true));
 $("#retry").addEventListener("click", () => load(true));
 $("#fine-toggle").addEventListener("click", () => { state.showFine = !state.showFine; render(); });
-$("#areas").addEventListener("select", () => render());
+// The sidebar's own "select" follows the same hash change: one listener, one render (QA-WEB-17).
 window.addEventListener("hashchange", render);
 wolos.subscribe("progress", (p) => {
   if (!p || p.method !== "doctor.fix") return;

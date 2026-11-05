@@ -129,8 +129,12 @@ pub fn serve(
                     let _ = (&stream).write_all(answer.to_line().as_bytes());
                     hold_until_closed(&stream);
                     let uid = held.uid;
+                    let gone = held.gone.clone();
                     drop(held);
                     state.holds.give(uid);
+                    if let Some(e) = gone {
+                        bus.publish(&e);
+                    }
                     return;
                 }
                 if let Some(file) = extra.file {
@@ -272,7 +276,7 @@ mod tests {
             let (srv, app) = UnixStream::pair().unwrap();
             let h = ask(
                 &app,
-                b"call {\"call\":\"system.channel\",\"channel\":\"beta\"}
+                b"call {\"call\":\"system.channel\",\"channel\":\"stable\"}
 ",
             );
             t.spawn(|| serve_me(srv, &Empty, &bus, &AllowAll, &state));
@@ -530,6 +534,34 @@ mod tests {
             assert_eq!(text, "picked");
         });
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn a_player_is_announced_gone_when_its_connection_closes() {
+        let bus = Bus::default();
+        let desktop = call("subscribe account\n", &bus);
+        let state = portal::State::default();
+        std::thread::scope(|t| {
+            let (srv, mut app) = UnixStream::pair().unwrap();
+            let h = t.spawn(|| serve_me(srv, &Empty, &bus, &AllowAll, &state));
+            shared::jobs::answer_hello(&app).unwrap();
+            app.write_all(b"call {\"call\":\"media.publish\"}\n")
+                .unwrap();
+            let mut line = String::new();
+            BufReader::new(&app).read_line(&mut line).unwrap();
+            assert_eq!(line, "{\"ok\":true}\n");
+            drop(app);
+            h.join().unwrap();
+        });
+        desktop
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(&desktop).read_line(&mut line).unwrap();
+        assert!(
+            matches!(Event::parse(&line), Some(Event::MediaGone { .. })),
+            "{line}"
+        );
     }
 
     #[test]

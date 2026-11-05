@@ -45,9 +45,14 @@ jobs:
         # The whole workspace, every target (includes crates/shared/tests/unsafe_ratchet.rs and the
         # identity/exhaustion regression tests). WOLOS_REQUIRE_RUBOCOP: the Ruby rules (RB-019,
         # RB-020, RB-032) fail instead of skipping when ruby or rubocop is missing.
+        # WOL_KIT_REQUIRE_DISPLAY: crates/shell/tests/kit_components.rs (the Design System widget
+        # lane) fails instead of printing "skipped" when its private Broadway display does not start.
+        # This job has one: the gtk4 package ships gtk4-broadwayd, and tests/golden.rs already
+        # requires it here. There is no screen, only Broadway; the lane draws with Cairo.
         working-directory: wolos
         env:
           WOLOS_REQUIRE_RUBOCOP: "1"
+          WOL_KIT_REQUIRE_DISPLAY: "1"
         run: cargo test --workspace --locked
       - name: Fuzz regressions (fuzz/regressions/<target>/ replayed on stable, no fuzzing)
         working-directory: wolos
@@ -121,6 +126,10 @@ jobs:
         run: python3 -I design/tools/icons/overlay.py --check
       - name: "Colour icons: the SVGs are what the vector generator draws now (build.py: checks, renders, no hand edits)"
         run: python3 -I design/tools/icons/build.py --check
+      - name: "Icon entry tool: the 131 UI glyphs, the 24 px set, the themes and the full-colour set are the bytes the generators draw (icons.py --check)"
+        run: python3 -I design/tools/icons.py --check
+      - name: "Icon generator tests (test_generator.py)"
+        run: python3 -I design/tools/icons/test_generator.py
       - name: "Colour icons through Qt: QtSvg (the renderer Qt apps load the theme with) draws every full-colour icon within RMSE 0.03 of librsvg at 48 and 128 px (qtcheck)"
         # A skip (exit 77: a tool missing) fails the step: here the tools are installed.
         run: |
@@ -128,6 +137,12 @@ jobs:
           bash design/tools/icons/qtcheck/check.sh
       - name: "Design tokens: colors.{json,css,sh} match tokens.py, the WCAG floors hold, no borrowed stock grey anywhere in the tree"
         run: python3 -I design/tools/tokens.py --check
+      - name: "Design tokens, the scale half: tokens.py validates and writes scale.{css,sh} from type/space/elevation/motion/density.json; its tests catch each rule's break"
+        run: python3 -I design/tools/test_tokens.py
+      - name: "Design components: catalog.json is what design/components/*.toml say, and the schema holds (the Kit widget tests read the catalog)"
+        run: |
+          python3 -I design/tools/components.py --check
+          python3 -I design/tools/test_components.py
 
   # Supply chain (audit A3/A4/B11): every `uses:` pinned to a commit SHA, every image to a digest,
   # in this repo and the two it checks out; actionlint on all their workflows.
@@ -259,7 +274,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index, wolkit_patch, wolkit_wsb, wolkit_wolcss, wolkit_image, webpolicy]
+        target: [ipc_decode, events, job_request, approval, hypr_ipc, wopkg_parsers, plugins_toml, lua_loader, package_call, core_parsers, wolplug_verify, plugin_index, wolkit_patch, wolkit_wsb, wolkit_wolcss, wolkit_image, wolkit_text, webpolicy, atlas_wire]
     steps:
       - name: Toolchain (nightly pinned), cargo-fuzz, the libraries the shell links
         run: |

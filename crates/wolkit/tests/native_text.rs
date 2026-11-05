@@ -41,7 +41,7 @@ impl Win {
             p.focus(1);
         });
         assert_eq!(
-            edit::focus_changed(&w.core, &mut w.st),
+            edit::focus_changed(&mut w.core, &mut w.st),
             Request::Ime(w.st.field.editor.ime_enabled())
         );
         w

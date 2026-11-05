@@ -1,10 +1,23 @@
 {
+  "AdditionalDnsQueryTypesEnabled": true,
   "BackgroundModeEnabled": false,
+  "BrowserNetworkTimeQueriesEnabled": false,
   "BrowserSignin": 0,
+  "BuiltInDnsClientEnabled": true,
   "DefaultBrowserSettingEnabled": false,
+  "DnsOverHttpsMode": "off",
+  "EnableMediaRouter": false,
+  "EncryptedClientHelloEnabled": true,
   "FeedbackSurveysEnabled": false,
+  "GenAiDefaultSettings": 2,
+  "HttpsUpgradesEnabled": true,
   "MetricsReportingEnabled": false,
+  "PrivacySandboxAdMeasurementEnabled": false,
+  "PrivacySandboxAdTopicsEnabled": false,
+  "PrivacySandboxPromptEnabled": false,
+  "PrivacySandboxSiteEnabledAdsEnabled": false,
   "PromotionalTabsEnabled": false,
+  "SpellCheckServiceEnabled": false,
   "SyncDisabled": true,
   "UrlKeyedAnonymizedDataCollectionEnabled": false
 }

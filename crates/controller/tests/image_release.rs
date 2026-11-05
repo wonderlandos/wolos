@@ -464,3 +464,148 @@ fn etc_overlay_line_keeps_index_and_metacopy_off() {
         "ADR 0044"
     );
 }
+
+/// What a released 0.12.0 computer accepts as a release manifest, frozen here (the reader of tag
+/// v0.12.0, `crates/core/src/update/check.rs` `Manifest::parse` + `verify`): a JSON object with
+/// the strings `version` (not empty), `snapshot` (`YYYY/MM/DD`), `wolos_repo`, `kernel`, `image`
+/// and `sha256` (64 hex digits); `cachy` may be missing; any other field is ignored (no
+/// `deny_unknown_fields`). Its `.sig` is the raw 64-byte Ed25519 signature of the exact bytes by
+/// one of the keys it shipped in /usr/share/wolos/keys (wolos-2026.pub, wolos-2026b.pub).
+fn v0120_accepts(text: &str) -> Result<(), String> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    let field = |k: &str| -> Result<&str, String> {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .ok_or_else(|| format!("no string field {k:?}"))
+    };
+    for k in [
+        "version",
+        "snapshot",
+        "wolos_repo",
+        "kernel",
+        "image",
+        "sha256",
+    ] {
+        field(k)?;
+    }
+    if let Some(c) = v.get("cachy") {
+        c.as_str().ok_or("cachy is not a string")?;
+    }
+    if field("version")?.is_empty() {
+        return Err("empty version".into());
+    }
+    let snap = field("snapshot")?.as_bytes();
+    let date = snap.len() == 10
+        && snap[4] == b'/'
+        && snap[7] == b'/'
+        && snap
+            .iter()
+            .enumerate()
+            .all(|(i, b)| i == 4 || i == 7 || b.is_ascii_digit());
+    if !date {
+        return Err(format!(
+            "snapshot {:?} is not YYYY/MM/DD",
+            field("snapshot")?
+        ));
+    }
+    let sum = field("sha256")?;
+    if sum.len() != 64 || !sum.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("sha256 is not 64 hex digits".into());
+    }
+    Ok(())
+}
+
+/// The 0.12.0 client's keys (tag v0.12.0, desktop/overlay/usr/share/wolos/keys).
+const V0120_KEYS: [&str; 2] = [
+    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfFPRaz+BR0I7bauiiNv3zUy/EPvjD564/L86ARoIXB8=\n-----END PUBLIC KEY-----\n",
+    "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA+KnWlFbObFNEFJNBxn4KqhweLzdJJL/swRQxGZIgle4=\n-----END PUBLIC KEY-----\n",
+];
+
+/// release.json of v0.12.1 as served on 2026-11-04 by all three places update-check reads (the
+/// same bytes at cdn.wolos.org/latest/, wolos.squareweb.app/latest/ and the latest GitHub
+/// release of wolos-packages), and the hex of its release.json.sig.
+const PUBLISHED_0121: &str = concat!(
+    r#"{"version":"0.12.1","snapshot":"2026/11/02","wolos_repo":"20261104-5703164","#,
+    r#""kernel":"1:1.0+7.3.1-1","#,
+    r#""image":"https://github.com/wonderlandos/wolos-packages/releases/download/v0.12.1/wolos-2026.11.04-x86_64.iso","#,
+    r#""sha256":"265f628e1fd05ff55748c1f9bfc3e62fa959e169012a458e3e6663a2b5a191e9","size":2133927936}"#,
+    "\n"
+);
+const PUBLISHED_0121_SIG: &str = concat!(
+    "c533ff56266d472f055ce5220dfca972e5e02c6b02a2ae7d5f4dbbc4d492ed91",
+    "da3610de9af0d2cebe6065afe0848be72eb52c38227987b0bedf3d18b033f605"
+);
+
+/// QA-UPG-1 (server side; lead, 0.13: one channel, stable): the release metadata the tooling
+/// publishes is found and accepted by the OLD 0.12.0 check too. 0.12.0 reads only
+/// `https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json` (+ `.sig`);
+/// the manifest must keep the six fields it requires, stay signed by a key it ships, and the
+/// image must keep trusting those keys (a key rotation that drops them cuts 0.12.0 off). The
+/// 0.12.0 daily check itself can only get there once its script no longer stops at
+/// `checkupdates` (update_scripts.rs check_runs_without_checkupdates_or_fakeroot): that needs a
+/// newer wolos-system in the [wolos] repo 0.12.0 reads (docs/modules/security.md, Updates).
+#[test]
+fn the_0120_client_reads_the_published_release() {
+    // 1. The address: the 0.12.0 URL is the last place the current check reads, and the release
+    //    tooling publishes the stable release there as the latest (not a pre-release).
+    let check = read("files/usr/lib/wolos/update-check");
+    assert!(check.lines().any(|l| l
+        == "FALLBACK=${WOLOS_RELEASE_FALLBACK-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}"),
+        "update-check no longer reads the address 0.12.0 reads");
+    // 2. What release-manifest.sh writes (the manifest the publish step only re-points: image,
+    //    sha256, size, an optional mirror) is accepted by the 0.12.0 reader and by today's.
+    let d = scratch("v0120");
+    let iso = d.join("wolos-2026.11.20-x86_64.iso");
+    fs::write(&iso, "iso bytes").unwrap();
+    let o = Command::new("bash")
+        .arg(repo("release/release-manifest.sh"))
+        .args([
+            iso.to_str().unwrap(),
+            "2026-11-20",
+            "20261120-abcdef0",
+            "https://cdn.wolos.org/v0.13.0",
+            "0.13.0",
+            "1:1.0+7.3.1-1",
+        ])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let written = String::from_utf8(o.stdout).unwrap();
+    let mut m: serde_json::Value = serde_json::from_str(&written).unwrap();
+    m["mirror"] =
+        "https://github.com/wonderlandos/wolos-packages/releases/download/v0.13.0/x.iso".into();
+    let published = serde_json::to_string(&m).unwrap();
+    for (what, text) in [
+        ("release-manifest.sh", written.as_str()),
+        ("as published", &published),
+    ] {
+        v0120_accepts(text)
+            .unwrap_or_else(|e| panic!("0.12.0 refuses the manifest {what}: {e}\n{text}"));
+        assert!(
+            wol_core::update::check::Manifest::parse(text).is_some(),
+            "today's reader refuses the manifest {what}"
+        );
+    }
+    // 3. The live v0.12.1 manifest verifies with a key 0.12.0 ships, and those keys are still in
+    //    the image (the signer must keep using one of them).
+    let old: Vec<[u8; 32]> = V0120_KEYS
+        .iter()
+        .map(|p| wol_core::package::public_key(p).unwrap())
+        .collect();
+    v0120_accepts(PUBLISHED_0121).unwrap();
+    let sig = wol_core::update::check::unhex(PUBLISHED_0121_SIG).unwrap();
+    assert!(
+        matches!(
+            wol_core::package::verify_index(PUBLISHED_0121.as_bytes(), Some(&sig), &old),
+            Ok(wol_core::package::Trust::Signed(_))
+        ),
+        "the published release.json is not signed by a key 0.12.0 trusts"
+    );
+    let now = wol_core::package::read_keys(&repo("desktop/overlay/usr/share/wolos/keys"));
+    for k in &old {
+        assert!(
+            now.contains(k),
+            "the image dropped a key 0.12.0 verifies releases with"
+        );
+    }
+}

@@ -14,7 +14,13 @@ if [ -r "$cfg/wolos/web-runtime" ]; then
 fi
 case $profile in balanced | light | full) ;; *) profile=balanced ;; esac
 rt="$share/webruntime/$profile-$gpu"
-for f in electron-flags.conf code-flags.conf helium-flags.conf; do
+# The previous browser's flags file: our link to it points at a file that is gone. Only our own
+# link is removed; a file of your own stays.
+old="$cfg/helium-flags.conf"
+if [ -L "$old" ]; then
+	case $(readlink "$old") in "$share"/*) rm -f "$old" ;; esac
+fi
+for f in electron-flags.conf code-flags.conf atlas-flags.conf; do
 	[ -e "$rt/$f" ] || continue
 	if [ -L "$cfg/$f" ]; then
 		case $(readlink "$cfg/$f") in "$share"/*) ;; *) continue ;; esac

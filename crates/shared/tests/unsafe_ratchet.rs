@@ -56,6 +56,11 @@ use std::path::{Path, PathBuf};
 /// process with Landlock and seccomp, which std wraps none of: one private `sys` function holds
 /// the one `libc::syscall` call (a ruleset, a rule, `prctl`, the filter), every other step is safe
 /// Rust (`O_PATH` through `OpenOptionsExt`). Lowered when the engine's embedding API settles.
+/// `webengine` 135 -> 140 (WE-WEB, 2026-11-04, QA-WEB-13 sibling): symbol version WWE_1.3 (1.2 is the scheme hook of FEDERATE), the one export
+/// `wwe_view_present` that shows the frame the engine painted (`#[unsafe(no_mangle)] pub unsafe extern`
+/// and the block reading its pointer in `src/engine/lib.rs`, +3), its function-pointer type in
+/// `src/ffi.rs` (+1) and the call in `WebView::spin` (+1, SAFETY line); covered by
+/// `tests/shim_loader_13.rs` against a C stand-in library.
 /// `webengine` 118 -> 135 (WEBHOST, 2026-11-04, ADR 0048): the host channel, symbol version WWE_1.1.
 /// `src/engine/lib.rs` (+8): the `wwe_message_fn` type, the two exports `wwe_engine_set_host_channel` and
 /// `wwe_view_post_message` (each `#[unsafe(no_mangle)] pub unsafe extern`), one block reading their
@@ -98,28 +103,66 @@ use std::path::{Path, PathBuf};
 /// the terminal) and `_exit` in that handler, each with a SAFETY line; no new dependency.
 /// Merged (rel/0.12.1 into wave3, STEP-0, 2026-11-04): realtime is the 0.12.1 audit8 refactor (32)
 /// plus DT-2 (+10); xguard and controller are the 0.12.1 rows; the others are wave3 rows.
+/// core 13 -> 14 (MEMSAVER-X, 2026-11-04): `memsaver/budget.rs` `evict`, one `posix_fadvise(DONTNEED)`
+/// on an open descriptor so a budgeted app starts with its own files out of the page cache; std has
+/// no fadvise, no new dependency was wanted for one call.
+/// controller 56 -> 58 (JS-RUNTIME-X, ADR 0061, `src/bin/wolos-mm.rs`): `prctl(PR_SET_MEMORY_MERGE)`
+/// before an exec and `pidfd_open` + `process_madvise` for the page-out; std wraps none of them.
+/// wol-abi 482 -> 513 (libwol 1.16, E2E-LIB-1): eleven C exports (`wol_media_publish`,
+/// `_set_handler`, `_set_track`, `_set_art`, `_set_state`, `_set_capabilities`, `_retain`,
+/// `_release`, `wol_recent_add`, `wol_color_pick`, `wol_print_file`), each `#[unsafe(no_mangle)]
+/// pub unsafe extern`, plus the checked out-pointer writes (`wol_media_publish`, `wol_color_pick`,
+/// `wol_print_file`), the handle borrows (`string::borrow` in `media::change`/`set_handler`),
+/// `retain`/`release` and the one callback call (`media::pressed`), each with a SAFETY line.
+/// INT-2 (the 0.13 integration, reviewed one site at a time): controller 58 -> 61 (tests only:
+/// `tests/approval_socket.rs` one `poll`, `tests/patience_file.rs` one `set_var` and one `mkfifo`);
+/// realtime 42 -> 49 (the seven `#[unsafe(no_mangle)]` of the snap exports `wol_snap_*` for the
+/// wol-hypr plugin, tiling: their out-pointers are `Option<&mut T>`, so no `unsafe` block); shared
+/// 17 -> 19 (the tests of `Patience::read_owned`: `getuid`, `mkfifo`); shell 9 -> 20 (tests that
+/// set `XDG_*`/`GSETTINGS_BACKEND` before any thread starts, `set_var` is unsafe in edition 2024:
+/// dock_keep, gate_transition, lock_submit, row_names, timeouts, larger_text and the Settings
+/// golden cases); wopkg 103 -> 104 (`context.rs`: `geteuid`, no std call, SAFETY line); wolkeyring
+/// 0 -> 1 (ADR 0054, `src/bin/wol-keyringd.rs`: `prctl(PR_SET_DUMPABLE, 0)` and `setrlimit(RLIMIT_CORE,
+/// 0)` so no core file can hold the keys, SAFETY line; the library has `#![forbid(unsafe_code)]`).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
-    ("wol-abi", 482),
+    ("wol-abi", 513),
     ("wolkit", 314),
-    ("wopkg", 103),
-    ("realtime", 42),
+    ("wopkg", 104),
+    ("realtime", 49),
     ("xguard", 65),
-    ("controller", 56),
+    ("controller", 61),
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
-    ("core", 13),
+    ("core", 14),
     ("proxy", 3),
-    ("shared", 17),
+    ("shared", 19),
     // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY
     // before gtk::init for the Broadway tests (Rust 2024), which replaced three copies.
-    ("shell", 9),
+    ("shell", 20),
     ("wol-lua", 3),
     ("xguard-clam", 13),
-    ("webengine", 173),
+    // +5 webengine for the host's present call (we-web), on top of federate's 173.
+    ("webengine", 178),
     ("federate", 0),
     ("wolcrypt", 0),
+    // ADR 0054: the library forbids unsafe code; the one site is the daemon binary (see the history).
+    ("wolkeyring", 1),
+    // Search by meaning: pread, no mmap, so no unsafe (docs/modules/search.md).
+    ("wolsem", 0),
+    // ADR 0053 (2026-11-04): Atlas Tor groups; std and safe APIs only, `forbid(unsafe_code)`.
+    ("wol-tor", 0),
+    // ADR 0060: the render targets and the browser module have no `unsafe` (the wasm-bindgen glue
+    // is macro-expanded, not in the source).
+    ("wolkit-render", 0),
+    ("wolkit-web", 0),
+    // `atlas` (ADR 0043, ATLAS-BRIDGE, 2026-11-04): 1, `UnixListener::from_raw_fd(3)` in
+    // `src/activation.rs` for the socket systemd passes (LISTEN_PID and LISTEN_FDS checked, as
+    // xguard-clam does); std has no safe way to adopt an inherited descriptor. Everything else in the
+    // crate is safe Rust (`#![deny(unsafe_code)]`).
+    ("atlas", 1),
+    // ADR 0052 (Atlas): the Federate helper links the verifier and nothing else; no unsafe.
     ("atlas-fed", 0),
 ];
 

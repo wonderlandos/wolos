@@ -153,6 +153,11 @@ impl Node {
     }
 }
 
+/// WirePlumber's stand-in sink when no card gives one (`auto_null`, "Dummy Output").
+pub fn is_placeholder(node_name: &str) -> bool {
+    node_name == "auto_null" || node_name.starts_with("auto_null.")
+}
+
 /// The graph as the model knows it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Model {
@@ -169,6 +174,11 @@ impl Model {
     /// Apply one event; true when something the UI shows changed.
     pub fn apply(&mut self, ev: &Event) -> bool {
         match ev {
+            // WirePlumber's "Dummy Output" with no sound card: not a place sound goes, so it is
+            // no output at all (QA-DEV-6 listed it with a tick, 100 % and Allow louder).
+            Event::Node(info) if is_placeholder(&info.node_name) => {
+                self.nodes.remove(&info.id).is_some()
+            }
             Event::Node(info) => {
                 let n = self.nodes.entry(info.id).or_default();
                 let changed = n.info != *info;

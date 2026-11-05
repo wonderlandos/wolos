@@ -21,6 +21,7 @@ mod channel;
 mod confine;
 mod frame;
 mod scheme;
+mod tls;
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, c_char, c_void};
@@ -483,9 +484,14 @@ impl WebViewDelegate for Delegate {
             // A web page may not read Federate names (probe, fingerprint): only a frame, or a
             // request of a `fed://` page, is answered.
             let referrer = load.request().referrer_url.as_ref().map(Url::to_string);
+            // The referrer alone loses a secure Federate page asking for its own file by the
+            // http spelling (no referrer on secure to insecure): the view's document counts too.
+            let document = webview.url().map(|u| u.as_str().to_owned());
             let asked_by_fed = scheme::fed_request_allowed(
                 kind,
-                scheme::referrer_is_fed(referrer.as_deref(), |r| self.scheme.map(r)),
+                scheme::requester_is_fed(referrer.as_deref(), document.as_deref(), |r| {
+                    self.scheme.map(r)
+                }),
             );
             match to.filter(|to| asked_by_fed && self.host.allows(to, kind)) {
                 Some(to) => {
@@ -778,6 +784,9 @@ pub unsafe extern "C" fn wwe_engine_new(
             clip_set: config.clip_set,
             ctx: config.ctx,
         };
+        // Before the engine reads the process's default TLS provider (its connector falls back
+        // to the classical-first default when none is installed; ADR 0055).
+        install_tls_provider();
         // WWE_1.2: `fed:` is the host's (ADR 0052); until wwe_engine_set_scheme its loads say so.
         let scheme = Arc::new(scheme::Slot::default());
         let mut protocols = ProtocolRegistry::default();
@@ -813,6 +822,21 @@ pub unsafe extern "C" fn wwe_engine_new(
     }
     put_err(err, errlen, &failed);
     std::ptr::null_mut()
+}
+
+/// The process's rustls provider (the engine's aws-lc-rs one) with the hybrid post-quantum group
+/// X25519MLKEM768 first and X25519 second ([`tls::order`]). Installed once per process; a second
+/// engine finds it in place. Logged when the provider has no hybrid group.
+fn install_tls_provider() {
+    let mut p = rustls::crypto::aws_lc_rs::default_provider();
+    p.kx_groups = tls::order(p.kx_groups, |g| u16::from(g.name()));
+    if p.kx_groups.first().map(|g| u16::from(g.name())) != Some(tls::X25519MLKEM768) {
+        log::warn!(
+            "wolwebengine: the TLS provider has no X25519MLKEM768; connections stay classical"
+        );
+    }
+    // Err: a provider is already installed (an earlier engine in this process installed this one).
+    let _ = p.install_default();
 }
 
 /// Shuts the engine down (it ends its content processes) and frees it. The engine waits for its
@@ -991,6 +1015,20 @@ pub unsafe extern "C" fn wwe_view_free(view: *mut View) {
             DEFERRED_N.store(0, Ordering::Relaxed);
             drop(view);
         });
+    }
+}
+
+/// Shows the frame painted last (`wwe_view_present`, WWE_1.3): the delegate paints into the
+/// rendering context when a frame is ready, and a window's surface shows what the context
+/// presents.
+///
+/// # Safety
+/// `view` is live.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wwe_view_present(view: *mut View) {
+    // SAFETY: contract above.
+    if let Some(v) = unsafe { view.as_ref() } {
+        guarded("present", || v.context.present());
     }
 }
 

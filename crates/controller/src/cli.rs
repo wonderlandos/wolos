@@ -130,6 +130,13 @@ const ONE_TOGGLE: Arg = Arg {
     optional: true,
     rest: false,
 };
+/// `wol audio profile`: the word is optional (none reads the profile, like `status`).
+const AUDIO_PROFILE: Arg = Arg {
+    name: "profile",
+    choices: &["default", "low-latency", "status"],
+    optional: true,
+    rest: false,
+};
 const ON_OFF: Arg = Arg {
     name: "state",
     choices: &["on", "off"],
@@ -185,7 +192,7 @@ pub const TREE: &[Cmd] = &[
         &["script", "run"],
         "script.run",
         &[arg("file"), rest("args")],
-        "Run a sh, bash or ruby script as you, clean environment, its wol changes through the helper gate",
+        "Run a sh, bash, ruby or rsh script as you, clean environment, its wol changes through the helper gate",
     ),
     cmd(
         &["script", "on"],
@@ -295,6 +302,12 @@ pub const TREE: &[Cmd] = &[
         "base.verify",
         &[],
         "Base files that changed or went missing (wolos-base manifest)",
+    ),
+    cmd(
+        &["update", "channel"],
+        "update.channel",
+        &[],
+        "The update channel this computer follows (stable)",
     ),
     cmd(
         &["update", "status"],
@@ -427,6 +440,12 @@ pub const TREE: &[Cmd] = &[
         "Developer mode: make the system writable again and stop checking it (root)",
     ),
     cmd(
+        &["layers", "list"],
+        "layers.list",
+        &[],
+        "Live layers: the packages installed since the last update, their size and date",
+    ),
+    cmd(
         &["layers", "fold"],
         "layers.fold",
         &[opt("a"), opt("b"), opt("c")],
@@ -499,6 +518,12 @@ pub const TREE: &[Cmd] = &[
         "Installer: language, keyboard and time zone of the new system (root)",
     ),
     cmd(
+        &["install", "locales"],
+        "install.locales",
+        &[opt("root")],
+        "Installer: generate every language of the new system, no plan needed (root)",
+    ),
+    cmd(
         &["install", "account"],
         "install.account",
         &[opt("plan"), opt("root"), opt("passfile")],
@@ -514,7 +539,7 @@ pub const TREE: &[Cmd] = &[
         &["install", "mounts"],
         "install.mounts",
         &[opt("disk")],
-        "Installer: what of a disk is in use, as lines: mount <path> (deepest first), swap <device>",
+        "Installer: what holds a disk, as lines in release order: detach <loop>, mount <path> (deepest first), swap <device>, close <volume> (topmost first)",
     ),
     cmd(
         &["install", "hostname"],
@@ -546,6 +571,17 @@ pub const TREE: &[Cmd] = &[
         &[],
         "System kernel package for this CPU",
     ),
+    // The keyring (ADR 0054): the person's own secrets, so the verbs stay out of the helper
+    // catalogue. Everything after the verb goes to wol-keyring as typed; a secret or a password is
+    // read from the terminal or stdin there, never from an argument.
+    Cmd {
+        path: &["keyring"],
+        action: "keyring",
+        args: &[opt("verb"), rest("args")],
+        flags: &["passphrase"],
+        help: "Keyring: status init id list set get delete export import move audit acl enrol compact (no verb: usage)",
+        hidden: false,
+    },
     cmd(
         &["gpu", "env"],
         "gpu.env",
@@ -679,11 +715,11 @@ pub const TREE: &[Cmd] = &[
         "doctor.check",
         &[Arg {
             name: "area",
-            choices: crate::doctor::AREAS,
+            choices: crate::doctor::CHOICES,
             optional: true,
             rest: false,
         }],
-        "Check sound, games, updates, security, storage, network, power and displays, with the fix",
+        "Check sound, games, updates, security, storage, network, power, displays and hardware, with the fix (tls: what each TLS stack negotiates, only when asked)",
     ),
     cmd(
         &["doctor", "fix"],
@@ -882,6 +918,12 @@ pub const TREE: &[Cmd] = &[
         "Turn a plugin on and grant the permissions it declares",
     ),
     cmd(
+        &["plugin", "allow-host"],
+        "plugin.allow-host",
+        &[arg("id"), opt("host")],
+        "Let a turned-on plugin read data from one web site (a host name; none: list the sites it may read)",
+    ),
+    cmd(
         &["plugin", "disable"],
         "plugin.disable",
         &[arg("id")],
@@ -964,6 +1006,9 @@ pub const TREE: &[Cmd] = &[
         &[arg("percent")],
         "Set the volume, 0-100",
     ),
+    // ADR 0038 names `wol volume`: the volume as the keys and the OSD see it (`wol volume`), or set it
+    // (`wol volume 40`). The same action as `wol audio volume`; without a percent it reads.
+    alias(&["volume"], "audio.volume", &[opt("percent")]),
     cmd(&["audio", "mute"], "audio.mute", &[], "Mute the sound"),
     cmd(
         &["audio", "unmute"],
@@ -983,6 +1028,12 @@ pub const TREE: &[Cmd] = &[
         "audio.reset",
         &[],
         "Forget stored sound defaults and volumes, drop Pro Audio overrides, restart PipeWire (dry run; --yes does it)",
+    ),
+    cmd(
+        &["audio", "profile"],
+        "audio.profile",
+        &[AUDIO_PROFILE],
+        "Buffer profile: low-latency (128 frames, 2.7 ms), default (automatic), status",
     ),
     cmd(
         &["audio", "appmix"],
@@ -1059,6 +1110,100 @@ pub const TREE: &[Cmd] = &[
         "wifi.hotspot.off",
         &[],
         "Stop the Wi-Fi hotspot",
+    ),
+    cmd(
+        &["network", "ip"],
+        "network.ip",
+        &[
+            arg("interface"),
+            Arg {
+                name: "mode",
+                choices: &["auto", "manual"],
+                optional: true,
+                rest: false,
+            },
+            opt("address"),
+            opt("router"),
+            rest("dns"),
+        ],
+        "A link's IPv4 address: show it, `auto` (DHCP) or `manual <address/prefix> [router] [dns…]` (undone after 15 s if the link loses the network)",
+    ),
+    cmd(&["vpn"], "vpn.list", &[], "VPN connections"),
+    cmd(
+        &["vpn", "import"],
+        "vpn.import",
+        &[arg("file")],
+        "Add a VPN from a WireGuard .conf or OpenVPN .ovpn file (its key goes to the login keyring)",
+    ),
+    cmd(
+        &["vpn", "connect"],
+        "vpn.connect",
+        &[arg("name")],
+        "Connect a VPN; a password it asks for on stdin",
+    ),
+    cmd(
+        &["vpn", "disconnect"],
+        "vpn.disconnect",
+        &[arg("name")],
+        "Disconnect a VPN (it stays saved)",
+    ),
+    cmd(
+        &["vpn", "forget"],
+        "vpn.forget",
+        &[arg("name")],
+        "Delete a VPN and its saved secrets",
+    ),
+    cmd(&["proxy"], "proxy.get", &[], "The system proxy"),
+    cmd(
+        &["proxy", "off"],
+        "proxy.off",
+        &[],
+        "No proxy (administrator)",
+    ),
+    cmd(
+        &["proxy", "auto"],
+        "proxy.auto",
+        &[arg("url"), rest("options")],
+        "Proxy from a PAC file: <url> [no-proxy=a,b] (administrator)",
+    ),
+    cmd(
+        &["proxy", "manual"],
+        "proxy.manual",
+        &[rest("options")],
+        "Fixed proxy servers: http=host:port https=host:port socks=host:port no-proxy=a,b (administrator)",
+    ),
+    cmd(
+        &["dns"],
+        "dns.get",
+        &[],
+        "DNS over TLS and the computer's own DNS servers",
+    ),
+    cmd(
+        &["dns", "tls"],
+        "dns.tls",
+        &[
+            choice("mode", &["off", "opportunistic", "strict"]),
+            rest("servers"),
+        ],
+        "DNS over TLS: off, opportunistic or strict, with servers like 9.9.9.9#dns.quad9.net (administrator)",
+    ),
+    cmd(
+        &["airplane"],
+        "airplane.get",
+        &[],
+        "Airplane mode and the radios",
+    ),
+    cmd(
+        &["airplane", "on"],
+        "airplane.on",
+        &[],
+        "Airplane mode: Wi-Fi, Bluetooth and mobile radios off",
+    ),
+    cmd(
+        &["airplane", "off"],
+        "airplane.off",
+        &[],
+        "Airplane mode off: the radios that were on come back",
     ),
     cmd(&["bluetooth"], "bluetooth.get", &[], "Bluetooth state"),
     cmd(
@@ -1155,14 +1300,14 @@ pub const TREE: &[Cmd] = &[
         &["undo"],
         "undo",
         &[opt("id")],
-        "Undo the last change, or change <id>",
+        "Undo the last change (asks first at a terminal; --yes skips), or change <id>",
     ),
     alias(&["restore"], "restore.list", &[]),
     cmd(
         &["restore", "list"],
         "restore.list",
         &[],
-        "Restore points (the system copies you can start from)",
+        "Restore points (the system copies you can start from); JSON: name, active, next_boot, release, tries_left, rollback",
     ),
     cmd(
         &["restore", "activate"],
@@ -1368,6 +1513,11 @@ pub enum ParseError {
     },
     Extra(String),
     BadFlag(String),
+    /// A group word alone (`wol layers`): its commands.
+    Group {
+        word: String,
+        subs: String,
+    },
 }
 
 impl std::fmt::Display for ParseError {
@@ -1393,7 +1543,26 @@ impl std::fmt::Display for ParseError {
             ),
             Self::Extra(w) => write!(f, "unexpected argument '{w}'"),
             Self::BadFlag(x) => write!(f, "unknown flag --{x}"),
+            Self::Group { word, subs } => write!(f, "usage: wol {word} {subs}"),
         }
+    }
+}
+
+/// QA-PLUG-47: where a parse error points: `wol help <the longest command the words start>`
+/// (`wol plugin check` with no plugin says `Try 'wol help plugin check'.`), else `wol help`.
+pub fn help_hint<S: AsRef<str>>(argv: &[S]) -> String {
+    let words: Vec<&str> = argv
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|a| !a.starts_with("--"))
+        .collect();
+    let known = (1..=words.len()).rev().find(|&n| {
+        TREE.iter()
+            .any(|c| c.path.len() >= n && c.path[..n] == words[..n])
+    });
+    match known {
+        Some(n) => format!("Try 'wol help {}'.", words[..n].join(" ")),
+        None => "Try 'wol help'.".to_owned(),
     }
 }
 
@@ -1414,9 +1583,15 @@ pub fn parse<S: AsRef<str>>(argv: &[S]) -> Result<Invocation, ParseError> {
         }
     }
     if words.is_empty() {
+        // `wol --version` is the version, not the whole help (QA-STORE-76).
+        let action = if flags.iter().any(|f| f == "version") {
+            "version"
+        } else {
+            "help"
+        };
         return Ok(Invocation {
             path: vec![],
-            action: "help",
+            action,
             args: vec![],
             flags,
         });
@@ -1425,7 +1600,36 @@ pub fn parse<S: AsRef<str>>(argv: &[S]) -> Result<Invocation, ParseError> {
         .iter()
         .filter(|c| c.path.len() <= words.len() && c.path.iter().zip(&words).all(|(p, w)| p == w))
         .max_by_key(|c| c.path.len());
+    // A group alone (`wol layers`, `wol boot`): its commands, as `wol help layers` lists them.
+    // It said "unknown command 'layers'; did you mean 'layers'?" (QA-PWR-6).
+    if best.is_none()
+        && TREE.iter().any(|c| {
+            !c.hidden
+                && c.path.len() > words.len()
+                && c.path.iter().zip(&words).all(|(p, w)| p == w)
+        })
+    {
+        return Ok(Invocation {
+            path: vec!["help".into()],
+            action: "help",
+            args: words.iter().map(|w| ("command", w.to_string())).collect(),
+            flags,
+        });
+    }
     let Some(c) = best else {
+        // A group with no command of its own (`wol layers`): name its commands, never "did you
+        // mean 'layers'?" (QA-STORE-76).
+        let subs: Vec<&str> = TREE
+            .iter()
+            .filter(|c| !c.hidden && c.path.len() > 1 && c.path[0] == words[0])
+            .map(|c| c.path[1])
+            .collect();
+        if !subs.is_empty() && words.len() == 1 {
+            return Err(ParseError::Group {
+                word: words[0].into(),
+                subs: subs.join("|"),
+            });
+        }
         let roots: Vec<&str> = TREE
             .iter()
             .filter(|c| !c.hidden)
@@ -1526,29 +1730,50 @@ fn distance(a: &str, b: &str) -> usize {
 }
 
 /// Help text for the whole tree or one command path.
+/// Longest choice list a usage line spells out (`on|off`); a longer one is named (`<panel>`)
+/// and `wol help <command>` lists it. The panel list made lines of 270 characters that broke
+/// the table in an 80 or 120 column terminal (QA-PWR-15).
+pub const USAGE_CHOICES_MAX: usize = 24;
+
+/// `c`'s usage (`theme set <id>`); `full` spells out every choice list.
+pub fn usage_line(c: &Cmd, full: bool) -> String {
+    let mut usage = c.path.join(" ");
+    for a in c.args {
+        let all = a.choices.join("|");
+        let n = if a.choices.is_empty() || (!full && all.len() > USAGE_CHOICES_MAX) {
+            a.name.to_string()
+        } else {
+            all
+        };
+        usage.push_str(&match (a.optional, a.rest) {
+            (_, true) => format!(" [{n}...]"),
+            (true, _) => format!(" [{n}]"),
+            _ => format!(" <{n}>"),
+        });
+    }
+    for f in c.flags {
+        usage.push_str(&format!(" [--{f}]"));
+    }
+    usage
+}
+
 pub fn help(prefix: &[String]) -> String {
     let mut out = String::from("usage: wol <command> [args] [--json] [--yes]\n\n");
-    for c in TREE
+    let shown: Vec<&Cmd> = TREE
         .iter()
         .filter(|c| !c.hidden && c.path.iter().zip(prefix).all(|(p, w)| p == w))
-    {
-        let mut usage = c.path.join(" ");
-        for a in c.args {
-            let n = if a.choices.is_empty() {
-                a.name.to_string()
-            } else {
-                a.choices.join("|")
-            };
-            usage.push_str(&match (a.optional, a.rest) {
-                (_, true) => format!(" [{n}...]"),
-                (true, _) => format!(" [{n}]"),
-                _ => format!(" <{n}>"),
-            });
+        .collect();
+    for c in &shown {
+        // One command asked about: its choices in full, one list per line under it.
+        let full = shown.len() == 1;
+        out.push_str(&format!("  {:<44} {}\n", usage_line(c, false), c.help));
+        for a in c
+            .args
+            .iter()
+            .filter(|a| full && a.choices.join("|").len() > USAGE_CHOICES_MAX)
+        {
+            out.push_str(&format!("    <{}>: {}\n", a.name, a.choices.join(", ")));
         }
-        for f in c.flags {
-            usage.push_str(&format!(" [--{f}]"));
-        }
-        out.push_str(&format!("  {usage:<44} {}\n", c.help));
     }
     out
 }
@@ -1615,6 +1840,15 @@ mod tests {
             ("admin revoke", "admin action=revoke"),
             ("admin idle 300", "admin action=idle args=300"),
             ("gpu env", "gpu.env"),
+            ("keyring", "keyring"),
+            (
+                "keyring get site=a.example",
+                "keyring verb=get args=site=a.example",
+            ),
+            (
+                "keyring export f.wkb --passphrase",
+                "keyring verb=export args=f.wkb --passphrase",
+            ),
             ("update rollback", "update.rollback"),
             ("update rollback wol-1", "update.rollback be=wol-1"),
             ("restore", "restore.list"),
@@ -1668,10 +1902,36 @@ mod tests {
             ("hint apt --not-found", "hint command=apt --not-found"),
             ("hint cp 1", "hint command=cp status=1"),
             ("", "help"),
+            // QA-PWR-6: a group alone lists its commands.
+            ("layers", "help command=layers"),
+            ("boot", "help command=boot"),
+            ("encrypt", "help command=encrypt"),
         ];
         for (line, want) in table {
             assert_eq!(d(line), want, "wol {line}");
         }
+    }
+
+    /// QA-PWR-15: `wol help` lines reached 270 characters (the panel list); the usage column
+    /// stays narrow and `wol help shell toggle` lists the panels.
+    #[test]
+    fn help_usage_column_stays_narrow() {
+        for c in TREE.iter().filter(|c| !c.hidden) {
+            let u = usage_line(c, false);
+            assert!(u.len() <= 80, "{} chars: {u}", u.len());
+        }
+        let all = help(&[]);
+        assert!(
+            !all.contains("switcher|notifications"),
+            "no panel list in the table"
+        );
+        let one = help(&["shell".into(), "toggle".into()]);
+        assert!(one.contains("shell toggle <panel>"), "{one}");
+        assert!(
+            one.contains(&format!("    <panel>: {}", PANELS.join(", "))),
+            "{one}"
+        );
+        assert!(help(&[]).contains("theme toggle"), "short lists stay");
     }
 
     #[test]
@@ -1719,7 +1979,8 @@ mod tests {
     #[test]
     fn help_lists_visible_commands() {
         let h = help(&[]);
-        assert!(h.contains("shell toggle <switcher|notifications"));
+        // QA-PWR-15: the panel list is in `wol help shell toggle`, not in the table.
+        assert!(h.contains("shell toggle <panel>"));
         assert!(!h.contains("jobs list"), "aliases are hidden");
         let h = help(&["update".into()]);
         assert!(h.contains("update apply [be] [release]") && !h.contains("theme"));

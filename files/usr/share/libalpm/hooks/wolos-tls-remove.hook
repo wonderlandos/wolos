@@ -1,0 +1,12 @@
+# The WolOS TLS policy (ADR 0055): before the policy is removed (wolos-system removed), take its
+# lines out of /etc/ssl/openssl.cnf and /etc/gnutls/config again, so OpenSSL is not left including
+# a file that no longer exists (/usr/lib/wolos/tls-policy --remove).
+[Trigger]
+Type = Path
+Operation = Remove
+Target = usr/lib/wolos/tls-policy
+
+[Action]
+Description = Removing the WolOS TLS policy...
+When = PreTransaction
+Exec = /usr/lib/wolos/tls-policy --remove

@@ -4,7 +4,7 @@
 // the empty state and the error state, keeps commands behind "Show the command", and takes
 // light and dark pictures at 1280 and 800 wide.
 //   node webapps/doctor/test/doctor.test.mjs
-// Env: CHROME (browser binary), PLAYWRIGHT (playwright-core folder), KIT (webapps/kit folder,
+// Env: CHROME (browser binary; without it the test is skipped), PLAYWRIGHT (playwright-core folder), KIT (webapps/kit folder,
 // default ../../kit), OUT (picture folder).
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
@@ -16,8 +16,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 const app = resolve(here, "..");
 const kit = resolve(process.env.KIT || join(app, "..", "kit"));
 const out = resolve(process.env.OUT || join(app, "test", "out"));
-const chrome = process.env.CHROME || "/tmp/cw-tools/chrome";
-const pw = process.env.PLAYWRIGHT || "/tmp/cw-tools/node_modules/playwright-core";
+// No default location: a hand-placed browser in /tmp was the only way to run this (QA-WEB-12).
+const chrome = process.env.CHROME;
+const pw = process.env.PLAYWRIGHT || "playwright-core";
+if (!chrome) {
+  console.log("skipped: set CHROME to a headless Chromium binary (and PLAYWRIGHT to a playwright-core folder if it is not installed)");
+  process.exit(0);
+}
 const { chromium } = createRequire(import.meta.url)(pw);
 mkdirSync(out, { recursive: true });
 
@@ -87,6 +92,9 @@ for (const theme of ["light", "dark"]) {
     await pg.keyboard.press("Enter");
     await pg.waitForSelector('.dr-check[data-id="security.firewall"] wol-progress:not([hidden])', { timeout: 2000 });
     ok(true, `${tag}: Fix shows progress`);
+    // QA-WEB-25: the keyboard stays in the row while it works (the busy button is disabled).
+    ok(await pg.evaluate(() => !!document.activeElement.closest('.dr-check[data-id="security.firewall"]')),
+      `${tag}: focus stays in the check while the fix runs`);
     await pg.waitForFunction(() => {
       const r = document.querySelector('.dr-check[data-id="security.firewall"] .dr-result');
       return r && r.dataset.ok === "true";
@@ -95,6 +103,8 @@ for (const theme of ["light", "dark"]) {
       const w = document.querySelector('.dr-check[data-id="security.firewall"]');
       return { badge: w.querySelector("wol-badge").textContent, result: w.querySelector(".dr-result").textContent, status: w.dataset.status, open: w.querySelector(".dr-head").getAttribute("aria-expanded") };
     });
+    ok(await pg.evaluate(() => !!document.activeElement.closest('.dr-check[data-id="security.firewall"]')),
+      `${tag}: focus is still in the check after the fix, not on the page body`);
     ok(before === "Needs a fix" && after.badge === "Fine" && after.status === "ok" && after.result === "Fixed." && after.open === "true",
       `${tag}: Fix ran and the row says "${after.result}" (${before} -> ${after.badge})`);
     // "Show the command" opens to the command.
@@ -124,6 +134,87 @@ await pg.waitForSelector("#error:not([hidden])");
 ok((await pg.textContent("#error")).includes("Doctor could not check your computer"), "error state names what failed");
 await pg.screenshot({ path: join(out, "doctor-error-light-1280.png") });
 await pg.context().close();
+
+// ---- QA-100 failure report (journey qa100-doctor-failure-report): the app never shows an empty answer ----
+// A page whose recorded answers are replaced after fixtures.js (so the mock bridge answers differently).
+async function pageWith(calls, extra = "") {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: "light" });
+  await ctx.route("**/doctor/fixtures.js", async (route) => {
+    const body = await (await route.fetch()).text();
+    await route.fulfill({ contentType: "text/javascript", body: `${body}\nwolkitFixtures({calls:${JSON.stringify(calls)}});` });
+  });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => errors.push(String(e)));
+  await p.goto(`${base}&theme=light${extra}`);
+  return p;
+}
+const failedRow = { area: "security", id: "security.firewall", status: "fail", title: "Firewall", detail: "The firewall is off.", fix: { title: "Turn on the firewall", command: "wol admin firewall on", needs_admin: true } };
+
+{
+  // wold refuses doctor.check: what was checked, what failed, what to do, and the raw text.
+  const p = await pageWith({ "doctor.check": { $error: { code: "denied", message: "This app is not allowed to do that.", hint: "Turn it on in Settings > Privacy" } } });
+  await p.waitForSelector("#error:not([hidden])");
+  const txt = await p.evaluate(() => ({ main: document.querySelector("#error").innerText, raw: document.querySelector("#error-raw").textContent, more: document.querySelector("#error-more").open }));
+  ok(/not allowed/.test(txt.main), "wold refuses: the reason is on screen");
+  ok(/looking at: All checks/.test(txt.main), "wold refuses: what was being checked is on screen");
+  ok(/Choose Try again/.test(txt.main), "wold refuses: what to do is on screen");
+  ok(!txt.more && /denied:.*not allowed.*Settings > Privacy/.test(txt.raw), "wold refuses: the raw text is behind Show what happened");
+  ok(!/\bwol /.test(txt.main), "wold refuses: no command words until Show what happened is opened");
+  await p.context().close();
+}
+{
+  // An answer with no checks is not "everything is fine".
+  const p = await pageWith({ "doctor.check": { checked: 1793749137, ready: true, checks: [] } });
+  await p.waitForSelector("#error:not([hidden])");
+  ok(/nothing was checked/.test(await p.textContent("#error-text")) && await p.evaluate(() => document.querySelector("#fine").hidden), "an empty answer is the error state, not 'Everything is fine'");
+  await p.context().close();
+}
+{
+  // An answer that is not a report at all.
+  const p = await pageWith({ "doctor.check": "nothing" });
+  await p.waitForSelector("#error:not([hidden])");
+  ok(/nothing was checked/.test(await p.textContent("#error-text")), "an answer that is not a report is the error state");
+  await p.context().close();
+}
+{
+  // A check that crashed: its row shows the error text (behind Show the command) and the area it stopped in.
+  const crashed = { area: "security", id: "security.check", status: "fail", title: "Security checks", detail: "Doctor could not finish looking at Security. Choose Check again.", error: "the list was cut" };
+  const p = await pageWith({ "doctor.check": { checked: 1793749137, ready: false, checks: [crashed] } });
+  await p.waitForSelector(".dr-check");
+  await p.click('.dr-check[data-id="security.check"] .dr-head');
+  await p.click('.dr-check[data-id="security.check"] .dr-cmd summary');
+  const t = await p.textContent('.dr-check[data-id="security.check"]');
+  ok(/could not finish looking at Security/.test(t) && /the list was cut/.test(t), "a check that crashed shows its words and its error text");
+  await p.context().close();
+}
+{
+  // A fix that did not work: the controller's message, the row as it is now, and what to do.
+  const p = await pageWith({
+    "doctor.check": { checked: 1793749137, ready: false, checks: [failedRow] },
+    "doctor.fix": { id: "security.firewall", ran: true, ok: false, check: failedRow, message: "The fix did not work: The firewall service would not start.", error: "The firewall service would not start.", next: "Choose Check again to see how it stands now." },
+  });
+  await p.waitForSelector(".dr-check");
+  await p.click('.dr-check[data-id="security.firewall"] .dr-head');
+  await p.click('.dr-check[data-id="security.firewall"] [data-fix] button');
+  await p.waitForFunction(() => document.querySelector(".dr-result")?.dataset.ok === "false");
+  const t = await p.textContent(".dr-result");
+  ok(/would not start/.test(t) && /Choose Check again/.test(t) && /firewall is off/.test(t), "a fix that failed says why, what to do, and how the row stands");
+  await p.context().close();
+}
+{
+  // wold refuses the fix: the reason and what to do, never a blank row.
+  const p = await pageWith({
+    "doctor.check": { checked: 1793749137, ready: false, checks: [failedRow] },
+    "doctor.fix": { $error: { code: "denied", message: "The user said no.", hint: "" } },
+  });
+  await p.waitForSelector(".dr-check");
+  await p.click('.dr-check[data-id="security.firewall"] .dr-head');
+  await p.click('.dr-check[data-id="security.firewall"] [data-fix] button');
+  await p.waitForFunction(() => document.querySelector(".dr-result")?.dataset.ok === "false");
+  const t = await p.textContent(".dr-result");
+  ok(/user said no/.test(t) && /Check again/.test(t), "a fix wold refused says why and what to do");
+  await p.context().close();
+}
 
 ok(errors.length === 0, `no page errors${errors.length ? ": " + errors.join(" | ") : ""}`);
 await browser.close();

@@ -30,13 +30,15 @@ key (Ctrl+C; a terminal's Ctrl+Shift+C), see `shell::appmenu::send`.
 | ⌘Q / ⌘H / ⌥⌘H / ⌘M | Quit / Hide / Hide Others / Minimize |
 | ⌘Space | Search |
 | ⌘Tab | App switcher |
-| ⌃↑ (⌘↑) | Overview |
+| ⌃↑ | Overview |
+| ⌘← / ⌘→ / ⌘↑ / ⌘↓ | Snap the window: halves, quarters, zoom, back (docs/modules/windows.md) |
 | ⌃⌘Q | Lock |
 | ⌥⌘Esc | Force Quit Applications |
 | ⌃F2 / ⌃F3 | Keyboard into the menu bar / the Dock (Esc gives it back) |
 | Esc | Closes menus and panels and dismisses notification banners |
 | ⇧⌘V | Clipboard history |
 | ⌘, / ⌘Return | Settings / Terminal |
+| ⌃⌘P | Pick a colour from the screen (the value goes to the clipboard) |
 | ⇧⌘3/4/5 | Screenshot full / region / toolbar (saved to the Desktop) |
 | ⌃⌘F, ⌥⌘F | Fullscreen, float a tiled window |
 | ⌃⌥←/→ (Ctrl+Alt+Left/Right), 3-finger swipe | Switch space |

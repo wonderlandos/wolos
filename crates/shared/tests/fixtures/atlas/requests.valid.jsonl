@@ -1,0 +1,7 @@
+{"op":"hello","version":1,"pid":4242}
+{"op":"hello","version":2,"pid":1}
+{"op":"share","id":1,"path":"/home/ana/Downloads/report.pdf"}
+{"op":"open_with","id":2,"path":"/home/ana/Downloads/report.pdf"}
+{"op":"trash","id":3,"path":"/home/ana/Downloads/report.pdf"}
+{"op":"trash","id":4294967295,"path":"/home/ana/Downloads/photos"}
+{"op":"share","id":5,"path":"/home/ana/Downloads/résumé \"final\".pdf"}

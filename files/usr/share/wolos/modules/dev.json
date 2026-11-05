@@ -1,10 +1,10 @@
 {
   "id": "dev",
   "name": "Developer",
-  "summary": "git, GitHub CLI, mise for every runtime, Code - OSS, lazygit, btop, zellij, rootless podman, RuboCop for Ruby scripts and Crystal with Cryswol; ~/Work",
+  "summary": "git, GitHub CLI, mise for every runtime, a C toolchain (gcc, make, base-devel), Code - OSS, lazygit, btop, zellij, rootless podman, RuboCop for Ruby scripts, ShellCheck for shell scripts and Crystal with Cryswol; ~/Work",
   "icon": "applications-engineering-symbolic",
   "category": "developer",
-  "size_mb": 350,
+  "size_mb": 480,
   "packages": [
     "git",
     "github-cli",
@@ -16,12 +16,14 @@
     "podman",
     "jq",
     "rubocop",
+    "shellcheck",
     "ttf-jetbrains-mono-nerd",
     "crystal",
     "pkgconf",
+    "base-devel",
     "libwol",
     "cryswol",
-    "wolos-crystal"
+    "wolkit"
   ],
   "flatpaks": [],
   "recipes": [],

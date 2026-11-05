@@ -149,6 +149,11 @@ impl Editor {
         self.rope.is_empty()
     }
 
+    /// Whether line breaks in inserted text become spaces (a one-line field).
+    pub fn is_single_line(&self) -> bool {
+        self.single_line
+    }
+
     pub fn selection(&self) -> Selection {
         self.sel
     }
@@ -172,9 +177,8 @@ impl Editor {
     /// Replaces the whole text programmatically: the history is dropped and the caret goes to
     /// the end. The preedit is cancelled.
     pub fn set_text(&mut self, s: &str) {
-        let s = self.sanitize(s);
-        let s = truncate_bytes(&s, self.limits.max_bytes);
-        self.rope = Rope::from_text(s);
+        let s = self.normalised(s);
+        self.rope = Rope::from_text(&s);
         self.sel = Selection::caret(self.rope.len());
         self.undo.clear();
         self.redo.clear();
@@ -182,16 +186,32 @@ impl Editor {
         self.ime.set_preedit(None);
     }
 
+    /// `s` as [`Editor::set_text`] stores it: sanitised and cut to the size limit. A text that is
+    /// already the editor's own, apart from this, is not a change.
+    pub fn normalised(&self, s: &str) -> String {
+        let s = self.sanitize(s);
+        truncate_bytes(&s, self.limits.max_bytes).to_owned()
+    }
+
+    /// `s` as this editor takes it. Control characters are dropped, a tab stays. Every kind of
+    /// line break (`\n`, `\r\n`, a lone `\r`, U+0085, U+2028, U+2029) is one break: in a multi-line
+    /// editor a `\n`, in a single-line one a space.
     fn sanitize(&self, s: &str) -> String {
-        s.chars()
-            .filter_map(|c| match c {
-                '\n' | '\r' | '\u{2028}' | '\u{2029}' if self.single_line => Some(' '),
-                '\n' => Some('\n'),
-                '\t' => Some('\t'),
-                c if c.is_control() => None,
-                c => Some(c),
-            })
-            .collect()
+        let brk = if self.single_line { ' ' } else { '\n' };
+        let mut out = String::with_capacity(s.len());
+        let mut cr = false;
+        for c in s.chars() {
+            // The `\n` of a `\r\n` is part of the break the `\r` already made.
+            let after_cr = std::mem::replace(&mut cr, c == '\r');
+            match c {
+                '\n' if after_cr => {}
+                '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}' => out.push(brk),
+                '\t' => out.push('\t'),
+                c if c.is_control() => {}
+                c => out.push(c),
+            }
+        }
+        out
     }
 
     // ---- boundaries -----------------------------------------------------------------------
@@ -330,6 +350,13 @@ impl Editor {
 
     pub fn move_word_right(&mut self, extend: bool) {
         let h = self.word_end_after(self.sel.head);
+        self.set_head(h, extend);
+    }
+
+    /// Moves the caret to `at` (snapped to a grapheme boundary), extending the selection or not.
+    /// The layout decides where: a click, Up and Down, the ends of a line.
+    pub fn move_to(&mut self, at: usize, extend: bool) {
+        let h = self.snap(at);
         self.set_head(h, extend);
     }
 

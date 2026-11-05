@@ -286,8 +286,30 @@ fn sysctl_hardening_and_no_core_files() {
         }
         prev = l;
     }
+    coredump_keeps_crash_details_not_core_files();
+}
+
+/// QA-CRASH-4: no core file is kept (`Storage=none`: a crashed compositor once left 27 MB in a
+/// home folder), but systemd-coredump still reads the core, so the journal gets the stack trace
+/// (`coredumpctl info`) and `/usr/lib/wolos/report` sees the crash. `ProcessSizeMax=0` skipped
+/// both: every crash read "terminated abnormally without generating a coredump".
+fn coredump_keeps_crash_details_not_core_files() {
     let c = read("files/usr/lib/systemd/coredump.conf.d/wolos.conf");
-    assert!(c.contains("Storage=none") && c.contains("ProcessSizeMax=0"));
+    let key = |k: &str| {
+        c.lines()
+            .find_map(|l| l.strip_prefix(k)?.strip_prefix('='))
+            .map(str::trim)
+    };
+    assert_eq!(key("Storage"), Some("none"), "no core files on disk");
+    let max = key("ProcessSizeMax").expect("ProcessSizeMax");
+    let mb: u64 = max
+        .trim_end_matches('M')
+        .parse()
+        .expect("ProcessSizeMax in M");
+    assert!(
+        max.ends_with('M') && mb >= 64,
+        "ProcessSizeMax={max}: the core is read for its stack trace"
+    );
 }
 
 /// The power policy follows the AC adapter (udev) and locks sessions before sleep (system-sleep).
@@ -766,7 +788,7 @@ fn firewall_blocks_unasked_traffic_in() {
         "/etc/wolos/nftables.conf"
     );
     for want in [
-        "flush ruleset",
+        "destroy table inet wolos",
         "type filter hook input priority filter; policy drop;",
         "ct state established,related accept",
         "iif \"lo\" accept",
@@ -1088,7 +1110,7 @@ const LIVE_MARK: &str = "ConditionPathExists=!/etc/wolos-live";
 
 /// Units 50-wolos.preset enables that may run on the live medium: (unit, the condition in the
 /// unit that keeps it off there, or "" when running there is right, reason).
-const LIVE_SAFE: [(&str, &str, &str); 20] = [
+const LIVE_SAFE: [(&str, &str, &str); 22] = [
     (
         "wold.service",
         "",
@@ -1135,6 +1157,11 @@ const LIVE_SAFE: [(&str, &str, &str); 20] = [
         "power policy for the adapter and battery, live too",
     ),
     (
+        "wolos-mm.service",
+        "",
+        "fault-around and the KSM account rule for the live session's apps too",
+    ),
+    (
         "NetworkManager.service",
         "",
         "the installer's online step and Try WolOS need the network",
@@ -1162,6 +1189,11 @@ const LIVE_SAFE: [(&str, &str, &str); 20] = [
         "a right clock for TLS downloads and the installed system's files",
     ),
     ("udisks2.service", "", "Files mounts disks in Try WolOS"),
+    (
+        "systemd-oomd.service",
+        "",
+        "a live session on 4 GB needs the same out-of-memory policy as the installed one (QA-ACC-22)",
+    ),
     ("seatd.service", "", "the live session's seat"),
     (
         "vboxservice.service",
@@ -1316,4 +1348,101 @@ fn mok_enroll_is_skipped_without_secure_boot_firmware() {
     ] {
         assert!(conds.contains(&c.to_owned()), "{c}: {conds:?}");
     }
+}
+
+/// QA-FILES-22: a stick mounted by one account stayed mounted after its logout, invisible and
+/// unreachable for the next. The session ends it: a user unit that unmounts /run/media/<user> when
+/// the user manager stops, pulled in by the session target but never stopped with it (a compositor
+/// restart restarts the target and must leave the sticks mounted).
+#[test]
+fn removable_disks_are_unmounted_at_the_end_of_the_session() {
+    let user = "files/usr/lib/systemd/user";
+    let u = read(&format!("{user}/wolos-media-unmount.service"));
+    assert_eq!(values(&u, "Service", "Type"), ["oneshot"]);
+    assert_eq!(values(&u, "Service", "RemainAfterExit"), ["yes"]);
+    assert_eq!(
+        values(&u, "Service", "ExecStart"),
+        ["/usr/lib/wolos/media-unmount", "--start"]
+    );
+    assert_eq!(
+        values(&u, "Service", "ExecStop"),
+        ["-/usr/lib/wolos/media-unmount", "%u"]
+    );
+    assert!(
+        values(&u, "Unit", "PartOf").is_empty() && values(&u, "Unit", "BindsTo").is_empty(),
+        "stopped with the session target, a compositor restart would unmount the sticks"
+    );
+    let t = read(&format!("{user}/wolos-session.target"));
+    assert!(
+        values(&t, "Unit", "Wants")
+            .join(" ")
+            .contains("wolos-media-unmount.service"),
+        "the session target pulls it in"
+    );
+    // The script, against a folder of mounts and fake findmnt/udisksctl: only the account's own.
+    let d = scratch("media-unmount");
+    let media = d.join("media");
+    for m in ["alice/STICK", "alice/CARD", "bob/OTHER"] {
+        fs::create_dir_all(media.join(m)).unwrap();
+    }
+    let path = fakes(
+        &d,
+        &[
+            ("findmnt", "echo /dev/sdX-$(basename \"$5\")"),
+            ("udisksctl", ""),
+        ],
+    );
+    let run = |who: &str| {
+        Command::new("sh")
+            .arg(repo("files/usr/lib/wolos/media-unmount"))
+            .arg(who)
+            .env("PATH", &path)
+            .env("WOLOS_MEDIA", &media)
+            .output()
+            .unwrap()
+    };
+    let o = run("alice");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    assert!(
+        l.contains("udisksctl unmount --no-user-interaction -b /dev/sdX-STICK"),
+        "{l}"
+    );
+    assert!(l.contains("-b /dev/sdX-CARD"), "{l}");
+    assert!(!l.contains("OTHER"), "another account's stick stays: {l}");
+    // A name that is a path is refused, an account without mounts is fine.
+    assert!(!run("../etc").status.success());
+    // The start does nothing (the unit only works when it stops).
+    let before = log(&d);
+    assert!(run("--start").status.success());
+    assert_eq!(log(&d), before);
+    assert!(run("carol").status.success());
+}
+
+/// ADR 0054: the keyring daemon's unit is shipped sandboxed, and in 0.13 the session does not start
+/// it: gnome-keyring stays the login keyring until `wol keyring migrate` and the sign-in fast path
+/// are wired (audit A7-23). The unit only runs where something starts it on purpose.
+#[test]
+fn the_keyring_daemon_unit_is_sandboxed_and_not_wanted_by_the_session() {
+    let unit = read("files/usr/lib/systemd/user/wolos-keyringd.service");
+    for want in [
+        "ExecStart=/usr/bin/wol-keyringd",
+        "NoNewPrivileges=yes",
+        "ProtectSystem=strict",
+        "MemoryDenyWriteExecute=yes",
+        "RestrictAddressFamilies=AF_UNIX",
+        "LimitCORE=0",
+    ] {
+        assert!(
+            unit.lines().any(|l| l.trim() == want),
+            "wolos-keyringd.service lacks {want}"
+        );
+    }
+    // Its writable paths are the account's own folders, named by specifiers (RS-046).
+    assert!(unit.contains("ReadWritePaths=-%h/.local/share/wolos -%t/wolos"));
+    let target = read("files/usr/lib/systemd/user/wolos-session.target");
+    assert!(
+        !target.contains("wolos-keyringd"),
+        "the session target must not start the keyring daemon yet"
+    );
 }

@@ -61,13 +61,9 @@ pub struct Net {
 
 impl Net {
     pub fn new(allow_loopback_http: bool) -> Self {
-        use ureq::tls::{RootCerts, TlsConfig};
-        let agent = ureq::Agent::config_builder()
-            .tls_config(
-                TlsConfig::builder()
-                    .root_certs(RootCerts::PlatformVerifier)
-                    .build(),
-            )
+        // The system's TLS policy for our Rust stack: hybrid post-quantum group first, AEAD only,
+        // the system's certificate store (ADR 0055).
+        let agent = wol_core::net::agent_config()
             .https_only(!allow_loopback_http)
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(15)))
@@ -120,6 +116,30 @@ pub fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
+/// Most bytes a download without a known size may be (an AppImage from a bare URL).
+pub const MAX_UNSIZED: u64 = 4 << 30;
+
+/// What a person is told when the disk is full (QA-STORE-24).
+pub const NO_ROOM: &str = "There is no room left on the disk. Free some space, then try again.";
+
+/// Whether `e` is the disk being full.
+pub fn is_full(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::StorageFull || e.raw_os_error() == Some(28)
+}
+
+/// A failed write as a sentence: the disk being full is named ([`NO_ROOM`]), anything else is
+/// `plain`; never the path or the system's text (QA-STORE-24).
+pub fn write_error(e: &std::io::Error, plain: &str) -> Error {
+    Error::unavailable(if is_full(e) { NO_ROOM } else { plain })
+}
+
+/// The ETag a part was started under, beside it.
+fn tag_of(part: &Path) -> PathBuf {
+    let mut s = part.as_os_str().to_owned();
+    s.push(".etag");
+    PathBuf::from(s)
+}
+
 fn part_of(dest: &Path) -> PathBuf {
     let mut s = dest.as_os_str().to_owned();
     s.push(".part");
@@ -156,19 +176,39 @@ fn one_inner(net: &Net, it: &Item, tick: &mut dyn FnMut(u64, Option<u64>)) -> Re
             .map_err(|_| Error::unavailable("The download folder cannot be created."))?;
     }
     let part = part_of(&it.dest);
-    let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    let tag_file = tag_of(&part);
+    // A part is resumed only when the rest can be proven to belong to it: a checksum to check
+    // at the end, or the ETag it was started under (sent as If-Range, so a changed file comes
+    // back whole). Otherwise it starts over (QA-STORE-19).
+    let tag = std::fs::read_to_string(&tag_file)
+        .ok()
+        .filter(|t| !t.is_empty());
+    let mut have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    if have > 0 && want.is_none() && tag.is_none() {
+        let _ = std::fs::remove_file(&part);
+        have = 0;
+    }
     let mut req = net.agent.get(&it.url);
     if have > 0 {
         req = req.header("Range", &format!("bytes={have}-"));
+        if let Some(t) = &tag {
+            req = req.header("If-Range", t);
+        }
     }
-    let resp = req.call().map_err(|e| {
-        Error::unavailable(format!("{} could not be reached ({e}).", host(&it.url)))
-    })?;
+    let resp = req
+        .call()
+        .map_err(|_| Error::unavailable(format!("{} could not be reached.", host(&it.url))))?;
     let status = resp.status().as_u16();
     let (append, resumed) = match status {
         206 if have > 0 => (true, true),
         200 => (false, false),
-        416 if have > 0 => (true, true), // the part is already complete
+        // The part is already complete: only when the checksum or the size will prove it.
+        416 if have > 0 && (want.is_some() || it.size == Some(have)) => (true, true),
+        416 if have > 0 => {
+            let _ = std::fs::remove_file(&part);
+            let _ = std::fs::remove_file(&tag_file);
+            return one_inner(net, it, tick);
+        }
         404 => {
             return Err(Error::new(
                 crate::ffi::Status::NotFound,
@@ -189,19 +229,31 @@ fn one_inner(net: &Net, it: &Item, tick: &mut dyn FnMut(u64, Option<u64>)) -> Re
         .and_then(|v| v.parse::<u64>().ok())
         .map(|n| if append { n + have } else { n })
         .or(it.size);
+    if !append {
+        // A fresh start keeps the ETag it was started under, for a resume later.
+        match resp.headers().get("etag").and_then(|v| v.to_str().ok()) {
+            Some(t) => {
+                let _ = std::fs::write(&tag_file, t);
+            }
+            None => {
+                let _ = std::fs::remove_file(&tag_file);
+            }
+        }
+    }
     let mut f = std::fs::OpenOptions::new()
         .create(true)
         .write(true)
         .append(append)
         .truncate(!append)
         .open(&part)
-        .map_err(|_| Error::unavailable("A download cannot be written."))?;
+        .map_err(|e| write_error(&e, "A download cannot be written."))?;
     let mut fetched = 0u64;
     if status != 416 {
         let mut body = resp.into_body().into_reader();
         let mut buf = vec![0u8; 1 << 16];
         let mut done = if append { have } else { 0 };
-        let limit = it.size.unwrap_or(u64::MAX);
+        // Without a size, a download is still bounded (QA-STORE-19).
+        let limit = it.size.unwrap_or(MAX_UNSIZED);
         loop {
             let n = body.read(&mut buf).map_err(|_| {
                 Error::unavailable(format!(
@@ -213,7 +265,7 @@ fn one_inner(net: &Net, it: &Item, tick: &mut dyn FnMut(u64, Option<u64>)) -> Re
                 break;
             }
             f.write_all(&buf[..n])
-                .map_err(|_| Error::unavailable("A download cannot be written."))?;
+                .map_err(|e| write_error(&e, "A download cannot be written."))?;
             done += n as u64;
             fetched += n as u64;
             if done > limit {
@@ -247,8 +299,8 @@ fn one_inner(net: &Net, it: &Item, tick: &mut dyn FnMut(u64, Option<u64>)) -> Re
             it.url
         )));
     }
-    std::fs::rename(&part, &it.dest)
-        .map_err(|_| Error::unavailable("A download cannot be saved."))?;
+    std::fs::rename(&part, &it.dest).map_err(|e| write_error(&e, "A download cannot be saved."))?;
+    let _ = std::fs::remove_file(&tag_file);
     Ok(Outcome::Fetched {
         bytes: fetched,
         resumed,
@@ -358,7 +410,7 @@ fn start(net: &Net, url: &str, tag: Option<&str>) -> Result<Option<(ureq::Body, 
     }
     let resp = req
         .call()
-        .map_err(|e| Error::unavailable(format!("{} could not be reached ({e}).", host(url))))?;
+        .map_err(|_| Error::unavailable(format!("{} could not be reached.", host(url))))?;
     match resp.status().as_u16() {
         304 => return Ok(None),
         200 => {}
@@ -384,8 +436,13 @@ fn start(net: &Net, url: &str, tag: Option<&str>) -> Result<Option<(ureq::Body, 
 
 /// Copies at most `max` bytes of `body` into `w`; one byte more is an error (never cut short).
 fn copy_bounded(body: ureq::Body, w: &mut dyn Write, max: u64, url: &str) -> Result<u64> {
-    let n = std::io::copy(&mut body.into_reader().take(max + 1), w)
-        .map_err(|_| Error::unavailable(format!("The download from {} stopped.", host(url))))?;
+    let n = std::io::copy(&mut body.into_reader().take(max + 1), w).map_err(|e| {
+        if is_full(&e) {
+            Error::unavailable(NO_ROOM)
+        } else {
+            Error::unavailable(format!("The download from {} stopped.", host(url)))
+        }
+    })?;
     if n > max {
         return Err(Error::untrusted(format!(
             "The download from {} is larger than it should be.",
@@ -424,7 +481,7 @@ pub fn conditional(net: &Net, url: &str, dest: &Path, max: u64) -> Result<Outcom
     }
     let part = part_of(dest);
     let mut f = std::fs::File::create(&part)
-        .map_err(|_| Error::unavailable("The index cannot be written."))?;
+        .map_err(|e| write_error(&e, "The index cannot be written."))?;
     let n = match copy_bounded(body, &mut f, max, url) {
         Ok(n) => n,
         Err(e) => {
@@ -437,7 +494,7 @@ pub fn conditional(net: &Net, url: &str, dest: &Path, max: u64) -> Result<Outcom
     // The old validator goes first: a crash between the steps never pairs a new tag with the
     // old body (an old tag with the new body only costs one more download).
     let _ = std::fs::remove_file(&tag_path);
-    std::fs::rename(&part, dest).map_err(|_| Error::unavailable("The index cannot be written."))?;
+    std::fs::rename(&part, dest).map_err(|e| write_error(&e, "The index cannot be written."))?;
     if let Some(v) = validator {
         let _ = std::fs::write(&tag_path, v);
     }
@@ -525,6 +582,98 @@ pub mod tests {
             &mut |_| {},
         );
         assert_eq!(again[0].outcome, Outcome::Cached);
+    }
+
+    /// QA-STORE-19: a part with nothing to prove its rest (no checksum, no ETag) is not resumed,
+    /// and a 416 for such a part is not taken as complete: the file comes whole; a part started
+    /// under an ETag is resumed and the tag goes with the finished file.
+    #[test]
+    fn resume_restarts_on_mismatch() {
+        let body: Vec<u8> = (0..50_000u32).map(|i| (i % 241) as u8).collect();
+        let srv = serve(vec![
+            ("/x", Served::bytes(body.clone())),
+            ("/t", Served::bytes(body.clone()).etag("\"v1\"")),
+        ]);
+        let d = temp("fetch-resume");
+        let net = Net::new(true);
+        let item = |p: &str, n: &str| Item {
+            url: srv.url(p),
+            dest: d.join(n),
+            sha256: None,
+            size: None,
+        };
+        // A stale half of another file, then a stale part of the full length (416).
+        for stale in [vec![9u8; 20_000], vec![9u8; body.len()]] {
+            let _ = std::fs::remove_file(d.join("x"));
+            std::fs::write(d.join("x.part"), &stale).unwrap();
+            let o = one(&net, &item("/x", "x"), &mut |_, _| {});
+            assert!(
+                matches!(o, Outcome::Fetched { resumed: false, .. }),
+                "{o:?}"
+            );
+            assert_eq!(std::fs::read(d.join("x")).unwrap(), body);
+        }
+        // Started under an ETag: resumed.
+        std::fs::write(d.join("t.part"), &body[..10_000]).unwrap();
+        std::fs::write(d.join("t.part.etag"), "\"v1\"").unwrap();
+        let o = one(&net, &item("/t", "t"), &mut |_, _| {});
+        assert_eq!(
+            o,
+            Outcome::Fetched {
+                bytes: 40_000,
+                resumed: true
+            }
+        );
+        assert_eq!(std::fs::read(d.join("t")).unwrap(), body);
+        assert!(!d.join("t.part.etag").exists());
+        const { assert!(MAX_UNSIZED == 4 << 30) };
+    }
+
+    /// QA-STORE-24: a full disk is named, without a path or the system's words, in a download
+    /// (the `.part` is /dev/full, which answers every write with ENOSPC) and in a conditional
+    /// index fetch; the web library's text is not in "could not be reached".
+    #[test]
+    fn a_full_disk_is_named_and_library_text_stays_out() {
+        let body = vec![7u8; 5000];
+        let srv = serve(vec![("/x", Served::bytes(body.clone()))]);
+        let d = temp("fetch-full");
+        let net = Net::new(true);
+        std::os::unix::fs::symlink("/dev/full", d.join("x.part")).unwrap();
+        let it = Item {
+            url: srv.url("/x"),
+            dest: d.join("x"),
+            sha256: None,
+            size: None,
+        };
+        let failed = |it: &Item| match one(&net, it, &mut |_, _| {}) {
+            Outcome::Failed { message } => message,
+            o => panic!("{o:?}"),
+        };
+        let msg = failed(&it);
+        assert_eq!(msg, NO_ROOM);
+        assert!(!msg.contains(d.to_str().unwrap()), "{msg}");
+        for (kind, raw) in [
+            (std::io::ErrorKind::StorageFull, None),
+            (std::io::ErrorKind::Other, Some(28)),
+        ] {
+            let e = match raw {
+                Some(n) => std::io::Error::from_raw_os_error(n),
+                None => std::io::Error::from(kind),
+            };
+            assert_eq!(write_error(&e, "x").message, NO_ROOM);
+        }
+        let other = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            write_error(&other, "A download cannot be written.").message,
+            "A download cannot be written."
+        );
+        let down = Item {
+            url: "http://127.0.0.1:1/x".into(),
+            dest: d.join("y"),
+            sha256: None,
+            size: None,
+        };
+        assert_eq!(failed(&down), "127.0.0.1:1 could not be reached.");
     }
 
     #[test]

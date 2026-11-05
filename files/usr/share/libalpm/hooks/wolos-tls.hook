@@ -1,0 +1,15 @@
+# The WolOS TLS policy (ADR 0055): after openssl, gnutls or the policy itself is installed or upgraded,
+# point /etc/ssl/openssl.cnf and /etc/gnutls/config at it again (/usr/lib/wolos/tls-policy).
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Target = etc/ssl/openssl.cnf
+Target = etc/gnutls/config
+Target = usr/lib/wolos/tls-policy
+Target = usr/share/wolos/tls/*
+
+[Action]
+Description = Applying the WolOS TLS policy (post-quantum hybrid first)...
+When = PostTransaction
+Exec = /usr/lib/wolos/tls-policy

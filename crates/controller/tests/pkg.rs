@@ -37,12 +37,43 @@ fn sealed(names: &str, bootctl: &str) -> FakeEnv {
     }
 }
 
+/// The in-namespace `pacman -Q` answered (before and after a change that added vim): a change
+/// whose layer cannot be read back is refused (QA-A7-4), so tests of a good change say so.
+fn read_back(mut env: FakeEnv) -> FakeEnv {
+    env.captures
+        .push(("/usr/bin/pacman -Q".into(), "bash 5.2-1\n".into()));
+    for n in 1..=9 {
+        env.files.push((
+            PathBuf::from(format!("/var/lib/wolos/layers/wolos-layer-{n:04}/after")),
+            "bash 5.2-1\nvim 9.1-1\n".into(),
+        ));
+    }
+    env
+}
+
 fn lines(env: &FakeEnv) -> Vec<String> {
     env.execs.iter().map(|a| a.join(" ")).collect()
 }
 
 const IDLE: &str = r#"[{"id":"wolos-a+3.conf","isSelected":true,"isDefault":true}]"#;
 const PENDING: &str = r#"[{"id":"wolos-a.conf","isSelected":true,"isDefault":false},{"id":"wolos-b+3.conf","isSelected":false,"isDefault":true}]"#;
+
+/// QA-PWR-22: no pacman (a dev box, a broken layer): one sentence naming it, not a bare 127.
+#[test]
+fn a_missing_pacman_is_named() {
+    let mut env = FakeEnv {
+        exec_codes: vec![i32::MIN],
+        ..Default::default()
+    };
+    assert_eq!(run("pkg -- -S vim", &mut env), 127);
+    assert!(
+        env.err
+            .contains("the package manager (/usr/bin/pacman) could not be started"),
+        "{}",
+        env.err
+    );
+    assert!(env.err.contains("Nothing was changed."));
+}
 
 #[test]
 fn queries_go_straight_to_the_real_pacman() {
@@ -51,9 +82,58 @@ fn queries_go_straight_to_the_real_pacman() {
     assert_eq!(lines(&env), ["/usr/bin/pacman -Qi vim"]);
 }
 
+/// QA-STORE-72: `pacman -Sw` on a sealed system runs against a temporary copy of the database
+/// (the live one is on the read-only slot and cannot be locked) and removes it after; on a
+/// system that is not sealed, or for a person, it goes straight to pacman.
+#[test]
+fn download_only_uses_a_scratch_database_on_a_sealed_system() {
+    let mut env = sealed("", IDLE);
+    env.captures.push((
+        "mktemp -d /var/tmp/wolos-download-db.XXXXXX".into(),
+        "/var/tmp/wolos-download-db.abc123\n".into(),
+    ));
+    env.exec_codes = vec![0, 0, 0, 0, 0];
+    assert_eq!(run("pkg -- -Sw htop", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        lines(&env),
+        [
+            "chmod 755 /var/tmp/wolos-download-db.abc123",
+            "ln -s /var/lib/pacman/local /var/tmp/wolos-download-db.abc123/local",
+            "cp -a /var/lib/pacman/sync /var/tmp/wolos-download-db.abc123/",
+            "/usr/bin/pacman --dbpath /var/tmp/wolos-download-db.abc123 -Sw htop",
+            "rm -rf /var/tmp/wolos-download-db.abc123",
+        ]
+    );
+    // pacman's own failure is its status, and the copy is still removed.
+    let mut bad = sealed("", IDLE);
+    bad.captures.push((
+        "mktemp -d /var/tmp/wolos-download-db.XXXXXX".into(),
+        "/var/tmp/wolos-download-db.abc123\n".into(),
+    ));
+    bad.exec_codes = vec![0, 0, 0, 1, 0];
+    assert_eq!(run("pkg -- -Sw htop", &mut bad), 1);
+    assert_eq!(
+        lines(&bad).last().unwrap(),
+        "rm -rf /var/tmp/wolos-download-db.abc123"
+    );
+    // A person, or a command with its own database: pacman as given.
+    let mut user = sealed("", IDLE);
+    user.root = false;
+    assert_eq!(run("pkg -- -Sw htop", &mut user), 0);
+    assert_eq!(lines(&user), ["/usr/bin/pacman -Sw htop"]);
+    let mut own = sealed("", IDLE);
+    assert_eq!(run("pkg -- -Sw --dbpath /x htop", &mut own), 0);
+    assert_eq!(lines(&own), ["/usr/bin/pacman -Sw --dbpath /x htop"]);
+    // No scratch folder: said, nothing run.
+    let mut none = sealed("", IDLE);
+    assert_eq!(run("pkg -- -Sw htop", &mut none), 1);
+    assert!(none.err.contains("Nothing was downloaded"), "{}", none.err);
+    assert!(none.execs.is_empty(), "{:?}", none.execs);
+}
+
 #[test]
 fn an_install_is_a_live_layer_without_a_restart() {
-    let mut env = sealed("vim\nvim-runtime\n", IDLE);
+    let mut env = read_back(sealed("vim\nvim-runtime\n", IDLE));
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert!(
@@ -62,7 +142,20 @@ fn an_install_is_a_live_layer_without_a_restart() {
         )),
         "{l:?}"
     );
-    assert!(l.contains(&"arch-chroot /run/wolos/layer-root /usr/bin/pacman -S vim".into()));
+    // QA-STORE-58: the chroot and pacman in a mount namespace of their own.
+    assert!(
+        l.iter().any(
+            |x| x.starts_with("unshare --mount --propagation private sh -c ")
+                && x.contains("\narch-chroot /run/wolos/layer-root /usr/bin/pacman \"$@\"")
+                && x.ends_with(" wol-layer /var/lib/pacman -S vim")
+        ),
+        "{l:?}"
+    );
+    assert!(
+        !l.iter()
+            .any(|x| x.starts_with("mount ") || x.starts_with("umount ")),
+        "{l:?}"
+    );
     assert_eq!(l.last().unwrap(), "systemd-sysext refresh");
     assert!(
         !l.iter()
@@ -79,15 +172,12 @@ fn an_install_is_a_live_layer_without_a_restart() {
 #[test]
 fn a_failed_install_removes_the_layer_and_touches_nothing_else() {
     let mut env = sealed("vim\n", IDLE);
-    // mkdir, 4 mounts (/ bind, private, /usr and /opt overlays) ok; pacman fails.
-    env.exec_codes = vec![0, 0, 0, 0, 0, 1];
+    // mkdir ok; the private chroot step (mounts and pacman, one namespace, QA-STORE-58) fails.
+    // A chroot left from before is unmounted under the lock before begin, not by a step.
+    env.exec_codes = vec![0, 1];
     assert_ne!(run("pkg -- -S vim", &mut env), 0);
     let l = lines(&env);
-    assert!(
-        l.iter()
-            .any(|x| x.contains("umount -l -R /run/wolos/layer-root")),
-        "{l:?}"
-    );
+    assert!(!l.iter().any(|x| x.starts_with("umount ")), "{l:?}");
     assert!(l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()));
     assert!(!l.contains(&"systemd-sysext refresh".into()));
     assert!(!env.out.contains("Installed"));
@@ -338,8 +428,8 @@ fn a_good_boot_removes_a_layer_pacman_never_finished() {
 /// or pacman while the first holds the lock is refused before it runs anything.
 #[test]
 fn a_second_update_or_package_change_is_refused_while_one_runs() {
-    let mut first = sealed("vim\n", IDLE);
-    let mut second = sealed("vim\n", IDLE);
+    let mut first = read_back(sealed("vim\n", IDLE));
+    let mut second = read_back(sealed("vim\n", IDLE));
     second.locks = first.locks.clone();
     first
         .locks
@@ -376,7 +466,7 @@ fn a_chroot_left_mounted_is_unmounted_first() {
     assert_ne!(run("pkg -- -S vim", &mut env), 0);
     assert_eq!(lines(&env), ["umount -R /run/wolos/layer-root"]);
     assert!(env.err.contains("still mounted"), "{}", env.err);
-    let mut clean = sealed("vim\n", IDLE);
+    let mut clean = read_back(sealed("vim\n", IDLE));
     clean.files.push((
         PathBuf::from("/proc/self/mountinfo"),
         "36 25 0:32 / / rw shared:1 - btrfs /dev/vda2 rw\n".into(),
@@ -568,11 +658,19 @@ fn a_layer_records_its_database_even_under_usr() {
     ));
     env.captures
         .push(("/usr/bin/pacman -Q".into(), "bash 5.2-1\n".into()));
-    env.captures.push((
-        "/usr/bin/pacman --dbpath /run/wolos/layer-root/usr/lib/pacman/ -Q".into(),
+    // Left by the in-namespace query (QA-STORE-58), which got the live DBPath.
+    env.files.push((
+        PathBuf::from("/var/lib/wolos/layers/wolos-layer-0002/after"),
         "bash 5.2-1\nvim 9.1-1\n".into(),
     ));
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
+    assert!(
+        lines(&env)
+            .iter()
+            .any(|x| x.ends_with(" wol-layer /usr/lib/pacman -S vim")),
+        "{:?}",
+        env.execs
+    );
     let rec = env
         .written
         .iter()
@@ -583,9 +681,9 @@ fn a_layer_records_its_database_even_under_usr() {
 
 #[test]
 fn a_layer_pacman_committed_is_kept_when_the_merge_fails() {
-    // CORE-5: mkdir, 4 mounts, pacman, umount, rm work ok; `systemd-sysext refresh` fails.
-    let mut env = sealed("vim\n", IDLE);
-    env.exec_codes = vec![0, 0, 0, 0, 0, 0, 0, 0, 1];
+    // CORE-5: mkdir, the private chroot step, rm work ok; `systemd-sysext refresh` fails.
+    let mut env = read_back(sealed("vim\n", IDLE));
+    env.exec_codes = vec![0, 0, 0, 1];
     assert_eq!(run("pkg -- -S vim", &mut env), 0, "{}", env.err);
     let l = lines(&env);
     assert_eq!(l.last().unwrap(), "systemd-sysext refresh");
@@ -695,10 +793,10 @@ wolos-layer-0003
         ),
         (folded, None),
     ] {
-        let mut env = sealed(
+        let mut env = read_back(sealed(
             "vim
 ", IDLE,
-        );
+        ));
         env.captures.retain(|c| c.0 != "ls -1 /var/lib/extensions");
         env.captures
             .push(("ls -1 /var/lib/extensions".into(), String::new()));
@@ -861,4 +959,179 @@ fn rollback_keeps_folded_layers() {
     };
     assert_eq!(run("layers clear", &mut only_b), 0);
     assert!(only_b.execs.is_empty(), "{:?}", only_b.execs);
+}
+
+/// QA-PWR-7: `wol layers list` answers "which packages are live-only?" without a password:
+/// every layer with its packages, size and date, and whether the next update folds it.
+#[test]
+fn layers_list_shows_packages_size_and_date() {
+    const L: &str = "/var/lib/extensions";
+    let rec = |layer: &str| PathBuf::from(format!("/var/lib/extensions/{layer}/wolos-layer.json"));
+    let mut env = FakeEnv {
+        root: false,
+        files: vec![
+            (
+                rec("wolos-layer-0001"),
+                r#"{"installed":["base-devel-1-2","gcc-14.2.1-1"],"removed":["nano-8.2-1"]}"#.into(),
+            ),
+            (rec("wolos-layer-0002"), r#"{"installed":["htop-3.4.1-1"],"removed":[]}"#.into()),
+            (PathBuf::from("/usr/lib/wolos/folded-layers"), "wolos-layer-0002\n".into()),
+        ],
+        captures: vec![
+            (
+                "ls -1 /var/lib/extensions".into(),
+                "wolos-layer-0001\nwolos-layer-0002\nwolos-layer-0003\n".into(),
+            ),
+            (
+                format!("du -sb -- {L}/wolos-layer-0001 {L}/wolos-layer-0002 {L}/wolos-layer-0003"),
+                format!(
+                    "251658240\t{L}/wolos-layer-0001\n1048576\t{L}/wolos-layer-0002\n4096\t{L}/wolos-layer-0003\n"
+                ),
+            ),
+            (
+                "find /var/lib/extensions -mindepth 2 -maxdepth 2 -name wolos-layer.json -printf %TY-%Tm-%Td %p\\n".into(),
+                "2026-11-03 /var/lib/extensions/wolos-layer-0001/wolos-layer.json\n2026-10-20 /var/lib/extensions/wolos-layer-0002/wolos-layer.json\n".into(),
+            ),
+        ],
+        ..Default::default()
+    };
+    assert_eq!(run("layers list", &mut env), 0, "{}", env.err);
+    assert!(
+        env.execs.is_empty(),
+        "a listing changes nothing: {:?}",
+        env.execs
+    );
+    let out = env.out.clone();
+    assert!(
+        out.contains("wolos-layer-0001  2026-11-03  252 MB  live only, folded into the system at the next update\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("  added:   base-devel-1-2 gcc-14.2.1-1\n"),
+        "{out}"
+    );
+    assert!(out.contains("  removed: nano-8.2-1\n"), "{out}");
+    assert!(
+        out.contains("wolos-layer-0002  2026-10-20  1 MB  already part of this system, removed at the next restart\n"),
+        "{out}"
+    );
+    assert!(
+        out.contains("wolos-layer-0003  -  4.1 KB  unfinished"),
+        "{out}"
+    );
+    // --json carries the same rows.
+    env.out.clear();
+    assert_eq!(run("layers list --json", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v[0]["name"], "wolos-layer-0001");
+    assert_eq!(v[0]["bytes"], 251_658_240);
+    assert_eq!(v[0]["state"], "live-only");
+    assert_eq!(v[0]["installed"][1], "gcc-14.2.1-1");
+    assert_eq!(v[1]["state"], "in-system");
+    assert_eq!(v[2]["state"], "unfinished");
+    // Nothing live: one sentence, not an empty screen.
+    let mut none = FakeEnv::default();
+    assert_eq!(run("layers list", &mut none), 0);
+    assert!(none.out.starts_with("No live layers"), "{}", none.out);
+}
+
+/// QA-STORE-73: `wol pkg` never exits 0 on a failed change: a person's change goes to the real
+/// pacman and keeps its exit status (its root error exits 1), a failed layer change exits
+/// non-zero with "Nothing was changed".
+#[test]
+fn wol_pkg_exit_codes() {
+    let mut user = sealed("vim\n", IDLE);
+    user.root = false;
+    user.exec_codes = vec![1];
+    assert_eq!(run("pkg -- -S vim", &mut user), 1);
+    let mut bad = sealed("vim\n", IDLE);
+    // mkdir ok; the private chroot step fails.
+    bad.exec_codes = vec![0, 1];
+    assert_ne!(run("pkg -- -S vim", &mut bad), 0);
+    assert!(bad.err.contains("Nothing was changed"), "{}", bad.err);
+}
+
+/// QA-STORE-71: a change that changed nothing (`--needed` of a present package) leaves no
+/// layer and merges nothing.
+#[test]
+fn an_empty_transaction_makes_no_layer() {
+    let mut env = sealed("vim\n", IDLE);
+    env.captures
+        .push(("/usr/bin/pacman -Q".into(), "vim 9.1-1\n".into()));
+    env.files.push((
+        PathBuf::from("/var/lib/wolos/layers/wolos-layer-0002/after"),
+        "vim 9.1-1\n".into(),
+    ));
+    assert_eq!(run("pkg -- -S --needed vim", &mut env), 0, "{}", env.err);
+    let l = lines(&env);
+    assert!(
+        l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()),
+        "{l:?}"
+    );
+    assert!(!l.contains(&"systemd-sysext refresh".into()), "{l:?}");
+    assert!(
+        !env.written
+            .iter()
+            .any(|w| w.0.ends_with("wolos-layer.json")),
+        "{:?}",
+        env.written
+    );
+}
+
+/// QA-A7-4: a failed `pacman -Q` in the layer's namespace leaves an empty `after` file; read as
+/// "every package was removed" it wrote a record that, at the next update, dropped every
+/// package's entry from the new slot. An unreadable answer is a failed query: the layer is
+/// thrown away, no record is written, nothing merges.
+#[test]
+fn an_unreadable_layer_query_makes_no_record() {
+    for after in [Some(""), None, Some("bash 5.2-1\n")] {
+        let mut env = sealed("vim\n", IDLE);
+        env.captures.push((
+            "/usr/bin/pacman -Q".into(),
+            "bash 5.2-1\ncoreutils 9-1\nglibc 2.40-1\nvim 9-1\n".into(),
+        ));
+        if let Some(text) = after {
+            env.files.push((
+                PathBuf::from("/var/lib/wolos/layers/wolos-layer-0002/after"),
+                text.into(),
+            ));
+        }
+        let code = run("pkg -- -S vim", &mut env);
+        let l = lines(&env);
+        assert_ne!(code, 0, "{after:?}: {}", env.out);
+        assert!(
+            l.contains(&"rm -rf /var/lib/extensions/wolos-layer-0002".into()),
+            "{after:?}: {l:?}"
+        );
+        assert!(!l.contains(&"systemd-sysext refresh".into()), "{l:?}");
+        assert!(
+            !env.written
+                .iter()
+                .any(|w| w.0.ends_with("wolos-layer.json")),
+            "{after:?}: {:?}",
+            env.written
+        );
+        assert!(env.err.contains("could not be read back"), "{}", env.err);
+    }
+}
+
+/// QA-A7-18: `wol pkg -Sw` killed mid-way leaves its scratch database folder, and nothing else
+/// cleans it up: boot removes every folder the download makes (the name comes from the code).
+#[test]
+fn a_killed_download_leaves_no_scratch_folder_after_a_restart() {
+    #[path = "support/repo.rs"]
+    mod repo;
+    let code = repo::read("crates/controller/src/pkg.rs");
+    let name = code
+        .split("\"/var/tmp/")
+        .nth(1)
+        .and_then(|r| r.split(".XXXXXX").next())
+        .expect("the scratch folder is made under /var/tmp");
+    let conf = repo::read("files/usr/lib/tmpfiles.d/wolos.conf");
+    assert!(
+        conf.lines()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>()
+                == ["R", &format!("/var/tmp/{name}.*")]),
+        "tmpfiles.d/wolos.conf has no `R /var/tmp/{name}.*`"
+    );
 }

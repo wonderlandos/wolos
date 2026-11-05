@@ -323,3 +323,135 @@ fn coc_points_at_doctrine() {
         "CODE_OF_CONDUCT.md denies having a code of conduct"
     );
 }
+
+/// QA-ADR-28/6 (lead decision 2026-11-04): 0.13 asks no `Signed-off-by` on each commit; the hub's
+/// Contributor Licence Agreement covers contributions. The guide, STANDARDS §6 and CI say the same:
+/// no document asks for the trailer on every commit and no workflow refuses a commit without it.
+/// (Kernel patches keep the Linux rules: `Signed-off-by` by a person, `Assisted-by` for a tool.)
+#[test]
+fn contributions_are_covered_by_the_cla_not_a_sign_off() {
+    let read = |p: &str| std::fs::read_to_string(root().join(p)).unwrap();
+    let guide = read("CONTRIBUTING.md");
+    assert!(
+        guide.contains("Contributor Licence Agreement"),
+        "CONTRIBUTING.md names the CLA"
+    );
+    assert!(!guide.contains("There is no CLA"), "CONTRIBUTING.md");
+    assert!(
+        !guide.contains("Every commit carries a `Signed-off-by`"),
+        "CONTRIBUTING.md"
+    );
+    let std = read("docs/STANDARDS.md");
+    assert!(
+        !std.contains("`Signed-off-by` on every commit"),
+        "STANDARDS §6"
+    );
+    assert!(
+        std.contains("Contributor Licence Agreement"),
+        "STANDARDS §6 names the CLA"
+    );
+    assert!(
+        !root().join(".github/workflows/dco.yml").exists(),
+        "no sign-off gate in CI"
+    );
+}
+
+/// QA-ADR-11/12/13/35/36: the records say what the code does. A decision line that names a fact the
+/// code can lose is read here; the code half of each is a test of its own (`Flow::new` encrypts:
+/// `crates/shell/src/install_flow/tests.rs`; the Secure Boot offer: the same file; the ratchets:
+/// `rules_rust.rs`).
+#[test]
+fn records_of_installer_boot_and_ratchet_decisions_say_what_the_code_does() {
+    let read = |p: &str| std::fs::read_to_string(root().join(p)).unwrap();
+    let a23 = read("docs/adr/0023-installer-plans.md");
+    assert!(
+        a23.contains("encrypted unless the person turns it off"),
+        "0023"
+    );
+    let plan = read("crates/shell/src/install_flow.rs");
+    assert!(
+        plan.contains("protect: if tpm { Protect::Tpm } else { Protect::Password }"),
+        "the installer no longer starts encrypted: 0023 says it does"
+    );
+    let a25 = read("docs/adr/0025-signed-boot.md");
+    assert!(
+        a25.contains("Secure Boot is the person's choice in the installer"),
+        "0025"
+    );
+    assert!(
+        plan.contains("secure: false,"),
+        "Secure Boot starts off: 0025 says it does"
+    );
+    let a37 = read("docs/adr/0037-shower-identity.md");
+    assert!(
+        a37.contains("Not landed"),
+        "0037 must say the dumpable call is not landed"
+    );
+    let shell_calls_prctl = [
+        "crates/shell/src/main.rs",
+        "crates/shell/src/bin/wol-shell.rs",
+    ]
+    .iter()
+    .any(|p| std::fs::read_to_string(root().join(p)).is_ok_and(|t| t.contains("PR_SET_DUMPABLE")));
+    assert!(
+        !shell_calls_prctl,
+        "the shell now sets PR_SET_DUMPABLE: amend 0037 where it says Not landed"
+    );
+    let rules = read("docs/RULES.md");
+    let row = |id: &str| {
+        rules
+            .lines()
+            .find(|l| l.starts_with(&format!("| {id} ")))
+            .unwrap_or("")
+            .to_owned()
+    };
+    assert!(
+        row("RR-068").contains("`BASELINE`") && row("RR-068").contains("never rises"),
+        "RR-068 is a ratchet"
+    );
+    assert!(row("RR-010").contains("`BASELINE`"), "RR-010 is a ratchet");
+}
+
+/// QA-ADR-5/31: RR-118's row says which names the test looks for, and the test looks for them (the
+/// row used to say "no upstream project name" while the list held one). QA-WEB-15: the record of
+/// the web apps' topics says `progress` has no producer, and the host has none.
+#[test]
+fn records_of_the_naming_rule_and_the_progress_topic_say_what_the_code_does() {
+    let read = |p: &str| std::fs::read_to_string(root().join(p)).unwrap();
+    let rules = read("docs/RULES.md");
+    let row = rules
+        .lines()
+        .find(|l| l.starts_with("| RR-118 "))
+        .expect("RR-118");
+    assert!(row.contains("UPSTREAM_NAMES"), "RR-118 names its list");
+    assert!(
+        row.contains("one name today"),
+        "RR-118 says how many names it looks for: update the row when the list grows"
+    );
+    let test = read("crates/shared/tests/rules_rust.rs");
+    let list = test
+        .lines()
+        .find(|l| l.starts_with("const UPSTREAM_NAMES"))
+        .expect("UPSTREAM_NAMES");
+    assert_eq!(
+        list.split('"').skip(1).step_by(2).count(),
+        1,
+        "UPSTREAM_NAMES grew: RR-118's row says one name today"
+    );
+    let adr = read("docs/adr/0048-system-web-apps.md");
+    assert!(
+        adr.contains("reserved: the host sends none yet"),
+        "0048 says progress is reserved"
+    );
+    for f in ["host.rs", "bridge.rs"] {
+        let src = read(&format!("crates/webengine/src/{f}"));
+        let emits = src.lines().any(|l| {
+            let l = l.trim_start();
+            !l.starts_with("//") && l.contains("\"progress\"") && l.contains("event(")
+        });
+        assert!(
+            !emits,
+            "{f} now sends the progress topic: amend 0048 where it says reserved"
+        );
+    }
+}

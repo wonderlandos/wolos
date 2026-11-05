@@ -12,6 +12,7 @@ crates/shell/tests/golden-env/run.sh
 crates/shell/tests/golden-env/starve.sh
 crates/webengine/engine/link.sh
 crates/wol-abi/link.sh
+crates/wolkit-web/build-site.sh
 crates/wolkit/link.sh
 crates/wolkit/shaders/build.sh
 crates/wopkg/link.sh
@@ -58,6 +59,7 @@ files/usr/lib/wolos/etc-settle
 files/usr/lib/wolos/etc-units
 files/usr/lib/wolos/firstboot
 files/usr/lib/wolos/gpu
+files/usr/lib/wolos/home-quota
 files/usr/lib/wolos/hypridle-run
 files/usr/lib/wolos/hyprsunset-run
 files/usr/lib/wolos/install-boot
@@ -66,6 +68,7 @@ files/usr/lib/wolos/install-check
 files/usr/lib/wolos/install-disks
 files/usr/lib/wolos/install-run
 files/usr/lib/wolos/installer-session
+files/usr/lib/wolos/media-unmount
 files/usr/lib/wolos/modules-disable-ai-claude
 files/usr/lib/wolos/modules-disable-dev
 files/usr/lib/wolos/modules-enable-ai-claude
@@ -74,6 +77,7 @@ files/usr/lib/wolos/modules-install
 files/usr/lib/wolos/pwsh
 files/usr/lib/wolos/report
 files/usr/lib/wolos/set-regdom
+files/usr/lib/wolos/tls-policy
 files/usr/lib/wolos/update-check
 files/usr/lib/wolos/update-download
 files/usr/lib/wolos/verify-gpu.sh
@@ -81,6 +85,18 @@ files/usr/lib/wolos/webpolicy
 files/usr/lib/wolos/wol-install
 files/usr/lib/wolos/xguard-update
 files/usr/share/wolos/boot/41_wolos
+tools/bench/discord/as-user.sh
+tools/bench/discord/cdp.py
+tools/bench/discord/duty.sh
+tools/bench/discord/evict.py
+tools/bench/discord/govern.py
+tools/bench/discord/msx.py
+tools/bench/discord/phases.sh
+tools/bench/discord/push.py
+tools/bench/discord/summary.py
+tools/bench/js-runtime-x/bun-run.sh
+tools/bench/js-runtime-x/jsx.py
+tools/bench/js-runtime-x/vma.py
 tools/build-rust.sh
 tools/check-adrs.sh
 tools/check-headers.sh
@@ -91,6 +107,8 @@ tools/crystal/pin-shards.sh
 tools/hooks/guard-test.sh
 tools/hooks/install.sh
 tools/hooks/public-guard
+tools/install-webapps.sh
 tools/license/relicense.py
 tools/ruby/lint.sh
 tools/site-shots.sh
+tools/theme/atlas-gtk3-sample.py

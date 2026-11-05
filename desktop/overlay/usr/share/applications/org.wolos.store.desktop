@@ -7,3 +7,4 @@ Exec=wol-store %f
 Categories=System;PackageManager;
 MimeType=application/x-wolos-package;
 StartupNotify=true
+X-WolOS-Surfaces=S05;S19;S25;S27

@@ -10,12 +10,12 @@
 use std::path::{Path, PathBuf};
 
 /// Browser that opens web apps (`--app=` window: no tabs, no address bar): the launcher the
-/// `helium-browser` package installs (wolos-pkgbuilds helium-browser/PKGBUILD), the one path
-/// every browser caller shares ([`crate::theme::helium::HELIUM`]). The package is named
-/// `helium-browser`; its program is `/usr/bin/helium` (e2e D1: a launcher naming the package
+/// `atlas-browser` package installs (wolos-pkgbuilds atlas-browser/PKGBUILD), the one path
+/// every browser caller shares ([`crate::browser::ATLAS`]). The package is named
+/// `atlas-browser`; its program is `/usr/bin/atlas` (e2e D1: a launcher naming the package
 /// opened nothing).
-pub const BROWSER: &str = crate::theme::helium::HELIUM.bin;
-/// Profile directory Chromium opens inside a user data directory (ours or the shared one).
+pub const BROWSER: &str = crate::browser::ATLAS.bin;
+/// Profile directory the engine opens inside a user data directory (ours or the shared one).
 const CHROMIUM_PROFILE: &str = "Default";
 /// File name prefix of our launchers under `<data home>/applications`.
 pub const PREFIX: &str = "wolos-webapp-";
@@ -133,13 +133,17 @@ fn percent_ok(s: &str) -> bool {
     })
 }
 
-/// Launcher id from a name: lowercase letters and digits joined by single `-`, at most 48
-/// bytes (`"My Mail!"` -> `my-mail`). None when no letter or digit is left.
+/// Most bytes of a [`slug`]: `org.wolos.webapp.` and the slug fill the 64 bytes a scope name keeps
+/// (`shared::memsaver::APP_ID_MAX`); 48 made a 65-byte id that was cut (QA-WEB-26).
+pub const SLUG_MAX: usize = 47;
+
+/// Launcher id from a name: lowercase letters and digits joined by single `-`, at most
+/// [`SLUG_MAX`] bytes (`"My Mail!"` -> `my-mail`). None when no letter or digit is left.
 pub fn slug(name: &str) -> Option<String> {
     let mut out = String::new();
     for c in name.chars() {
         if c.is_ascii_alphanumeric() {
-            if out.len() >= 48 {
+            if out.len() >= SLUG_MAX {
                 break;
             }
             out.push(c.to_ascii_lowercase());
@@ -221,9 +225,9 @@ pub fn profile_dir(data_home: &Path, id: &str) -> PathBuf {
 }
 
 /// Window class (Wayland app-id) the browser gives an `--app` window, so the Dock and the menu
-/// bar find the launcher (`StartupWMClass`). Chromium ignores `--class` for app windows on
+/// bar find the launcher (`StartupWMClass`). The engine ignores `--class` for app windows on
 /// Wayland and names them after the address: `chrome-<host>_<path, / as _>-<profile>`, without
-/// port, query or fragment (measured on Helium 0.20.2.1: `https://example.org/` gives
+/// port, query or fragment (measured on the 0.20.2.1 browser build: `https://example.org/` gives
 /// `chrome-example.org__-Default`, `https://Mail.Example.org:8443/a/b.c?x=1#y` gives
 /// `chrome-mail.example.org__a_b.c-Default`).
 pub fn wm_class(app: &WebApp) -> String {
@@ -488,7 +492,13 @@ mod tests {
             Some("youtube-music")
         );
         assert_eq!(slug("日本"), None);
-        assert_eq!(slug(&"a".repeat(80)).map(|s| s.len()), Some(48));
+        // 47: with the host's `org.wolos.webapp.` (17 bytes) the id fills the 64 bytes a scope
+        // name keeps (`shared::memsaver::APP_ID_MAX`), never more (QA-WEB-26).
+        assert_eq!(slug(&"a".repeat(80)).map(|s| s.len()), Some(SLUG_MAX));
+        assert_eq!(
+            "org.wolos.webapp.".len() + SLUG_MAX,
+            shared::memsaver::APP_ID_MAX
+        );
         assert_eq!(check_name(" Mail "), Ok("Mail".into()));
         for bad in ["", "   ", "!!!", "a\nb", &"m".repeat(MAX_NAME + 1)] {
             assert_eq!(check_name(bad), Err(Error::BadName), "{bad:?}");
@@ -504,7 +514,7 @@ mod tests {
         let text = desktop_entry(&app, home);
         assert!(text.starts_with("[Desktop Entry]\nType=Application\n"));
         assert!(text.contains(
-            "\nExec=\"/usr/bin/helium\" \"--app=https://mail.example.com/?a=1%%20b\" \
+            "\nExec=\"/usr/bin/atlas\" \"--app=https://mail.example.com/?a=1%%20b\" \
              \"--user-data-dir=/home/a/.local/share/wolos/webapps/profiles/mail\"\n"
         ));
         assert!(text.contains("\nStartupWMClass=chrome-mail.example.com__-Default\n"));
@@ -525,10 +535,10 @@ mod tests {
         );
     }
 
-    /// e2e D1: the window class Helium really gives an `--app` window (measured in the VM), so
+    /// e2e D1: the window class the browser really gives an `--app` window (measured in the VM), so
     /// the Dock and the menu bar match the launcher instead of showing `chrome-...`.
     #[test]
-    fn the_window_class_is_the_one_chromium_gives_app_windows() {
+    fn the_window_class_is_the_one_the_engine_gives_app_windows() {
         let class = |url: &str| wm_class(&WebApp::new("Mail", url, Profile::Own).unwrap());
         assert_eq!(class("https://example.org"), "chrome-example.org__-Default");
         assert_eq!(
@@ -541,7 +551,7 @@ mod tests {
         );
         assert_eq!(class("example.org?q=1"), "chrome-example.org__-Default");
         // The browser is the program the package installs, never the package name.
-        assert_eq!(BROWSER, "/usr/bin/helium");
+        assert_eq!(BROWSER, "/usr/bin/atlas");
         assert!(
             !launch_argv(
                 &WebApp::new("M", "example.org", Profile::Shared).unwrap(),

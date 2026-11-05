@@ -182,6 +182,44 @@ fn slots_env(tag: &str) -> FakeEnv {
     }
 }
 
+/// QA-LIVE3-20: `wol undo` with no id at a terminal says which change it reverts and asks; a
+/// script (no terminal, --yes) still undoes the last one.
+#[test]
+fn undo_without_id_asks_at_a_terminal() {
+    let setup = || {
+        let mut e = FakeEnv {
+            home: temp_home("undo-ask"),
+            tty: true,
+            ..Default::default()
+        };
+        assert_eq!(run("theme dark", &mut e), 0, "{}", e.err);
+        e.out.clear();
+        e
+    };
+    // No answer: nothing is undone.
+    let mut e = setup();
+    assert_eq!(run("undo", &mut e), 1);
+    assert!(e.out.contains("This undoes change #1 (theme"), "{}", e.out);
+    assert!(e.err.contains("nothing was undone"), "{}", e.err);
+    let j = wol_core::journal::Journal::new(&e.home.join("state"), &e.home);
+    assert_eq!(j.entries().len(), 1, "no revert recorded");
+    // "n" too.
+    let mut e = setup();
+    e.stdin = vec!["n\n".into()];
+    assert_eq!(run("undo", &mut e), 1);
+    // "y" undoes it.
+    let mut e = setup();
+    e.stdin = vec!["y\n".into()];
+    assert_eq!(run("undo", &mut e), 0, "{}", e.err);
+    assert!(e.out.contains("undid #1 (theme)"), "{}", e.out);
+    // --yes and a named id never ask.
+    let mut e = setup();
+    assert_eq!(run("undo --yes", &mut e), 0, "{}", e.err);
+    let mut e = setup();
+    assert_eq!(run("undo 1", &mut e), 0, "{}", e.err);
+    assert!(!e.out.contains("[y/N]"), "{}", e.out);
+}
+
 #[test]
 fn restore_list_marks_the_rollback_target() {
     let mut e = slots_env("restorelist");
@@ -192,6 +230,26 @@ fn restore_list_marks_the_rollback_target() {
         v[0]["rollback"], true,
         "pending update: rollback keeps the running slot"
     );
+    // QA-LIVE3-12: the fields say what they hold: `tries_left` (a number, null once the slot
+    // booted fine) and `release` (the slot's release date); `space` and `created` stay one
+    // release as aliases with their old text.
+    let pending = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["next_boot"] == true && b["active"] == false)
+        .expect("the slot that boots next");
+    assert_eq!(pending["tries_left"], 3, "{pending}");
+    assert_eq!(pending["release"], "2026/11/02", "{pending}");
+    assert_eq!(pending["space"], "3 tries left", "alias");
+    assert_eq!(pending["created"], "2026/11/02", "alias");
+    let running = v
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["active"] == true)
+        .unwrap();
+    assert!(running["tries_left"].is_null(), "{running}");
     let mut none = FakeEnv {
         home: temp_home("nobe"),
         ..Default::default()
@@ -354,8 +412,31 @@ fn open_notify_windows() {
     assert_eq!(run("notify Hello world", &mut e), 0);
     assert_eq!(
         e.execs[2],
-        ["notify-send", "--app-name=morning", "--", "Hello", "world"]
+        [
+            "timeout",
+            "2",
+            "notify-send",
+            "--app-name=morning",
+            "--",
+            "Hello",
+            "world"
+        ]
     );
+    // QA-PWR-8: --json answers, and a missing notification service is said within 2 s.
+    assert_eq!(run("notify Hello --json", &mut e), 0);
+    assert!(
+        e.out.contains("\"shown\": true") || e.out.contains("\"shown\":true"),
+        "{}",
+        e.out
+    );
+    e.exec_codes = vec![124];
+    assert_eq!(run("notify Hello", &mut e), 69);
+    assert!(
+        e.err.contains("no notification service answered"),
+        "{}",
+        e.err
+    );
+    e.exec_codes.clear();
     e.captures = vec![
         (
             "hyprctl -j clients".into(),
@@ -395,16 +476,16 @@ fn named_scripts_obey_the_off_switch() {
     assert_eq!(run("focus on", &mut e), 77);
     assert!(e.err.contains("turned off"));
     assert!(!e.home.join("wol/dnd").exists());
-    assert_eq!(
-        run("shell reload", &mut e),
-        69,
-        "non-helper verbs are not gated (no session here)"
-    );
+    // A verb that is not a helper verb is for people: a helper's call is refused (QA-PLUG-6),
+    // not run, and the audit log has it.
+    assert_eq!(run("shell reload", &mut e), 77, "{}", e.err);
+    assert!(e.err.contains("is for people"), "{}", e.err);
     assert_eq!(run("helpers --json", &mut user), 0);
     let s = json_out(&user);
     assert_eq!(s["enabled"], false);
     assert_eq!(s["helpers"][0]["name"], "script:cron");
-    assert_eq!(s["helpers"][0]["refused"], 1);
+    // The focus call and the people-only call were both refused.
+    assert_eq!(s["helpers"][0]["refused"], 2);
 }
 
 /// Scripts ask on screen like MCP clients: deny changes nothing, allow runs it, no session refuses.
@@ -546,4 +627,33 @@ fn network_and_wifi_probe_concurrently() {
         t.elapsed()
     );
     assert_eq!(json_out(&e)["wifi"]["on"], true);
+}
+
+/// QA-A7-11: Larger text lives in gsettings; the journal holds its record file, and `wol undo`
+/// of that entry sets the desktop's text scale back to match.
+#[test]
+fn undoing_larger_text_sets_the_text_scale() {
+    let home = temp_home("larger-text");
+    let state = home.join("state");
+    let j = wol_core::journal::Journal::new(&state, &home);
+    j.save(
+        "accessibility",
+        "settings",
+        &[(wol_core::journal::LARGER_TEXT_FILE, Some("1.25\n"))],
+        1,
+    )
+    .unwrap();
+    let mut e = FakeEnv {
+        home,
+        ..Default::default()
+    };
+    assert_eq!(run("undo --yes", &mut e), 0, "{}", e.err);
+    assert!(
+        e.captured_argvs
+            .iter()
+            .any(|a| a.join(" ")
+                == "gsettings set org.gnome.desktop.interface text-scaling-factor 1.0"),
+        "{:?}",
+        e.captured_argvs
+    );
 }

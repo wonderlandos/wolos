@@ -53,6 +53,32 @@ udev autoloads most drivers before; its loads count as loaded.
 
 Written files start with a WolOS header. Unchanged files are not rewritten. Always exits 0. Microcode (`intel-ucode`/`amd-ucode`) loads from the initramfs.
 
+## Modern laptops: what the image ships, and what it leaves off (IMAGE-F, 2026-11-04)
+
+The catalogue above decides the driver. This table is what a 2020-and-newer Intel or AMD laptop needs on top of it, with the package on the image and the `wol doctor hardware` row that reads it ([doctor.md](doctor.md)). `wolos-iso/checks/tests/image_modern_hardware.rs` fails when a package is missing here or a row loses its doctor check.
+
+| Need | Packages on the image | Row | Notes |
+|---|---|---|---|
+| Video decode (VA-API) | `mesa` (AMD radeonsi VA-API; it provides `libva-mesa-driver`), `intel-media-driver` (iHD: Broadwell and newer), `libva-utils` | `video` | `wol-realtime gpu env` sets `LIBVA_DRIVER_NAME=iHD` on i915/xe, `nvidia` when `libva-nvidia-driver` is there, nothing on AMD. Haswell and older would need `libva-intel-driver` (i965, 8 MiB) and the iHD pin would have to move with it: not shipped, those GPUs decode on the processor |
+| Vulkan | `vulkan-intel` (anv, and `hasvk` for Haswell/Broadwell), `vulkan-radeon` (RADV), `vulkan-icd-loader`, `vulkan-tools`, the `lib32-` pair for Steam | `vulkan` | NVIDIA's Vulkan comes with `nvidia-utils` online |
+| Firmware | `linux-firmware` (the meta package: amd, amdgpu, atheros, broadcom, cirrus, intel, mediatek, nvidia, other, radeon, realtek, ti), `intel-ucode`, `amd-ucode`, `sof-firmware`, `wireless-regdb` | `firmware` | Wi-Fi and Bluetooth blobs are in the Intel, Realtek, MediaTek, Atheros and Broadcom parts. A blob newer than the snapshot arrives with the next system update |
+| Wi-Fi, Bluetooth | `networkmanager`, `iwd`, `bluez`, `bluez-utils` | `network.devices` | |
+| Fingerprint | `fprintd` (pulls `libfprint`) | `fingerprint` | D-Bus activated, no preset: nothing runs without a reader. PAM is not touched: a fingerprint is never the only way in, and turning it on for login or `sudo` is the person's choice |
+| Thunderbolt, USB4 | `bolt` (`boltd`) | `thunderbolt` | D-Bus activated; the kernel side (`CONFIG_USB4`) is in `linux-wolos` |
+| Power | `power-profiles-daemon` (Energy Mode, `wol power apply`), `thermald` (Intel DPTF), `fwupd` | `cpu-power`, `cooling`, `power-modes` | `thermald` is on in `wolos-system`'s preset; its unit skips VMs and ends cleanly (status 2) on a processor it has no table for, so AMD needs no special case |
+| x86-64 level | the standard `[wolos]` builds; `[cachyos-*-v3]` only where AVX2 exists (`wol mirror gate`) | `cpu-level` | ADR 0030; `x86-64-v3` for our own packages: [x86-64-v3.md](x86-64-v3.md) |
+
+### Left off on purpose
+
+| Package | Why not |
+|---|---|
+| `xf86-video-intel`, `xf86-video-amdgpu`, `xf86-video-ati` | Wayland only: the kernel's modesetting path is the maintained one, and the X11 DDX drivers are slower on current hardware. Xwayland needs none of them |
+| `intel-compute-runtime`, `intel-graphics-compiler` | OpenCL and Level Zero for Intel GPUs: 119 MiB plus 274 MiB for the compiler. Compute on the image is Vulkan compute; the AI module that wants it installs these on demand |
+| `linux-firmware-qcom` | 210 MiB for Snapdragon SoCs, which are not x86-64 |
+| `nvidia-open-dkms`, `nvidia-utils` | The catalogue installs them online at first boot (DKMS builds for the running kernel); see NVIDIA below |
+| `tlp`, `auto-cpufreq` | A second power daemon fights `power-profiles-daemon` over the same sysfs files; one daemon only |
+| `iio-sensor-proxy` | 118 KiB, but nothing in the session reads it yet (no auto-rotate or ambient-light brightness in the shell): add it with the feature that uses it |
+
 ## NVIDIA
 
 | GPU (PCI device) | Driver | Packages |

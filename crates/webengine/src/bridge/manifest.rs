@@ -6,8 +6,10 @@ use super::catalog;
 use crate::policy::Policy;
 use crate::process::APP_ID_PREFIX;
 use serde::Deserialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+/// Where an app of others (a package from the hub, ADR 0048) installs: `<OPT_DIR>/<slug>/`. There is no kit there.
+pub use wol_core::sysapp::OPT_DIR;
 /// Where the image installs system web apps: `<SYSTEM_DIR>/<slug>/`, the kit at `<SYSTEM_DIR>/kit/`.
 pub use wol_core::sysapp::SYSTEM_DIR;
 /// The shared kit's folder name next to the apps (never an app slug).
@@ -65,17 +67,25 @@ impl Manifest {
                 self.id
             ));
         }
+        // The scope name carries the id; a longer one would be cut there (QA-WEB-26).
+        if self.id.len() > shared::memsaver::APP_ID_MAX {
+            return Err(format!(
+                "id: at most {} characters",
+                shared::memsaver::APP_ID_MAX
+            ));
+        }
         if self.name.trim().is_empty() || self.name.chars().count() > 40 {
             return Err("name: 1 to 40 characters".into());
         }
         if self.summary.chars().count() > 120 {
             return Err("summary: at most 120 characters".into());
         }
-        // Both reach a desktop entry line: no line breaks, no control characters, no escapes.
-        if [&self.name, &self.summary]
-            .iter()
-            .any(|t| t.chars().any(|c| c.is_control() || c == '\\'))
-        {
+        // Both reach a desktop entry line and a title bar: no line breaks, no control characters,
+        // no escapes, and nothing that reorders or hides text (QA-WEB-32).
+        if [&self.name, &self.summary].iter().any(|t| {
+            t.chars()
+                .any(|c| c.is_control() || c == '\\' || invisible(c))
+        }) {
             return Err("name and summary: one line of plain text".into());
         }
         let v: Vec<&str> = self.version.split('.').collect();
@@ -109,9 +119,16 @@ impl Manifest {
         if folder != m.slug() {
             return Err(format!("folder {folder:?} is not the slug {:?}", m.slug()));
         }
+        // Inside the folder, as it is on disk: a link to a file elsewhere is not the app's own file
+        // (QA-WEB-32: the entry could be `index.html -> /etc/hostname`).
+        let root = std::fs::canonicalize(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         for f in [&m.entry, &m.icon] {
             if !dir.join(f).is_file() {
                 return Err(format!("{f}: no such file"));
+            }
+            let real = std::fs::canonicalize(dir.join(f)).map_err(|e| format!("{f}: {e}"))?;
+            if !real.starts_with(&root) {
+                return Err(format!("{f}: a link to a file outside the folder"));
             }
         }
         Ok(m)
@@ -126,6 +143,18 @@ impl Manifest {
             origins: vec![folder(dir), folder(kit)],
             ..Policy::default()
         }
+    }
+}
+
+/// The kit an app whose folder sits in `root` loads: the image's own, `<SYSTEM_DIR>/kit/`, for an app under
+/// `<OPT_DIR>` (a package from the hub never ships a kit, and one that put a `kit` folder next to the apps
+/// would not be believed); else the `kit` next to the apps (the image's own apps, and a checkout's `webapps/`
+/// in development). Both arguments are canonical paths.
+pub fn kit_for(root: &Path, system: &Path, opt: &Path) -> PathBuf {
+    if root == opt {
+        system.join(KIT)
+    } else {
+        root.join(KIT)
     }
 }
 
@@ -151,13 +180,43 @@ impl Manifest {
 /// The runtime's host process (ADR 0042), one per app id.
 pub const HOST: &str = "/usr/bin/wol-webhost";
 
-/// A plain relative path inside the folder, ending in one of `ext`.
+/// Characters that reorder, hide or break up text: bidirectional controls, zero-width characters,
+/// line and paragraph separators, the byte order mark.
+fn invisible(c: char) -> bool {
+    matches!(
+        c,
+        '\u{ad}'              // soft hyphen
+            | '\u{61c}'       // Arabic letter mark
+            | '\u{115f}'..='\u{1160}' // Hangul choseong and jungseong fillers
+            | '\u{180e}'      // Mongolian vowel separator
+            | '\u{200b}'..='\u{200f}'
+            | '\u{2028}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{2069}'
+            | '\u{3164}'      // Hangul filler
+            | '\u{feff}'
+            | '\u{ffa0}'      // halfwidth Hangul filler
+            | '\u{e0000}'..='\u{e007f}' // Tag characters
+    )
+}
+
+/// The longest entry or icon path.
+const MAX_PATH: usize = 128;
+
+/// A plain relative path inside the folder, ending in one of `ext`: segments of ASCII letters,
+/// digits, `.`, `_` and `-` only, so nothing needs quoting, decoding or expanding anywhere the path
+/// goes later (a URL, a desktop entry, a shell: `%2F`, `~`, `$HOME`, `C:`, a leading space).
 fn rel(path: &str, ext: &[&str]) -> Result<(), String> {
+    let plain = |s: &str| {
+        s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    };
     let ok = !path.is_empty()
+        && path.len() <= MAX_PATH
         && !path.starts_with('/')
         && path
             .split('/')
-            .all(|s| !s.is_empty() && s != "." && s != ".." && !s.contains('\\'))
+            .all(|s| !s.is_empty() && s != "." && s != ".." && plain(s))
         && ext.iter().any(|e| path.ends_with(e));
     if ok {
         Ok(())
@@ -186,6 +245,88 @@ permissions = ["system.read"]
         assert_eq!(m.entry, "index.html");
         assert_eq!(m.slug(), "hello");
         m.check().unwrap();
+    }
+
+    /// QA-WEB-26: the scope name keeps 64 bytes of the id (`shared::memsaver::app_id`), so a
+    /// longer id was cut, and wold, reading the id back from the scope, refused every call. The
+    /// check refuses such an id; the longest one it takes comes back whole from its scope.
+    #[test]
+    fn an_id_longer_than_the_scope_keeps_is_refused() {
+        let room = shared::memsaver::APP_ID_MAX - APP_ID_PREFIX.len();
+        let id = |n: usize| GOOD.replace("webapp.hello", &format!("webapp.{}", "a".repeat(n)));
+        assert!(Manifest::parse(&id(room + 1)).unwrap().check().is_err());
+        let longest = Manifest::parse(&id(room)).unwrap();
+        longest.check().unwrap();
+        let unit = crate::process::scope_unit(&longest.id, 4242, 7);
+        assert_eq!(
+            wol_core::sysapp::app_of_scope(&unit, 4242).as_deref(),
+            Some(longest.id.as_str())
+        );
+    }
+
+    /// QA-WEB-32: paths and words that passed the check and broke later or spoofed the title.
+    #[test]
+    fn paths_and_words_that_break_later_or_spoof_are_refused() {
+        let toml_text = |s: &str| toml::Value::String(s.into()).to_string();
+        let with =
+            |from: &str, to: &str| Manifest::parse(&GOOD.replace(from, &toml_text(to))).unwrap();
+        let entry_of =
+            |e: &str| Manifest::parse(&format!("{GOOD}entry = {}\n", toml_text(e))).unwrap();
+        for entry in [
+            " index.html",
+            "index.html ",
+            "ind%2Fex.html",
+            "%2e%2e/x.html",
+            "C:index.html",
+            "~/index.html",
+            "$HOME/index.html",
+            "a b.html",
+            "caf\u{e9}.html",
+            "x\u{202e}.html",
+            "a;b.html",
+            "a\nb.html",
+        ] {
+            assert!(entry_of(entry).check().is_err(), "entry {entry:?}");
+        }
+        let long = format!("{}.html", "a".repeat(MAX_PATH));
+        assert!(entry_of(&long).check().is_err());
+        for name in [
+            "Do\u{202e}ctor",
+            "Doc\u{200b}tor",
+            "Do\u{2028}ctor",
+            "\u{feff}Doctor",
+        ] {
+            assert!(with("\"Hello\"", name).check().is_err(), "name {name:?}");
+        }
+        // What an app really ships still passes.
+        for entry in ["index.html", "pages/sub-1/page_2.v1.html"] {
+            entry_of(entry).check().unwrap();
+        }
+        with("\"Hello\"", "Caf\u{e9} \u{65e5}\u{672c}")
+            .check()
+            .unwrap();
+    }
+
+    /// QA-WEB-32: the entry and the icon are files of the folder, not links out of it.
+    #[test]
+    fn a_link_out_of_the_folder_is_not_the_apps_file() {
+        use std::os::unix::fs::symlink;
+        let base = std::env::temp_dir().join(format!("wol-manifest-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let dir = base.join("hello");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(FILE), GOOD).unwrap();
+        std::fs::write(dir.join("icon.svg"), "<svg/>").unwrap();
+        std::fs::write(base.join("outside.html"), "x").unwrap();
+        std::fs::write(dir.join("real.html"), "x").unwrap();
+        symlink("../outside.html", dir.join("index.html")).unwrap();
+        let e = Manifest::load(&dir).unwrap_err();
+        assert!(e.contains("outside the folder"), "{e}");
+        // A link inside the folder is the folder's own file.
+        std::fs::remove_file(dir.join("index.html")).unwrap();
+        symlink("real.html", dir.join("index.html")).unwrap();
+        Manifest::load(&dir).unwrap();
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
@@ -219,6 +360,36 @@ permissions = ["system.read"]
         let mut bad = m.clone();
         bad.name = "Hello\nExec=x".into();
         assert!(bad.check().is_err());
+    }
+
+    #[test]
+    fn an_app_under_opt_loads_the_kit_of_the_image() {
+        let (system, opt) = (
+            Path::new("/usr/share/wolos/webapps"),
+            Path::new("/opt/wolos/webapps"),
+        );
+        assert_eq!(kit_for(system, system, opt), system.join("kit"));
+        assert_eq!(
+            kit_for(opt, system, opt),
+            Path::new("/usr/share/wolos/webapps/kit")
+        );
+        // a checkout in development keeps its own kit
+        assert_eq!(
+            kit_for(Path::new("/src/wolos/webapps"), system, opt),
+            Path::new("/src/wolos/webapps/kit")
+        );
+        let m = Manifest::parse(GOOD).unwrap();
+        let p = m.policy(
+            Path::new("/opt/wolos/webapps/hello"),
+            &kit_for(opt, system, opt),
+        );
+        assert_eq!(
+            p.origins,
+            [
+                "file:///opt/wolos/webapps/hello/",
+                "file:///usr/share/wolos/webapps/kit/"
+            ]
+        );
     }
 
     #[test]

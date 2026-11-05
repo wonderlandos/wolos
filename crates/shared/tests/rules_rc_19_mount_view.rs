@@ -13,9 +13,7 @@ use rc::{Hits, Row, Src, assert_ratchet, hit};
 
 /// Debt at the start of 0.13 (2026-11-04, mid-merge tree), per file. Only shrinks.
 const BASELINE: &[Row] = &[
-    // B5's layer chroot (rbind, private, /usr and /opt overlays); the /opt overlay (QA-L2-32)
-    // came with the 0.12.1 merge, the fourth mount. Moves to a private namespace with B5.
-    ("RH-192", "crates/core/src/update/layers.rs", 4, "B5"),
+    // The layer chroot moved into `unshare --mount` with QA-STORE-58 (WD-STORE): layers.rs 0.
     // `wol update chroot`: the copy and the shared cache, bound only after it checked that its
     // mount namespace is not PID 1's (the slot build starts it under `unshare --mount`).
     ("RH-192", "crates/controller/src/run.rs", 2, "B4"),

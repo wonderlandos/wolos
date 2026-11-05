@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Which windows get the WolOS window buttons (traffic lights) drawn by the compositor.
-//! The compositor owns the lights wherever an app gives up its own: Helium, Electron with a frame,
+//! The compositor owns the lights wherever an app gives up its own: Atlas, Electron with a frame,
 //! Qt, X11 and Kit windows get them in a title strip above their content. Apps that cannot give
 //! theirs up keep them, styled as the same lights by the theme: GTK header bars, Firefox, frameless
 //! Electron. Those get no strip, so there are never two sets and never none. Either way the
@@ -70,7 +70,7 @@ pub enum Drawn {
     /// The compositor's title strip (`lights` is not `None`).
     Strip,
     /// The app's own controls in its header bar, styled by the WolOS theme (GTK 3/4, Firefox,
-    /// Chromium's GTK frame).
+    /// the engine's GTK frame).
     Theme,
     /// The app's own controls the theme cannot reach (frameless Electron, [`FORCES_OWN`]), or no
     /// controls at all (X11 menus and tooltips).
@@ -118,7 +118,7 @@ mod tests {
     /// Every app WolOS ships (wolos-iso/profile/packages.desktop, Dock pins, mimeapps defaults, wol-shell apps)
     /// and how it decorates. `Lights::None` here means its own themed lights, not no lights.
     const SHIPPED: &[(&str, Decoration, Lights)] = &[
-        ("helium", Decoration::Server, Lights::All),
+        ("atlas", Decoration::Server, Lights::All),
         ("org.gnome.Nautilus", Decoration::None, Lights::None),
         ("org.gnome.TextEditor", Decoration::None, Lights::None),
         ("org.gnome.Calculator", Decoration::None, Lights::None),

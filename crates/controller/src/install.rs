@@ -145,6 +145,25 @@ fn look_inside(t: &mut dyn Tools, p: &mut Part) {
     t.run(&["umount", LOOK], None);
 }
 
+/// Windows sleeps in `hiberfil.sys` (hibernate or Fast Startup) although `ntfsresize --info`
+/// passes the volume (QA-DOC-27): read its first 4 bytes from a read-only mount. A mount that
+/// refuses because Windows is hibernated says the same.
+fn hibernated(t: &mut dyn Tools, p: &Part) -> bool {
+    if !t.run(&["mkdir", "-p", LOOK], None).ok {
+        return false;
+    }
+    let m = t.run(
+        &["mount", "-o", look_options(&p.fstype), &p.path, LOOK],
+        None,
+    );
+    if !m.ok {
+        return disk::ntfs_blocked(&format!("{}\n{}", m.stdout, m.stderr)) == Blocked::NotShutDown;
+    }
+    let h = t.run(&["head", "-c", "4", &format!("{LOOK}/hiberfil.sys")], None);
+    t.run(&["umount", LOOK], None);
+    h.ok && disk::hiberfil_hibernated(&h.stdout)
+}
+
 /// Everything the pages need to know about `path`. Writes nothing to it.
 pub fn probe(t: &mut dyn Tools, path: &str) -> Option<Disk> {
     let mut d = read_table(t, path)?;
@@ -157,6 +176,7 @@ pub fn probe(t: &mut dyn Tools, path: &str) -> Option<Disk> {
                 );
                 let text = format!("{}\n{}", o.stdout, o.stderr);
                 match disk::parse_ntfsresize(&text).filter(|_| o.ok) {
+                    Some(_) if hibernated(t, p) => p.blocked = Some(Blocked::NotShutDown),
                     Some(m) => p.min_bytes = Some(m),
                     None => p.blocked = Some(disk::ntfs_blocked(&text)),
                 }
@@ -680,20 +700,39 @@ pub fn settings_files(p: &Plan) -> Option<Vec<(String, String)>> {
     ])
 }
 
+/// Every language Settings offers, generated in the new system (`locale-gen` in its chroot), with no
+/// plan to ask: a system installed by autoinstall has no plan, and without this its only locales
+/// are C and POSIX while the Setup Assistant writes LANG=pt_BR.UTF-8 into /etc/locale.conf
+/// (QA-SET-27, QA-FDAY-2). This is the only time it can happen: the root is sealed afterwards
+/// and `/usr/lib/locale` with it. 0: done.
+pub fn generate_locales(t: &mut dyn Tools, root: &Path) -> i32 {
+    if std::fs::write(root.join("etc/locale.gen"), region::locale_gen("")).is_err() {
+        return 1;
+    }
+    let rooted = root.to_string_lossy();
+    i32::from(!t.run(&["arch-chroot", &rooted, "locale-gen"], None).ok)
+}
+
 /// The account's request for `login::setup_plan`.
 pub fn new_account(p: &Plan, password: &str) -> Option<NewAccount> {
     let a = p.account.as_ref()?;
-    Some(NewAccount {
+    let mut n = NewAccount {
         name: a.name.clone(),
         full_name: a.full_name.clone(),
-        hint: String::new(),
+        hint: a.hint.clone(),
         locale: p.locale.clone(),
         keymap: p.keyboard.clone(),
         appearance: "auto".into(),
         avatar: a.tone.clone(),
         accent: shared::login::DEFAULT_ACCENT.into(),
         password: password.into(),
-    })
+    };
+    // The plan file is input: a hint the account rules refuse is left out, never written
+    // (the account's other fields are checked by plan_problem and setup_plan).
+    if wol_core::settings::users::validate_account(&n) == Err("hint") {
+        n.hint.clear();
+    }
+    Some(n)
 }
 
 /// Creates the account in the new system through the same plan as the Setup Assistant.
@@ -871,12 +910,19 @@ pub fn read_facts(t: &mut dyn Tools, path: &str) -> Option<disk::Facts> {
 fn read_only(env: &mut dyn Env, inv: &Invocation, t: &mut dyn Tools) -> Option<i32> {
     match inv.action {
         "install.facts" | "install.mounts" => {
-            let Some(f) = inv.get("disk").and_then(|d| read_facts(t, d)) else {
+            let Some(mut f) = inv.get("disk").and_then(|d| read_facts(t, d)) else {
                 return Some(fail(env, ErrorCode::NotFound, "no such disk"));
             };
             env.out(&if inv.action == "install.facts" {
                 f.lines()
             } else {
+                // Loops over the disk hold it too (IMG013-INSTALL-AFTER-CUT); no losetup: none.
+                let mut argv = vec!["losetup"];
+                argv.extend(disk::LOOPS_LOSETUP);
+                let lo = t.run(&argv, None);
+                if lo.ok {
+                    f.add_loops(&lo.stdout);
+                }
                 f.mount_lines()
             });
             Some(0)
@@ -906,6 +952,9 @@ pub fn verb(env: &mut dyn Env, inv: &Invocation) -> i32 {
         };
         env.out(&serde_json::to_string(&d).unwrap_or_default());
         return 0;
+    }
+    if inv.action == "install.locales" {
+        return generate_locales(&mut t, Path::new(inv.get("root").unwrap_or_default()));
     }
     let Some((plan, text)) = plan_of(env, inv) else {
         return fail(env, ErrorCode::Usage, "no readable plan file");
@@ -1190,6 +1239,15 @@ mod tests {
                         },
                     }
                 }
+                // `head -c N p`: the first N bytes of what `cat` knows.
+                ["head", "-c", n, p] => match self.cat.iter().find(|(k, _)| p.ends_with(k)) {
+                    Some((_, v)) => ok(v.chars().take(n.parse().unwrap()).collect()),
+                    None => Out {
+                        ok: false,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    },
+                },
                 ["df", ..] => ok("Used Avail\n40000000 700000000\n".into()),
                 ["ntfsresize", "--info", ..] => ok(
                     "You might resize at 50000000000 bytes or 50000 MB (freeing 2 MB).\n".into(),
@@ -1307,7 +1365,8 @@ mod tests {
                     "umount",
                     "cat",
                     "df",
-                    "test"
+                    "test",
+                    "head"
                 ]
                 .contains(&w),
                 "{l}"
@@ -1360,6 +1419,23 @@ mod tests {
         let got = probe(&mut No, "/dev/vda").unwrap();
         assert_eq!(got.parts[1].blocked, Some(Blocked::NotShutDown));
         assert_eq!(got.parts[2].blocked, Some(Blocked::BitLocker));
+    }
+
+    /// QA-DOC-27: ntfsresize passes a hibernated (or Fast Startup) Windows; its hiberfil.sys
+    /// header refuses it. A zeroed header (full shutdown) keeps the slider.
+    #[test]
+    fn a_hibernated_windows_that_ntfsresize_passes_is_refused() {
+        let mut f = Fake::new(windows());
+        f.cat = vec![("hiberfil.sys", "HIBR\0\0\0\0")];
+        let got = probe(&mut f, "/dev/vda").unwrap();
+        assert_eq!(got.parts[1].blocked, Some(Blocked::NotShutDown));
+        assert_eq!(got.parts[1].min_bytes, None);
+        assert!(f.log.iter().any(|l| l.starts_with("mount -o ro,")));
+        let mut f = Fake::new(windows());
+        f.cat = vec![("hiberfil.sys", "\0\0\0\0wake")];
+        let got = probe(&mut f, "/dev/vda").unwrap();
+        assert_eq!(got.parts[1].blocked, None);
+        assert_eq!(got.parts[1].min_bytes, Some(50 * GB));
     }
 
     /// audit core-install #1: a BitLocker Windows, probed as the installer probes it, with room
@@ -1781,6 +1857,30 @@ mod tests {
         }
     }
 
+    /// QA-FDAY-2: an install without a plan (autoinstall) generates every language too.
+    #[test]
+    fn locales_are_generated_without_a_plan() {
+        let d = std::env::temp_dir().join(format!("wol-locales-{}", std::process::id()));
+        std::fs::create_dir_all(d.join("etc")).unwrap();
+        let mut t = Fake::new(Disk::default());
+        assert_eq!(generate_locales(&mut t, &d), 0);
+        let gen_file = std::fs::read_to_string(d.join("etc/locale.gen")).unwrap();
+        for (l, _) in region::LANGUAGES {
+            assert!(gen_file.contains(&format!("{l} UTF-8\n")), "{l}");
+        }
+        assert_eq!(
+            t.log,
+            vec![format!("arch-chroot {} locale-gen", d.display())]
+        );
+        t.refuse = Some("arch-chroot");
+        assert_eq!(
+            generate_locales(&mut t, &d),
+            1,
+            "a failed locale-gen is a failed install"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// The default US layout the app ships is `us(intl)`: a plan with it must install.
     #[test]
     fn xkb_layouts_with_a_variant_install() {
@@ -1814,6 +1914,7 @@ mod tests {
                 name: "alice".into(),
                 full_name: "Alice".into(),
                 tone: "green".into(),
+                hint: String::new(),
             }),
             ..Plan::default()
         };
@@ -1953,6 +2054,7 @@ mod tests {
                 name: "alice".into(),
                 full_name: "Alice".into(),
                 tone: "green".into(),
+                hint: String::new(),
             }),
             protect: Protect::Off,
             ..Plan::default()
@@ -1964,5 +2066,40 @@ mod tests {
         );
         assert_eq!(a.appearance, "auto");
         assert!(login::setup_plan(&a).len() > 3);
+    }
+
+    /// QA-LIVE-24: the hint typed on the installer's account page reaches the new system's hint
+    /// file (the lock screen shows it after three wrong passwords); 0.12.1 dropped it, so the lock
+    /// screen only ever said "Incorrect password". An older plan without the field still reads.
+    #[test]
+    fn the_installers_hint_reaches_the_hint_file() {
+        let p = Plan {
+            locale: "en_US.UTF-8".into(),
+            keyboard: "us".into(),
+            account: Some(Account {
+                name: "alice".into(),
+                full_name: "Alice".into(),
+                tone: "green".into(),
+                hint: "white rabbit".into(),
+            }),
+            ..Plan::default()
+        };
+        let a = new_account(&p, "curiouser").unwrap();
+        assert_eq!(a.hint, "white rabbit");
+        let plan = login::setup_plan(&a);
+        let file = format!("{}/alice", login::HINTS_DIR);
+        assert!(
+            plan.iter()
+                .any(|w| format!("{w:?}").contains(&file)
+                    && format!("{w:?}").contains("white rabbit")),
+            "{plan:?}"
+        );
+        let old = r#"{"name":"alice","full_name":"Alice","tone":"green"}"#;
+        let back: Account = serde_json::from_str(old).unwrap();
+        assert_eq!(back.hint, "");
+        // A hint the account rules refuse (a colon) is not written.
+        let mut bad = p.clone();
+        bad.account.as_mut().unwrap().hint = "a:b".into();
+        assert_eq!(new_account(&bad, "curiouser").unwrap().hint, "");
     }
 }

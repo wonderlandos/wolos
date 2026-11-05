@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! wold's package changes against a fake system.
 use super::*;
+use shared::patience::Patience;
 
 /// The refusal leads to a real row: the section title Privacy & Security shows for the
 /// grant, and the app's name (MANUAL 0.12.0: it named a "Software" section that is not there).
@@ -177,20 +178,44 @@ fn administrator_sheets_are_waited_for_as_long_as_they_may_run() {
         capability: "packages-update".into(),
         what: "x".into(),
     };
-    assert_eq!(ask_wait(&change), click);
+    assert_eq!(ask_wait(&change, Patience::Normal), click);
     let file = file_sheet();
     let long = Duration::from_secs(wol_core::admin::LONG_STEP_SECS.into());
-    assert!(ask_wait(&file) >= click + long);
-    assert!(ask_wait(&ApprovalRequest::SystemRollback) >= click + long);
+    assert!(ask_wait(&file, Patience::Normal) >= click + long);
+    assert!(ask_wait(&ApprovalRequest::SystemRollback, Patience::Normal) >= click + long);
     let three = ApprovalRequest::Packages {
         verb: "install".into(),
         names: vec!["a".into(), "b".into(), "c".into()],
     };
-    assert!(ask_wait(&three) >= click + long * 3);
+    assert!(ask_wait(&three, Patience::Normal) >= click + long * 3);
     let chan = ApprovalRequest::SystemChannel {
-        channel: "beta".into(),
+        channel: "stable".into(),
     };
-    assert!(ask_wait(&chan) > click);
+    assert!(ask_wait(&chan, Patience::Normal) > click);
+}
+
+/// QA-ACC-6: with "Give me more time" the sheet stays open x2, x5 or until [`shared::patience::NEVER_SECS`],
+/// and wold waits for it (10 s more for the answer to arrive), so a click on a late sheet is not lost.
+#[test]
+fn an_account_that_asked_for_more_time_gets_a_longer_wait() {
+    let change = ApprovalRequest::Change {
+        capability: "packages-update".into(),
+        what: "x".into(),
+    };
+    let secs = |p| ask_wait(&change, p).as_secs();
+    assert_eq!(secs(Patience::Normal), 60);
+    assert_eq!(secs(Patience::Double), 110);
+    assert_eq!(secs(Patience::Five), 260);
+    assert_eq!(
+        secs(Patience::Never),
+        u64::from(shared::patience::NEVER_SECS) + 10
+    );
+    // The administrator's steps come after the click, whatever the click took.
+    let file = file_sheet();
+    assert!(
+        ask_wait(&file, Patience::Five)
+            >= ask_wait(&file, Patience::Normal) + Duration::from_secs(200)
+    );
 }
 
 /// Audit S4-13: a failed administrator sheet of several names makes no "nothing changed"
@@ -532,9 +557,9 @@ fn root_changes_need_the_administrator_sheet() {
             ApprovalRequest::SystemRollback,
         ),
         (
-            r#"{"call":"system.channel","channel":"beta"}"#,
+            r#"{"call":"system.channel","channel":"stable"}"#,
             ApprovalRequest::SystemChannel {
-                channel: "beta".into(),
+                channel: "stable".into(),
             },
         ),
     ] {
@@ -745,13 +770,23 @@ fn decisions() {
     );
     assert!(
         handle(
-            r#"{"call":"system.channel","channel":"beta"}"#,
+            r#"{"call":"system.channel","channel":"stable"}"#,
             Some((1000, APP)),
             &all,
             &f
         )
         .ok,
         "wol-admind wrote the channel after the password"
+    );
+    // QA-STORE-68: a testing channel is refused before any sheet or password.
+    assert!(
+        !handle(
+            r#"{"call":"system.channel","channel":"beta"}"#,
+            Some((1000, APP)),
+            &all,
+            &f
+        )
+        .ok
     );
     assert!(f.ran.borrow().is_empty());
 }
@@ -790,7 +825,22 @@ fn system_update_needs_a_signed_newer_release() {
         signature: "aé".into(),
     }
     .encode();
-    assert!(!handle(&odd, Some((1000, APP)), &all, &f).ok);
+    // QA-SHADOW-22: the wire refuses a signature that is not 128 hex digits before anything is
+    // checked, with its own sentence; only a well-formed one that does not verify (the forged one
+    // above) reads "not signed by WolOS", and that is the sentence the person sees.
+    let refused = handle(&odd, Some((1000, APP)), &all, &f);
+    assert!(!refused.ok);
+    assert_eq!(refused.code, Some(Code::InvalidArgument));
+    assert_eq!(
+        refused.message.as_deref(),
+        Some("The release signature is not valid.")
+    );
+    let not_signed = handle(&forged, Some((1000, APP)), &all, &f);
+    assert_eq!(
+        not_signed.message.as_deref(),
+        Some("That release is not signed by WolOS, so it was not installed.")
+    );
+    assert_eq!(f.ran.borrow().len(), 1, "nothing ran for either");
     let older = manifest("2026/12/01");
     let down = call(&older, &wol_core::package::sign(&seed, older.as_bytes()));
     assert_eq!(
@@ -1068,4 +1118,26 @@ fn an_unreadable_package_is_refused_before_the_sheet() {
     assert!(f.asked.borrow().is_empty(), "no sheet");
     assert!(f.ran.borrow().is_empty());
     assert_eq!(f.discarded.borrow().len(), 1, "the copy is dropped");
+}
+
+/// QA-ADR-23: ADR 0034 publishes the staged-install caps; the constants are the same numbers
+/// (16 GiB unpacked = 4 x the 4 GiB copy cap; one copy per account, two in flight = 8 GiB).
+#[test]
+fn staged_caps_are_the_adr_0034_numbers() {
+    assert_eq!(MAX_UNPACKED, 16 << 30);
+    assert_eq!(MAX_STAGED, 4 << 30);
+    assert_eq!(MAX_STAGED * STAGED_TOTAL as u64, 8 << 30);
+    assert_eq!(ZSTD_TIMEOUT, Duration::from_secs(120));
+    let adr = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../docs/adr/0034-root-staged-installs.md"
+    ))
+    .unwrap();
+    for quoted in [
+        "120 s, at most 16 GiB unpacked",
+        "4 GiB per copy",
+        "8 GiB of copies in flight",
+    ] {
+        assert!(adr.contains(quoted), "ADR 0034 no longer says {quoted:?}");
+    }
 }

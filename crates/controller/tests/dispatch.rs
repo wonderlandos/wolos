@@ -402,7 +402,7 @@ fn theme_set_writes_every_toolkit() {
             .any(|a| a.len() == 5 && a[3] == "gtk-theme" && a[4] == "WolOS-retro-82-gtk3"),
         "a new GTK 3 theme name per WolOS theme: running GTK 3 apps reload"
     );
-    // Helium (Chromium GTK mode) reads exactly these: GTK 3 theme, portal accent and scheme.
+    // Atlas (GTK mode) reads exactly these: GTK 3 theme, portal accent and scheme.
     for (k, v) in [
         ("accent-color", "orange"),
         ("color-scheme", "prefer-dark"),
@@ -586,6 +586,27 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
         env.out
             .contains("unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n")
     );
+    // QA-STORE-76: an empty argument reads as '' (not a bare "bootctl set-default ").
+    assert!(env.out.ends_with("bootctl set-default ''\n"), "{}", env.out);
+}
+
+/// QA-STORE-76: `wol --version` prints the version, not the help; `wol layers` names its
+/// commands instead of "did you mean 'layers'?". QA-PWR-6 (wd-settings) made that the rule for
+/// every group: the group word alone is the help for the group, exit 0, listing its commands.
+#[test]
+fn version_and_group_words() {
+    let mut env = FakeEnv::default();
+    assert_eq!(run("--version", &mut env), 0);
+    assert_eq!(env.out, format!("wol {}\n", env!("CARGO_PKG_VERSION")));
+    let inv = parse(&["layers"]).unwrap();
+    assert_eq!((inv.action, inv.get("command")), ("help", Some("layers")));
+    let mut env = FakeEnv::default();
+    assert_eq!(run("layers", &mut env), 0);
+    for sub in ["layers list", "layers fold", "layers clear"] {
+        assert!(env.out.contains(sub), "{sub}: {}", env.out);
+    }
+    let e = parse(&["layer"]).unwrap_err().to_string();
+    assert!(e.contains("did you mean 'layers'"), "{e}");
 }
 
 #[test]
@@ -1050,4 +1071,63 @@ fn update_chroot_binds_the_copy_and_the_cache() {
     let mut help = FakeEnv::default();
     run("help", &mut help);
     assert!(!help.out.contains("update chroot"), "{}", help.out);
+}
+
+/// QA-STORE-9/68: `wol update channel` says the channel the system follows: stable, also when a
+/// file from before names a testing channel; --json lists the offered ones.
+#[test]
+fn update_channel_reports_stable() {
+    for file in [None, Some("beta\n"), Some("stable\n")] {
+        let mut env = FakeEnv::default();
+        if let Some(t) = file {
+            env.files
+                .push((PathBuf::from("/etc/wolos/channel"), t.into()));
+        }
+        assert_eq!(run("update channel", &mut env), 0);
+        assert_eq!(env.out, "stable\n", "{file:?}");
+    }
+    let mut env = FakeEnv::default();
+    assert_eq!(run("update channel --json", &mut env), 0);
+    let v: serde_json::Value = serde_json::from_str(&env.out).unwrap();
+    assert_eq!(v["channel"], "stable");
+    assert_eq!(v["offered"], serde_json::json!(["stable"]));
+}
+
+/// QA-PLUG-23: `wol open` starts the app and returns; the app has no pipe of the caller's (a
+/// guest agent or `su -l bob -c` waits for every holder of its stdout), and a launcher that stays
+/// up as the app does not hold `wol open` either.
+#[test]
+fn open_returns_and_shares_no_pipe_with_the_app() {
+    use controller::run::{Env, RealEnv};
+    let dir = temp_home("detached");
+    let out = dir.join("fds");
+    let pid = dir.join("pid");
+    let script = format!(
+        "echo $$ > {}; a=$(readlink /proc/$$/fd/0 /proc/$$/fd/1 /proc/$$/fd/2); echo \"$a\" > {}; exec sleep 60",
+        pid.display(),
+        out.display()
+    );
+    let start = std::time::Instant::now();
+    let code = RealEnv
+        .exec_detached(&["sh".into(), "-c".into(), script])
+        .unwrap();
+    assert_eq!(code, 0);
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(15),
+        "waited for the app"
+    );
+    // The launcher is still running (it was waited for 5 s) and had written its descriptors long
+    // before: none is ours.
+    let seen = std::fs::read_to_string(&out).unwrap_or_default();
+    assert_eq!(seen, "/dev/null\n/dev/null\n/dev/null\n", "{seen}");
+    if let Ok(p) = std::fs::read_to_string(&pid) {
+        let _ = std::process::Command::new("kill").arg(p.trim()).status();
+    }
+    // A launcher that exits answers with its own status.
+    assert_eq!(
+        RealEnv
+            .exec_detached(&["sh".into(), "-c".into(), "exit 3".into()])
+            .unwrap(),
+        3
+    );
 }

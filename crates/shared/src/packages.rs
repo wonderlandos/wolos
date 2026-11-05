@@ -9,6 +9,20 @@ pub const MAX_NAMES: usize = 64;
 pub const MAX_NAME: usize = 128;
 pub const MAX_MANIFEST: usize = 8 * 1024;
 pub const CHANNELS: [&str; 3] = ["stable", "beta", "nightly"];
+/// The channels a person can follow in this release: stable only (lead, 0.13: no testing
+/// channel). Release feeds may still name the others; nothing on this system switches to them.
+pub const OFFERED: [&str; 1] = ["stable"];
+
+/// The channel this computer follows, from `/etc/wolos/channel` (None: no file): the file's word
+/// when it is an [`OFFERED`] one, else stable (a file left from before reads as what is used).
+pub fn channel_of(text: Option<&str>) -> &'static str {
+    let w = text.map(str::trim).unwrap_or_default();
+    OFFERED
+        .iter()
+        .find(|c| **c == w)
+        .copied()
+        .unwrap_or(OFFERED[0])
+}
 /// Grants these calls need (`wol_core::consent::CAPABILITIES`).
 pub const GRANTS: [&str; 4] = [
     "packages-install",
@@ -125,8 +139,10 @@ impl PackageCall {
                 }
                 Ok(())
             }
-            Self::SystemChannel { channel } if !CHANNELS.contains(&channel.as_str()) => {
-                Err("The channel is stable, beta or nightly.".into())
+            // Only the channel this release offers (QA-STORE-68): no sheet for a switch that
+            // would be refused after the password.
+            Self::SystemChannel { channel } if !OFFERED.contains(&channel.as_str()) => {
+                Err("WolOS offers the stable channel only.".into())
             }
             _ => Ok(()),
         }
@@ -161,9 +177,25 @@ impl PackageCall {
 mod tests {
     use super::*;
 
+    /// QA-STORE-9/68: one channel is offered; whatever the file says, stable is what is read.
+    #[test]
+    fn the_channel_read_is_always_offered() {
+        assert_eq!(OFFERED, ["stable"]);
+        for t in [
+            None,
+            Some(""),
+            Some("stable\n"),
+            Some("beta\n"),
+            Some("nightly"),
+            Some("x"),
+        ] {
+            assert_eq!(channel_of(t), "stable", "{t:?}");
+        }
+    }
+
     #[test]
     fn decode_table() {
-        let cases: [(&str, Result<&str, ()>); 12] = [
+        let cases: [(&str, Result<&str, ()>); 13] = [
             (
                 r#"{"call":"package.change","verb":"install","names":["firefox","lib32-mesa"]}"#,
                 Ok("packages-install"),
@@ -201,9 +233,11 @@ mod tests {
                 Err(()),
             ),
             (
-                r#"{"call":"system.channel","channel":"beta"}"#,
+                r#"{"call":"system.channel","channel":"stable"}"#,
                 Ok("packages-update"),
             ),
+            // 0.13 offers one channel (QA-STORE-68): a testing one is refused before any sheet.
+            (r#"{"call":"system.channel","channel":"beta"}"#, Err(())),
             (r#"{"call":"system.channel","channel":"canary"}"#, Err(())),
             (r#"{"call":"system.rollback"}"#, Ok("packages-update")),
         ];

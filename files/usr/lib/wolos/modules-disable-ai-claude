@@ -10,16 +10,28 @@ set -eu
 : "${HOME:?}"
 PATH="$HOME/.local/bin:$PATH"
 SKILL=${WOLOS_AGENT_SKILL:-/usr/share/wolos/agents/skills/wolos}
+failed=0
 if command -v claude >/dev/null 2>&1; then
   # Only our registration: `claude mcp get` names the command; a server of the person's own
-  # under the same name runs something else and stays.
-  if out=$(claude mcp get wolos 2>/dev/null) && printf '%s\n' "$out" | grep -q 'wol mcp\|Command: *wol'; then
-    claude mcp remove --scope user wolos
+  # under the same name runs something else and stays. Ours is exactly `Command: wol` (or
+  # /usr/bin/wol) with `Args: mcp`: not `wol` with other arguments, not another program called
+  # wol, not a wrapper such as `sh -c "wol mcp"`.
+  if out=$(claude mcp get wolos 2>/dev/null); then
+    field() { printf '%s\n' "$out" | sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" | sed -n '1s/[[:space:]]*$//p'; }
+    cmd=$(field Command) args=$(field Args)
+    case $cmd in
+      wol | /usr/bin/wol)
+        if [ "$args" = mcp ]; then
+          # A failed removal must not stop the links below from coming off (set -e): note it, go on.
+          claude mcp remove --scope user wolos || failed=1
+        fi
+        ;;
+    esac
   fi
 fi
 for d in "$HOME/.claude/skills" "$HOME/.agents/skills"; do
   if [ -L "$d/wolos" ] && [ "$(readlink -- "$d/wolos")" = "$SKILL" ]; then
-    rm -f -- "$d/wolos"
+    rm -f -- "$d/wolos" || failed=1
   fi
 done
-exit 0
+exit "$failed"

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Everyday userland from the real-GPU run: sudo for administrators, zsh for every account, user
-//! folders, unlocked keyring, printing, removable media and default apps (Helium the browser).
+//! folders, unlocked keyring, printing, removable media and default apps (Atlas the browser).
 //! Scripts run on the host with fakes.
 #[path = "support/siblings.rs"]
 mod siblings;
@@ -236,18 +236,22 @@ fn printing_and_removable_media_are_on() {
 }
 
 #[test]
-fn helium_and_the_dock_apps_open_their_files_by_default() {
+fn atlas_and_the_dock_apps_open_their_files_by_default() {
     let mime = read("desktop/overlay/usr/share/applications/mimeapps.list");
     for t in [
-        "x-scheme-handler/http=helium.desktop;",
-        "x-scheme-handler/https=helium.desktop;",
-        "text/html=helium.desktop;",
-        "application/xhtml+xml=helium.desktop;",
+        "x-scheme-handler/http=atlas.desktop;",
+        "x-scheme-handler/https=atlas.desktop;",
+        "text/html=atlas.desktop;",
+        "application/xhtml+xml=atlas.desktop;",
         "x-scheme-handler/mailto=org.gnome.Geary.desktop;",
         "inode/directory=org.gnome.Nautilus.desktop;",
         "application/pdf=org.gnome.Papers.desktop;",
         "text/plain=org.gnome.TextEditor.desktop;",
-        "image/png=org.gnome.eog.desktop;",
+        "image/png=org.wolos.gallery.desktop;",
+        "image/jpeg=org.wolos.gallery.desktop;",
+        "image/gif=org.gnome.eog.desktop;atlas.desktop;",
+        "image/webp=org.gnome.eog.desktop;atlas.desktop;",
+        "image/svg+xml=org.gnome.eog.desktop;atlas.desktop;",
         "audio/flac=io.bassi.Amberol.desktop;",
         "video/mp4=io.github.celluloid_player.Celluloid.desktop;",
         "application/zip=org.gnome.FileRoller.desktop;",
@@ -258,35 +262,86 @@ fn helium_and_the_dock_apps_open_their_files_by_default() {
     assert!(mime.starts_with('#') && mime.contains("\n[Default Applications]\n"));
 }
 
-/// e2e D1: web apps named the package (`helium-browser`) as their program and never opened. Web
-/// apps, the browser theme files and the default-browser entry all name the program the
-/// `helium-browser` package really installs.
+/// e2e D1: web apps named the package (then the old browser's) as their program and never
+/// opened. Web apps, the browser theme files and the default-browser entry all name the program
+/// the `atlas-browser` package really installs.
 #[test]
 fn web_apps_and_the_default_browser_run_the_program_the_package_installs() {
     let bin = wol_core::webapps::BROWSER;
-    assert_eq!(bin, wol_core::theme::helium::HELIUM.bin);
-    let pkg = read("helium-browser/PKGBUILD");
+    assert_eq!(bin, wol_core::browser::ATLAS.bin);
+    let pkg = read("atlas-browser/PKGBUILD");
     assert!(
         pkg.lines()
-            .any(|l| l.trim() == format!("install -Dm755 helium.sh \"$pkgdir{bin}\"")),
-        "helium-browser/PKGBUILD does not install {bin}"
+            .any(|l| l.trim() == format!("install -Dm755 atlas.sh \"$pkgdir{bin}\"")),
+        "atlas-browser/PKGBUILD does not install {bin}"
     );
     assert!(
-        !pkg.contains("/usr/bin/helium-browser"),
+        !pkg.contains("/usr/bin/atlas-browser"),
         "a second launcher name would hide which one the image has"
     );
-    let entry = read("helium-browser/helium.desktop");
+    let entry = read("atlas-browser/atlas.desktop");
     let exec = entry
         .lines()
         .find_map(|l| l.strip_prefix("Exec="))
         .and_then(|e| e.split_whitespace().next())
         .unwrap();
-    assert_eq!(Some(exec), bin.rsplit('/').next(), "helium.desktop Exec");
+    assert_eq!(Some(exec), bin.rsplit('/').next(), "atlas.desktop Exec");
     let mime = read("desktop/overlay/usr/share/applications/mimeapps.list");
     assert!(
         mime.lines()
-            .any(|l| l == "x-scheme-handler/https=helium.desktop;")
+            .any(|l| l == "x-scheme-handler/https=atlas.desktop;")
     );
+}
+
+/// The launcher is the data in `wol_core::browser`: each default switch behind its condition,
+/// the flags files after the defaults, the app id the Dock and window rules match, the
+/// first-run preferences linked next to the engine, the one-time move of the old profile.
+#[test]
+fn the_atlas_launcher_is_the_contract_of_wol_core_browser() {
+    use wol_core::browser::{ATLAS, LEGACY, When, launcher_flags};
+    let sh = read("atlas-browser/atlas.sh");
+    for f in launcher_flags() {
+        let line = sh
+            .lines()
+            .position(|l| l.contains(f.flag))
+            .unwrap_or_else(|| panic!("atlas.sh does not add {}", f.flag));
+        let cond = match f.when {
+            When::Always => None,
+            When::Wayland | When::NoWayland => Some("WAYLAND_DISPLAY"),
+            When::RenderNode => Some("/dev/dri/renderD"),
+        };
+        if let Some(c) = cond {
+            let before = sh.lines().take(line + 1).collect::<Vec<_>>().join("\n");
+            assert!(before.contains(c), "{} without its condition {c}", f.flag);
+        }
+    }
+    // The system file, then the person's (the same name outside /etc), then the command line.
+    let system = sh
+        .find(ATLAS.flags_file)
+        .expect("atlas.sh reads the system flags");
+    let user = sh
+        .match_indices(ATLAS.user_flags)
+        .map(|(i, _)| i)
+        .find(|&i| !sh[..i].ends_with("/etc/"))
+        .expect("atlas.sh reads the person's flags");
+    assert!(system < user, "system flags first");
+    assert!(sh.contains(&format!("{}={}", ATLAS.desktop_env, ATLAS.desktop_id)));
+    assert!(
+        sh.contains(LEGACY.config),
+        "atlas.sh moves the old profile once"
+    );
+    assert!(sh.contains(ATLAS.install_dir));
+    let entry = read("atlas-browser/atlas.desktop");
+    assert!(
+        entry
+            .lines()
+            .any(|l| l == format!("StartupWMClass={}", ATLAS.class))
+    );
+    let pkg = read("atlas-browser/PKGBUILD");
+    assert!(pkg.contains(&format!(
+        "ln -s {} \"$pkgdir{}/initial_preferences\"",
+        ATLAS.initial_prefs, ATLAS.install_dir
+    )));
 }
 
 /// e2e D2: Night Light's program was not in the image, so the toggle, Ctrl+Super+N and the

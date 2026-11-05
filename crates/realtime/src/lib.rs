@@ -19,6 +19,7 @@ pub mod placement;
 pub mod power;
 pub mod qos;
 pub mod session_lock;
+pub mod snap;
 pub mod titlebar;
 pub mod wm_gates;
 

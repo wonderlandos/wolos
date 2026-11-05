@@ -75,8 +75,13 @@ pub fn url_host(url: &str) -> Option<String> {
     let rest = url.split_once("://")?.1;
     let auth = rest.split(['/', '?', '#']).next()?;
     let host = auth.rsplit('@').next()?;
-    let host = host.split(':').next()?.to_ascii_lowercase();
-    (!host.is_empty()).then_some(host)
+    // An IPv6 literal keeps its brackets, `[::1]`, and the port after them goes (QA-PLUG-44).
+    let host = match host.strip_prefix('[') {
+        Some(rest) => format!("[{}]", rest.split(']').next()?),
+        None => host.split(':').next()?.to_string(),
+    }
+    .to_ascii_lowercase();
+    (!host.is_empty() && host != "[]").then_some(host)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1270,6 +1275,11 @@ mod tests {
             ("http://User@Api.Example.com:8080/", Some("api.example.com")),
             ("https://", None),
             ("nope", None),
+            // QA-PLUG-44: an IPv6 literal is the whole bracketed address, not "[".
+            ("http://[::1]/", Some("[::1]")),
+            ("http://U@[FE80::1]:8080/x", Some("[fe80::1]")),
+            ("http://[::1", Some("[::1]")),
+            ("http://[]/", None),
         ] {
             assert_eq!(url_host(url).as_deref(), host, "{url}");
         }

@@ -15,6 +15,8 @@ terminals and consoles from `theme.json`, so a picture theme looks exactly like 
 Crystal, because the lead chose it for this tool; no shards, only the standard library, gdk-pixbuf
 (already on the desktop) for decoding and the TOML reader of `wopkg/src/wopkg/toml.cr`.
 
+**Where it comes from.** The Creative module (`wolos-module-creative`, docs/modules/modules.md) brings the `wolos-hue` package; it is not on the image. `wol modules install creative` adds it (Settings > Modules, or the installer's module list).
+
 ## How it works
 
 1. **Decode** (`hue/src/hue/image.cr`): gdk-pixbuf reads PNG, JPEG, WebP or AVIF (whatever

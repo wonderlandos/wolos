@@ -1,0 +1,23 @@
+{"op":"hello","version":0,"pid":4242}
+{"op":"hello","version":1,"pid":0}
+{"op":"hello","version":1}
+{"op":"hello","version":1,"pid":4242,"extra":true}
+{"op":"share","id":0,"path":"/home/ana/Downloads/report.pdf"}
+{"op":"share","path":"/home/ana/Downloads/report.pdf"}
+{"op":"share","id":-1,"path":"/home/ana/Downloads/report.pdf"}
+{"op":"share","id":4294967296,"path":"/home/ana/Downloads/report.pdf"}
+{"op":"share","id":1,"path":"Downloads/report.pdf"}
+{"op":"share","id":1,"path":"/home/ana/../bob/report.pdf"}
+{"op":"share","id":1,"path":"/home/ana/./report.pdf"}
+{"op":"share","id":1,"path":"/home/ana/Downloads/"}
+{"op":"share","id":1,"path":"/"}
+{"op":"share","id":1,"path":""}
+{"op":"share","id":1,"path":"/home/ana/a\nb"}
+{"op":"open_with","id":1,"path":"/home//report.pdf"}
+{"op":"trash","id":1,"path":["/home/ana/report.pdf"]}
+{"op":"print","id":1,"path":"/home/ana/report.pdf"}
+{"op":"Share","id":1,"path":"/home/ana/report.pdf"}
+{"id":1,"path":"/home/ana/report.pdf"}
+["share",1,"/home/ana/report.pdf"]
+not json
+ {"op":"hello","version":1,"pid":4242}

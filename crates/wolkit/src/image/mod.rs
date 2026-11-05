@@ -24,6 +24,7 @@ use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
 use crate::error::{Error, Result};
+#[cfg(feature = "native")]
 use crate::loop_::Waker;
 
 pub const MAX_SIDE: u32 = 16_384;
@@ -189,6 +190,7 @@ static GENERATION: AtomicU64 = AtomicU64::new(1);
 static SIZE_GENERATION: AtomicU64 = AtomicU64::new(1);
 static REGISTRY: LazyLock<Mutex<HashMap<u32, Weak<Entry>>>> = LazyLock::new(Default::default);
 static PENDING: LazyLock<(Mutex<usize>, Condvar)> = LazyLock::new(Default::default);
+#[cfg(feature = "native")]
 static SUBSCRIBERS: LazyLock<Mutex<Vec<Weak<Waker>>>> = LazyLock::new(Default::default);
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -228,6 +230,7 @@ pub fn size_generation() -> u64 {
     SIZE_GENERATION.load(Ordering::Acquire)
 }
 
+#[cfg(feature = "native")]
 /// A wake-up the native backend polls: woken whenever [`generation`] moves.
 pub fn subscribe() -> Option<Arc<Waker>> {
     let w = Arc::new(Waker::new().ok()?);
@@ -239,6 +242,7 @@ pub fn subscribe() -> Option<Arc<Waker>> {
 
 fn changed() {
     GENERATION.fetch_add(1, Ordering::AcqRel);
+    #[cfg(feature = "native")]
     for s in lock(&SUBSCRIBERS).iter().filter_map(Weak::upgrade) {
         s.wake();
     }
@@ -247,8 +251,13 @@ fn changed() {
 /// Waits until no decode is queued or running, at most `timeout`. True when none is left. The
 /// headless backend calls this before it draws, so its frames do not depend on timing.
 pub fn settle(timeout: Duration) -> bool {
-    let end = Instant::now() + timeout;
     let (m, cv) = &*PENDING;
+    // Nothing pending (always so on the web build, which decodes inline): no clock is read,
+    // `Instant::now` is not available on wasm32-unknown-unknown.
+    if *lock(m) == 0 {
+        return true;
+    }
+    let end = Instant::now() + timeout;
     let mut n = lock(m);
     while *n > 0 {
         let left = end.saturating_duration_since(Instant::now());

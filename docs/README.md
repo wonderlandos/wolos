@@ -73,9 +73,20 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0040](adr/0040-security-defaults-on-linux.md) | Security defaults on Linux | accepted |
 | [0041](adr/0041-ruby-scripts.md) | Ruby scripts run like shell scripts (`wol script`) | accepted |
 | [0042](adr/0042-wolos-web-runtime.md) | A WolOS web-app runtime on the Rust browser engine: two tracks, one engine library | accepted |
+| [0043](adr/0043-atlas-browser.md) | Atlas, the WolOS browser: a patch series on an org fork, Rust side components over a stable boundary | proposed |
 | [0044](adr/0044-etc-overlay-across-slot-switches.md) | The /etc overlay across slot switches | accepted |
+| [0045](adr/0045-locale-system.md) | One locale system for the whole OS: TSV sources, compiled `.wtx` tables, constant-time lookup, English fallback, plurals, pseudo-locale | accepted |
 | [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
+| [0052](adr/0052-federate-native-support.md) | Federate Network addresses, natively (`fed://` in the web engine) | proposed |
+| [0053](adr/0053-atlas-private-and-tor-tabs.md) | Atlas private and Tor tabs: the kernel is the kill switch | proposed |
+| [0054](adr/0054-post-quantum-keyring.md) | Post-quantum local keyring: unlock factors, per-app access lists, signed audit chain, export and LAN move | proposed |
+| [0055](adr/0055-system-wide-tls-policy.md) | System-wide TLS policy: post-quantum hybrid by default | proposed |
+| [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
+| [0057](adr/0057-search-by-meaning.md) | Search by meaning in Settings, the Search bar and `wol help` | accepted |
+| [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
+| [0060](adr/0060-wolkit-on-webgpu-and-wasm.md) | libWolkit on WebGPU and WebAssembly: one renderer trait, wgpu as the portable target | proposed |
+| [0061](adr/0061-runtime-tuning-js-engines.md) | Runtime tuning: kernel and userland memory for JavaScript engines (fault-around, KSM, Bun allocator, page-out) | accepted |
 
 ## Modules
 
@@ -84,17 +95,24 @@ Each module document names its ADR and its code by crate and path.
 | Document | Content | ADR |
 |---|---|---|
 | [modules/abi.md](modules/abi.md) | libwol: the app API (`wol.h`, `libwol.so.1`), ABI rules, planned families, Lua widgets | [0020](adr/0020-libwol-stable-abi.md) |
-| [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Helium, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
+| [modules/app-theming.md](modules/app-theming.md) | app theming (`wol theme set <id>`): toolkit files for GTK, Qt/Kvantum, Firefox, Atlas, editors | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/audio.md](modules/audio.md) | sound: PipeWire, `wol-volume`, the volume OSD, devices | [0038](adr/0038-sound-service.md) |
+| [modules/default-apps.md](modules/default-apps.md) | Default Apps and Open With: the app the person picks per kind of file (`~/.config/mimeapps.list`, journaled), Open With remembering, a file dropped on a Dock tile, the tile's own actions | ADR 0059 (draft) |
+| [modules/experience.md](modules/experience.md) | The experience as data: the 28 surfaces with owner and journey, what each shipped app provides (`X-WolOS-Surfaces`), the image budget | [0059](adr/0059-the-wolos-experience.md) |
+| [modules/search.md](modules/search.md) | search by meaning on the device: the `.wst` table and its reader (`wolsem`), the hybrid rank, Settings search, the Search bar's manual and "Did you mean", `wol help <words>` | [0057](adr/0057-search-by-meaning.md) |
+| [modules/tor.md](modules/tor.md) | Tor as a layer of the OS (`wol-tor`): Atlas tabs, one app, the whole computer; switches, status, doctor, Keep Tor ready | [0053](adr/0053-atlas-private-and-tor-tabs.md), [0056](adr/0056-wol-tor-system-tor-layer.md) |
 | [modules/doctor.md](modules/doctor.md) | Doctor: every check of the system in one list (`wol doctor`, the Doctor app), each with its fix | [0048](adr/0048-system-web-apps.md) |
 | [modules/cryswol.md](modules/cryswol.md) | Cryswol: the Crystal shard over libwol (`require "cryswol"`, namespace `Wol`): layers, ownership and callback rules, errors, threads, build, how to add a verb | [0036](adr/0036-crystal-userland.md) |
 | [modules/libwolkit.md](modules/libwolkit.md) | libWolkit: the UI engine (`wolkit.h`, `libwolkit.so.1`): scene and patch stream, style, layout, text, paint, CPU and GPU renderers, window backends, limits | [0039](adr/0039-libwolkit-and-wolkit.md) |
+| [l10n/README.md](l10n/README.md) | translating WolOS: the seven official languages and the ones planned next, the TSV files, placeholders, plurals, the pseudo-locale, and where the language is chosen | [0045](adr/0045-locale-system.md) |
 | [modules/wolkit.md](modules/wolkit.md) | Wolkit: the Crystal UI kit over libWolkit (`require "wolkit"`): DSL, signals, components, test harness, developer tools | [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/wolkit-style.md](modules/wolkit-style.md) | the `.wolcss` style language: properties, tokens, selectors, lints `WK-nnn` (generated by `wolkit-stylec --doc`) | [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/wolkit-tutorial.md](modules/wolkit-tutorial.md) | a first Wolkit app in fifteen minutes: a to-do list in eight steps | [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/wolkit-bench.md](modules/wolkit-bench.md) | Wolkit benchmarks: method, the budgets and what was measured | [0039](adr/0039-libwolkit-and-wolkit.md) |
+| [modules/atlas.md](modules/atlas.md) | the Atlas bridge (`atlas-bridge`, `crates/atlas`): Share, Open With and Move to Trash for the browser, the Atlas Host Protocol, fixtures, identity, consent | [0043](adr/0043-atlas-browser.md) |
 | [modules/apps.md](modules/apps.md) | the bundled apps rewritten in Crystal on Wolkit: the list, what each one has, lessons | [0036](adr/0036-crystal-userland.md), [0039](adr/0039-libwolkit-and-wolkit.md) |
 | [modules/gallery.md](modules/gallery.md) | Gallery (`org.wolos.gallery`, `wol-gallery`): picture library by date and place, viewer, Trash with Undo; how it is built and tested | [0039](adr/0039-libwolkit-and-wolkit.md) |
+| [modules/share.md](modules/share.md) | Share (`wol-share`, the share sheet): the apps that can take a file, text or link, found in the desktop entries; Files item; for app authors | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/aurlaws.md](modules/aurlaws.md) | aurlaws: community-collection packages judged by laws over dependency graphs | [0022](adr/0022-aur-laws.md) |
 | [modules/automation.md](modules/automation.md) | helpers (`wol mcp`, scripts): policy, approval sheet wire, audit log | [0020](adr/0020-libwol-stable-abi.md) |
 | [modules/console.md](modules/console.md) | the console: `su` through sudo in every shell, command hints (`wol hint`, `hints.tsv`) for what is missing or sealed | [0032](adr/0032-optional-modules.md) |
@@ -105,13 +123,22 @@ Each module document names its ADR and its code by crate and path.
 | [modules/hue.md](modules/hue.md) | wol-hue: themes from a picture, 12 sliders, Base16 and colors.toml import, saved looks | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/hyprland-fork.md](modules/hyprland-fork.md) | the compositor fork: base version, patches in `wolos-pkgbuilds/hyprland-wolos/`, config, QoS plugin | [0012](adr/0012-seamless-boot.md) |
 | [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack (historical: FreeBSD base) | [0008](adr/0008-i915-frame-deadline-boost.md) |
+| [modules/flathub.md](modules/flathub.md) | Flathub in the App Store: curation (Picked by WolOS, Verified), the Flatpak runtime, portals and consent grants | [0021](adr/0021-wopkg.md) |
+| [modules/wolcrypt.md](modules/wolcrypt.md) | wolcrypt: every cryptographic operation in one crate (sign, verify, seal, hash, derive, hybrid KEM, TLS group) | 0046 (written in the trust-core repository) |
+| [modules/x86-64-v3.md](modules/x86-64-v3.md) | x86-64-v3 for our own packages: the CPU gate, the second repo, `wol mirror`, the installer guard | [0030](adr/0030-repo-cdn-cachy-redirect.md) |
+| [modules/keyring.md](modules/keyring.md) | the keyring: `wol keyring`, `wol-keyringd`, the Secret Service subset, unlock factors, audit, Settings page copy | [0054](adr/0054-post-quantum-keyring.md) |
 | [modules/memory-bandwidth.md](modules/memory-bandwidth.md) | iGPU bandwidth paradigms, top 5, measurement | [0007](adr/0007-gpu-tuning-interface.md) |
+| [modules/memsaver.md](modules/memsaver.md) | Memory Saver and per-app memory budgets: the table, the launch in its own scope, the limits and the duty cycle wold applies | [0026](adr/0026-memory-saver.md), [0027](adr/0027-one-app-cannot-take-the-desktop.md) |
 | [modules/modules.md](modules/modules.md) | optional modules (AI, developer, creative, console stacks): what each installs | [0032](adr/0032-optional-modules.md) |
 | [modules/packages.md](modules/packages.md) | `.wol` format, keys and trust, `wol install/remove/list/search`, index, factory | [0011](adr/0011-wol-packages.md) |
 | [modules/performance.md](modules/performance.md) | measured desktop latency and frame targets, the probes and how to reproduce them | [0006](adr/0006-vendored-blocking-idle-exit.md) |
+| [modules/menus.md](modules/menus.md) | the standard menus in the bar | [0059](adr/0059-the-wolos-experience.md) |
+| [modules/monitor.md](modules/monitor.md) | wol-monitor: System Monitor (live graphs of processor, memory, disks, network, graphics, temperatures; apps from their scopes with Memory Saver state; process tree; disks; startup services) | |
+| [modules/runtime-tuning.md](modules/runtime-tuning.md) | kernel and userland memory for JavaScript engines: fault-around, KSM, Bun allocator, page-out, `wolos-mm`; the measured table | [0061](adr/0061-runtime-tuning-js-engines.md) |
 | [modules/plugin-maker.md](modules/plugin-maker.md) | wol-plugin-maker: make a plugin or a theme and see it live (editor with the CLI check, sandboxed preview on four surfaces, Theme Studio, pack and share) | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/plugins.md](modules/plugins.md) | shell plugins: manifest, Lua runtime, sandbox, `wol plugin check|run` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/power.md](modules/power.md) | power policy per power source and mode, sleep and lock, battery alerts, `wol power` | [0014](adr/0014-power-policy.md) |
+| [modules/quicklook.md](modules/quicklook.md) | wol-quicklook: Space on a file in Files shows it (the previewer D-Bus name Files calls, the kinds it shows, its limits) | none yet (experience ADR draft) |
 | [modules/scripting.md](modules/scripting.md) | scripts in sh, bash and Ruby: `wol script check|run|on`, the clean environment, the helper gate, ssh | [0041](adr/0041-ruby-scripts.md) |
 | [modules/security.md](modules/security.md) | firewall, hardening, update check, malware check, encrypted homes, app permissions, what runs as root | [0040](adr/0040-security-defaults-on-linux.md), [0024](adr/0024-first-use-malware-check.md) |
 | [modules/shards.md](modules/shards.md) | Crystal shards: the signed curated list, `wol shard list|add|update|check`, pins by commit and `shard.lock` (libwopkg 1.1) | [0036](adr/0036-crystal-userland.md) |
@@ -124,6 +151,7 @@ Each module document names its ADR and its code by crate and path.
 | [modules/webengine.md](modules/webengine.md) | the web-app runtime's engine: `crates/webengine`, `libwolwebengine.so.1`, the origin gate, process model, input bridge, gaps | [0042](adr/0042-wolos-web-runtime.md) |
 | [modules/widgets.md](modules/widgets.md) | desktop widgets, Edit Widgets, building a widget package, `wol widgets` | [0010](adr/0010-desktop-widgets.md) |
 | [modules/wifi.md](modules/wifi.md) | Wi-Fi: one interface, NetworkManager and iwd, join and its errors | [0016](adr/0016-arch-linux-base.md) |
+| [modules/windows.md](modules/windows.md) | tiling and snapping: drag to an edge or corner with a preview, Super+arrows, the snap layouts chooser, Tile windows; wol-hypr, `realtime::snap` | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/wopkg.md](modules/wopkg.md) | wopkg: one package tool for every source, libwopkg behind a stable C ABI | [0021](adr/0021-wopkg.md) |
 
 ## Other
@@ -132,5 +160,7 @@ Each module document names its ADR and its code by crate and path.
 |---|---|
 | [creators-audio.md](creators-audio.md) | sound for creators: recording, streaming, producing |
 | [plugins/plugin.schema.json](plugins/plugin.schema.json) | JSON schema of a shell plugin manifest (ADR 0031, [modules/plugins.md](modules/plugins.md)) |
+| [bench/memsaver-discord.md](bench/memsaver-discord.md) | Discord under a 100 MB budget: before and after per state, what did not work, what reached 100 MB and what did not; raw runs in `bench/memsaver-discord.json`, harness in `tools/bench/discord/` |
 | [bench/webapps-baseline.md](bench/webapps-baseline.md) | web-app baseline: what each web-based app costs in memory, start-up, idle and frames, Memory Saver on and off, the gap against native apps and the ranked wins; raw data in `bench/webapps-baseline.json` and `bench/webapps-roles.json`, harness in `tools/bench/webapps/` |
+| [bench/atlas-tor-plan.md](bench/atlas-tor-plan.md) | Atlas Tor tab benchmark plan: bootstrap, warm open, page load, relay overhead, memory and leak checks against the Brave Tor window; nothing measured yet | [0053](adr/0053-atlas-private-and-tor-tabs.md) |
 | [research/attested-gaming-mode.md](research/attested-gaming-mode.md) | research: attested gaming mode and kernel anti-cheat on WolOS (builds on ADR 0025; not a decision) |

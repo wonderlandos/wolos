@@ -1,9 +1,9 @@
 # Contributing
 
-Every commit carries a `Signed-off-by` line (`git commit -s`) with your real name, which certifies
-the Developer Certificate of Origin 1.1 (https://developercertificate.org). There is no CLA:
-contributions come in under the license of the files they change, the same license they go out
-under.
+Contributions are covered by the WolOS Contributor Licence Agreement, which you accept once when
+you sign in to the hub (hub.wolos.org): you keep your copyright, and your contribution comes in under
+the license of the files it changes, the same license it goes out under. Commits need no
+`Signed-off-by` line (lead decision for 0.13, QA-ADR-28).
 
 Kernel work follows the Linux rules: GPL-2.0-only, and an AI tool is credited with `Assisted-by`,
 never with `Signed-off-by`.

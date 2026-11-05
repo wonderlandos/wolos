@@ -39,9 +39,15 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "wallpaper.get" => get(env, wallpaper_state, json),
         "wallpaper.set" => wallpaper_set(env, &a("path"), json),
         "audio.get" => get(env, audio_state, json),
+        // `wol volume` without a number reads (`wol audio volume` always has one: the parser asks).
+        "audio.volume" if inv.get("percent").is_none() => get(env, audio_state, json),
         "audio.volume" => match percent(&a("percent"), 0) {
             Some(p) => control(env, json, audio_state, move |c| c.set_volume(p)),
-            None => fail(env, ErrorCode::Usage, "<percent> must be 0..100"),
+            None => fail(
+                env,
+                ErrorCode::Usage,
+                bad_argument(inv).unwrap_or("<percent> must be 0..100"),
+            ),
         },
         "audio.mute" | "audio.unmute" => {
             let m = inv.action == "audio.mute";
@@ -96,13 +102,13 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> Option<i32> {
         "remind" => remind(env, &a("minutes"), &inv.all("text").join(" "), json),
         "settings" => get(env, settings_state, json),
         "open" => open(env, &a("target")),
-        "notify" => notify(env, &a("title"), &inv.all("body").join(" ")),
+        "notify" => notify(env, &a("title"), &inv.all("body").join(" "), json),
         "screenshot" => screenshot(env, json),
         "windows.list" => windows(env, json),
         "windows.focus" => windows_focus(env, &a("window")),
         "files.tidy" => files_tidy(env, inv.get("plan"), json),
         "history" => history(env, json),
-        "undo" => undo(env, inv.get("id"), json),
+        "undo" => undo(env, inv.get("id"), json, inv.flag("yes")),
         "restore.list" => restore_list(env, json),
         "restore.activate" => restore_activate(env, &a("be")),
         "helpers.status" => get(env, helpers_state, json),
@@ -136,7 +142,7 @@ fn get(env: &mut dyn Env, state: fn(&mut dyn Env) -> Value, json: bool) -> i32 {
     show(env, v, json)
 }
 
-fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
+pub(crate) fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
     if json {
         emit_json(env, &v);
     } else {
@@ -145,11 +151,25 @@ fn show(env: &mut dyn Env, v: Value, json: bool) -> i32 {
     0
 }
 
-fn percent(s: &str, min: u8) -> Option<u8> {
+pub(crate) fn percent(s: &str, min: u8) -> Option<u8> {
     s.parse::<u8>().ok().filter(|p| (min..=100).contains(p))
 }
 
-fn control_error(env: &mut dyn Env, e: ControlError) -> i32 {
+/// The usage sentence for an argument of `inv` that its verb would refuse, found before anything
+/// is asked or run. The helper gate (`approve::decide`) calls it first: a bad value used to be
+/// reported as "No WolOS session is showing" when no sheet could be shown (QA-PWR-20).
+pub fn bad_argument(inv: &Invocation) -> Option<&'static str> {
+    let a = |k: &str| inv.get(k).unwrap_or_default();
+    match inv.action {
+        "audio.volume" if percent(a("percent"), 0).is_none() => Some("<percent> must be 0..100"),
+        "display.brightness" if percent(a("percent"), 1).is_none() => {
+            Some("<percent> must be 1..100")
+        }
+        _ => None,
+    }
+}
+
+pub(crate) fn control_error(env: &mut dyn Env, e: ControlError) -> i32 {
     let (code, msg) = match e {
         ControlError::Unavailable => (ErrorCode::Unavailable, "not available on this computer"),
         ControlError::NeedsAuth => (ErrorCode::Denied, "administrator password required"),
@@ -220,7 +240,7 @@ fn control(
 
 /// Change that may need the administrator password (wol-admind on FreeBSD): password from stdin,
 /// up to [`PASSWORD_TRIES`] times. Helpers on `wol mcp` never get here: they get the on-screen prompt.
-fn with_password(
+pub(crate) fn with_password(
     env: &mut dyn Env,
     json: bool,
     state: fn(&mut dyn Env) -> Value,
@@ -294,13 +314,11 @@ fn shell_reload(env: &mut dyn Env) {
 
 // ---- appearance ----
 
+/// Built-ins (accent variants included), theme folders and plugins' theme packs.
 fn catalog(env: &dyn Env) -> ThemeCatalog {
-    accent::variants().into_iter().fold(
-        ThemeCatalog::installed(
-            &env.config_home(),
-            wol_core::theme::apps::data_home(|k| env.var(k)).as_deref(),
-        ),
-        ThemeCatalog::with,
+    ThemeCatalog::installed(
+        &env.config_home(),
+        wol_core::theme::apps::data_home(|k| env.var(k)).as_deref(),
     )
 }
 
@@ -688,7 +706,11 @@ fn open(env: &mut dyn Env, target: &str) -> i32 {
             &format!("no app, file or link named '{target}'"),
         );
     };
-    crate::run::exec(env, &argv)
+    // Detached: the app must not keep our pipes open once it runs (QA-PLUG-23).
+    match env.exec_detached(&argv) {
+        Ok(c) => c,
+        Err(e) => fail(env, ErrorCode::Unavailable, &format!("{}: {e}", argv[0])),
+    }
 }
 
 /// Display name of the actor for notifications.
@@ -698,12 +720,20 @@ fn actor_name(actor: &str) -> String {
         .map_or_else(|| "wol".to_string(), |(_, n)| n.to_string())
 }
 
-fn notify(env: &mut dyn Env, title: &str, body: &str) -> i32 {
+/// Seconds `wol notify` waits for the notification service: without one notify-send waited for
+/// D-Bus activation far past a script's patience (QA-PWR-8).
+pub const NOTIFY_WAIT_SECS: &str = "2";
+/// What `timeout` exits with when it stopped the program.
+const TIMED_OUT: i32 = 124;
+
+fn notify(env: &mut dyn Env, title: &str, body: &str, json: bool) -> i32 {
     if title.trim().is_empty() {
         return fail(env, ErrorCode::Usage, "missing <title>");
     }
     let app = actor_name(&env.actor());
     let mut argv = vec![
+        "timeout".to_string(),
+        NOTIFY_WAIT_SECS.into(),
         "notify-send".to_string(),
         format!("--app-name={app}"),
         "--".into(),
@@ -712,7 +742,18 @@ fn notify(env: &mut dyn Env, title: &str, body: &str) -> i32 {
     if !body.is_empty() {
         argv.push(body.into());
     }
-    crate::run::exec(env, &argv)
+    match crate::run::exec(env, &argv) {
+        TIMED_OUT => fail(
+            env,
+            ErrorCode::Unavailable,
+            "no notification service answered, so nothing was shown",
+        ),
+        0 if json => {
+            emit_json(env, &json!({"shown": true}));
+            0
+        }
+        c => c,
+    }
 }
 
 fn screenshot(env: &mut dyn Env, json: bool) -> i32 {
@@ -898,12 +939,33 @@ fn history(env: &mut dyn Env, json: bool) -> i32 {
     0
 }
 
-fn undo(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
+fn undo(env: &mut dyn Env, id: Option<&str>, json: bool, yes: bool) -> i32 {
     let id = match id.map(str::parse::<u64>) {
         None => None,
         Some(Ok(n)) => Some(n),
         Some(Err(_)) => return fail(env, ErrorCode::Usage, "<id> must be a number (wol history)"),
     };
+    // QA-LIVE3-20: a person at a terminal who names no change is shown which one this reverts
+    // and asked; a script (not a terminal, --json or --yes) keeps the old "the last change".
+    if id.is_none()
+        && !json
+        && !yes
+        && env.stdout_tty()
+        && let Some(t) = journal_of(env).undo_target()
+    {
+        env.out(&format!(
+            "This undoes change #{} ({}, by {}). Undo it? [y/N] ",
+            t.id, t.what, t.by
+        ));
+        let said = env.read_line().unwrap_or_default();
+        if !matches!(said.trim().to_lowercase().as_str(), "y" | "yes") {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                "nothing was undone; see `wol history`, then `wol undo <id>`",
+            );
+        }
+    }
     let by = env.actor();
     let e = match journal_of(env).undo(id, &by, env.now_secs()) {
         Ok(e) => e,
@@ -927,6 +989,16 @@ fn undo(env: &mut dyn Env, id: Option<&str>, json: bool) -> i32 {
     }
     if r.hyprland {
         let _ = env.capture(&["hyprctl", "reload"]);
+    }
+    if let Some(on) = r.larger_text {
+        // The text scale is a gsettings value; the journal restored its record file (QA-A7-11).
+        let _ = env.capture(&[
+            "gsettings",
+            "set",
+            "org.gnome.desktop.interface",
+            "text-scaling-factor",
+            if on { "1.25" } else { "1.0" },
+        ]);
     }
     let v = json!({"undid": e.undoes, "what": e.what, "change": e.id});
     if json {
@@ -1124,7 +1196,25 @@ pub fn record(
     }
 }
 
-/// A named script (`WOL_HELPER=<name>`) calling a helper verb: the same gate as `wol mcp` clients
+/// A helper (`name`) ran a verb that is for people only: refused, and in the audit log.
+pub fn refuse_people_verb(inv: &Invocation, env: &mut dyn Env, name: &str) -> i32 {
+    let tool = inv.path.join(" ");
+    let args: Vec<&str> = inv.args.iter().map(|a| a.1.as_str()).collect();
+    let msg = format!("{tool} is for people: a helper such as {name} cannot run it.");
+    let rec = record(
+        &format!("script:{name}"),
+        "cli",
+        &tool,
+        &args,
+        Outcome::Refused,
+        &msg,
+        env.now_secs(),
+    );
+    let _ = audit::append(&env.state_home(), &rec);
+    fail(env, ErrorCode::Denied, &msg)
+}
+
+/// A named script (`WOL_HELPER=<name>`, or an assistant's shell, `CLAUDECODE=1`) calling a helper verb: the same gate as `wol mcp` clients
 /// ([`crate::approve`]): policy, the approval sheet for changes, the password sheet for
 /// administrator verbs. Changes are logged.
 pub fn as_script(inv: &Invocation, env: &mut dyn Env, name: &str, rule: &HelperVerb) -> i32 {
@@ -1481,7 +1571,7 @@ fn api(env: &mut dyn Env, json: bool) -> i32 {
         };
         s.push_str(&format!(
             "  {:<44} {:<22} {}\n",
-            v.usage(),
+            v.short_usage(),
             access,
             v.cmd.help
         ));

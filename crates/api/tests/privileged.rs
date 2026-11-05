@@ -59,6 +59,14 @@ const ALLOWED: &[(&str, &str, &str, usize, &str)] = &[
         "the account's login shell after PAM opened the session: env_clear, the session's \
          environment, and setuid to the account before exec (not a root child)",
     ),
+    (
+        "controller-bin",
+        "wolos-mm.rs",
+        "Command::new(",
+        1,
+        "exec-merge asks for KSM and then replaces itself (exec, no child) with the app the \
+         launcher named by absolute path, as the same user: no privilege is added or dropped",
+    ),
 ];
 
 fn files(dir: &Path, out: &mut Vec<PathBuf>) {

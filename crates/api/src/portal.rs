@@ -22,6 +22,26 @@ pub struct Caller {
     pub app: String,
 }
 
+/// Where `uid`'s Timeouts setting is: its home from `/etc/passwd`, `.config/wol/timeouts`
+/// ([`shared::patience::FILE`]). wold does not see the account's `$XDG_CONFIG_HOME`.
+pub fn patience_path(passwd: &str, uid: u32) -> Option<std::path::PathBuf> {
+    let home = crate::services::identity(passwd, uid)?.home;
+    (home.starts_with('/') && !home.split('/').any(|c| c == "..")).then(|| {
+        std::path::Path::new(&home)
+            .join(".config")
+            .join(shared::patience::FILE)
+    })
+}
+
+/// The account's "Give me more time" setting (Settings > Accessibility > Timeouts); normal when it
+/// has none or the file is not the account's own small file ([`shared::patience::Patience::read_owned`]).
+pub fn patience_of(uid: u32) -> shared::patience::Patience {
+    let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+    patience_path(&passwd, uid).map_or(shared::patience::Patience::Normal, |p| {
+        shared::patience::Patience::read_owned(&p, uid)
+    })
+}
+
 /// Recent notifications: id -> (account, process that posted it), so a pressed button reaches
 /// only that process. Bounded: the oldest are forgotten.
 #[derive(Default)]
@@ -312,6 +332,8 @@ impl Holds {
 pub struct Held {
     pub uid: u32,
     _guard: Box<dyn Send>,
+    /// Published (by wold) once the connection has closed and the guard is gone.
+    pub gone: Option<Event>,
 }
 
 /// What the portal keeps between calls.
@@ -319,6 +341,7 @@ pub struct State {
     pub notes: Notes,
     pub prefs: crate::prefs::Prefs,
     pub searches: crate::search::Searches,
+    pub players: crate::media::Players,
     pub endpoints: crate::ipc::Endpoints,
     pub background: Box<dyn crate::services::Background>,
     pub asks: Asks,
@@ -332,6 +355,7 @@ impl Default for State {
         Self {
             prefs: Default::default(),
             searches: Default::default(),
+            players: Default::default(),
             background: Box::new(crate::services::NoBackground),
             endpoints: Default::default(),
             notes: Default::default(),
@@ -410,14 +434,14 @@ pub const SHOWERS: [&str; 1] = ["/usr/bin/wol-shell"];
 /// The one program that collects apps' rows, and so shows them to the person.
 pub const SEARCHBAR: &str = "/usr/bin/wol-search";
 
-/// `wol_core::consent::FILE`, read on every call so a change in Settings applies at once.
-pub struct ConsentFile(pub PathBuf);
+/// `wol_core::consent::FILE` and the vendor defaults folder (`wol_core::consent::DEFAULTS_DIR`),
+/// both read on every call so a change in Settings or a package update applies at once.
+pub struct ConsentFile(pub PathBuf, pub PathBuf);
 
 impl Grants for ConsentFile {
     fn granted(&self, app: &str, capability: &str) -> bool {
-        std::fs::read_to_string(&self.0)
-            .map(|t| wol_core::consent::parse(&t))
-            .unwrap_or_default()
+        let text = std::fs::read_to_string(&self.0).ok();
+        wol_core::consent::effective(text.as_deref(), &wol_core::consent::defaults_in(&self.1))
             .iter()
             .any(|(a, c)| a == app && c == capability)
     }
@@ -454,6 +478,10 @@ fn doing(capability: &str) -> Option<&'static str> {
         "devices" => "use connected devices",
         "share" => "share text and files",
         "trash" => "move files to the Trash",
+        "media" => "show a player for the media keys",
+        "recents" => "add to your recent files",
+        "print" => "print files",
+        "color-picker" => "pick a color from the screen",
         "background" => "run in the background",
         _ => return None,
     })
@@ -661,6 +689,7 @@ fn decide<W: Write + Send>(
                     extra.hold = Some(Held {
                         uid: caller.uid,
                         _guard: guard,
+                        gone: None,
                     });
                     Answer::ok()
                 }
@@ -691,6 +720,7 @@ fn decide<W: Write + Send>(
             extra.hold = Some(Held {
                 uid: caller.uid,
                 _guard: Box::new(st.searches.register(caller)),
+                gone: None,
             });
             Answer::ok()
         }
@@ -734,6 +764,7 @@ fn decide<W: Write + Send>(
             extra.hold = Some(Held {
                 uid: caller.uid,
                 _guard: Box::new(l),
+                gone: None,
             });
             Answer::ok()
         }
@@ -787,6 +818,66 @@ fn decide<W: Write + Send>(
             st.asks
                 .ask_from(bus, caller, Ask::OpenWith { path }, PANEL_TIMEOUT)
         }
+        Call::MediaPublish {} => {
+            if !st.holds.take(caller.uid) {
+                return Answer::err(Code::Unavailable, "Too many players are published.");
+            }
+            let Some(player) = st.players.register(caller.uid, caller.pid) else {
+                st.holds.give(caller.uid);
+                return Answer::err(
+                    Code::InvalidArgument,
+                    "This app already publishes a player.",
+                );
+            };
+            extra.hold = Some(Held {
+                uid: caller.uid,
+                _guard: Box::new(player),
+                gone: Some(Event::MediaGone {
+                    uid: caller.uid,
+                    pid: caller.pid,
+                }),
+            });
+            Answer::ok()
+        }
+        Call::MediaState { state } => {
+            if !st.players.is_player(caller.uid, caller.pid) {
+                return Answer::err(Code::InvalidArgument, "Publish a player first.");
+            }
+            // `app` is the executable the kernel reported: the desktop names the player by it.
+            bus.publish(&Event::MediaState {
+                uid: caller.uid,
+                pid: caller.pid,
+                app: caller.app.clone(),
+                state,
+            });
+            Answer::ok()
+        }
+        Call::MediaKey {
+            player,
+            key,
+            value_us,
+        } => {
+            if !st.players.is_player(caller.uid, player) {
+                return Answer::err(Code::InvalidArgument, "That player stopped.");
+            }
+            bus.publish(&Event::MediaKey {
+                uid: caller.uid,
+                pid: player,
+                key,
+                value_us,
+            });
+            Answer::ok()
+        }
+        Call::RecentAdd { path } => {
+            let app = caller.app.clone();
+            st.asks
+                .ask_from(bus, caller, Ask::RecentAdd { path, app }, ASK_TIMEOUT)
+        }
+        Call::ColorPick {} => st.asks.ask_from(bus, caller, Ask::ColorPick, PANEL_TIMEOUT),
+        Call::PrintFile { path } => {
+            st.asks
+                .ask_from(bus, caller, Ask::PrintFile { path }, PANEL_TIMEOUT)
+        }
         Call::ServiceStart { name } => match st.background.start(caller, &name) {
             Ok(()) => Answer::ok(),
             Err(m) => Answer::err(Code::Unavailable, m),
@@ -815,7 +906,16 @@ fn decide<W: Write + Send>(
                 helper: caller.app.clone(),
                 request: approval.request,
             };
-            let wait = Duration::from_secs(shared::shell::APPROVAL_WAIT_SECS.into());
+            // The sheet waits as long as the account's Timeouts setting says (QA-ACC-6); wold waits
+            // for it, not for the 60 s of a person who needed no more time.
+            let wait = Duration::from_secs(
+                patience_of(caller.uid)
+                    .secs(shared::shell::APPROVAL_TIMEOUT_SECS)
+                    .saturating_add(
+                        shared::shell::APPROVAL_WAIT_SECS - shared::shell::APPROVAL_TIMEOUT_SECS,
+                    )
+                    .into(),
+            );
             st.asks
                 .ask_from(bus, caller, Ask::Approval { approval }, wait)
         }
@@ -858,6 +958,32 @@ mod tests {
     }
 
     const POST: &str = r#"{"call":"notification.post","title":"Done","body":"ok"}"#;
+
+    /// QA-ACC-6: wold finds the account's Timeouts file from /etc/passwd, and only inside a plain home.
+    #[test]
+    fn the_timeouts_file_is_in_the_accounts_home() {
+        let passwd = concat!(
+            "root:x:0:0::/root:/bin/sh\n",
+            "ana:x:1000:1000:Ana:/home/ana:/bin/zsh\n",
+            "odd:x:1001:1001::/home/../etc:/bin/sh\n",
+            "rel:x:1002:1002::home:/bin/sh\n",
+        );
+        assert_eq!(
+            patience_path(passwd, 1000).as_deref(),
+            Some(std::path::Path::new("/home/ana/.config/wol/timeouts"))
+        );
+        assert_eq!(
+            patience_path(passwd, 1001),
+            None,
+            "a home with .. is not followed"
+        );
+        assert_eq!(
+            patience_path(passwd, 1002),
+            None,
+            "a relative home is not used"
+        );
+        assert_eq!(patience_path(passwd, 4242), None);
+    }
 
     fn caller(app: &str) -> Caller {
         Caller {
@@ -1833,7 +1959,8 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
         let dir = std::env::temp_dir().join(format!("wol-portal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("consent.json");
-        let g = ConsentFile(f.clone());
+        let defaults = dir.join("consent.d");
+        let g = ConsentFile(f.clone(), defaults.clone());
         assert!(
             !g.granted("/usr/bin/a", "notifications"),
             "missing file grants nothing"
@@ -1849,6 +1976,30 @@ x","tool":"t","request":{"action":"wifi","on":true}}}"#,
         assert!(!g.granted("/usr/bin/a", "notifications"));
         assert!(g.shows_notifications("/usr/bin/wol-shell"));
         assert!(!g.shows_notifications("/usr/bin/a"));
+
+        // E2E-GALLERY: a package's default holds on a fresh system with no consent file, a
+        // Settings switch-off (the `revoked` list) takes it away, and a default outside the
+        // allowed verbs is ignored.
+        std::fs::remove_file(&f).unwrap();
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::write(
+            defaults.join("org.wolos.gallery.json"),
+            r#"{"grants":[{"app":"/usr/bin/wol-gallery","capability":"trash"},
+                {"app":"/usr/bin/wol-gallery","capability":"share"},
+                {"app":"/usr/bin/wol-gallery","capability":"packages-install"}]}"#,
+        )
+        .unwrap();
+        assert!(g.granted("/usr/bin/wol-gallery", "trash"));
+        assert!(g.granted("/usr/bin/wol-gallery", "share"));
+        assert!(!g.granted("/usr/bin/wol-gallery", "packages-install"));
+        assert!(!g.granted("/usr/bin/other", "trash"));
+        std::fs::write(
+            &f,
+            r#"{"grants":[],"revoked":[{"app":"/usr/bin/wol-gallery","capability":"trash"}]}"#,
+        )
+        .unwrap();
+        assert!(!g.granted("/usr/bin/wol-gallery", "trash"));
+        assert!(g.granted("/usr/bin/wol-gallery", "share"));
         let _ = std::fs::remove_dir_all(dir);
     }
 }

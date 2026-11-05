@@ -106,6 +106,7 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
     let d = scratch("disks");
     disks_fakes(&d);
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-disks"))
         .env("PATH", path(&d))
         .env("WOLOS_CMDLINE", d.join("cmdline"))
@@ -130,6 +131,7 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
         ),
     );
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-disks"))
         .env("PATH", path(&d))
         .env("WOLOS_CMDLINE", d.join("cmdline"))
@@ -144,6 +146,7 @@ fn boot_medium_loop_cd_zram_and_read_only_disks_are_never_targets() {
 
 fn check(d: &Path, disk: &str) -> (Option<i32>, String) {
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-check"))
         .arg(disk)
         .env("PATH", path(d))
@@ -246,12 +249,17 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
     for (n, body) in [
         ("systemd-repart", ""),
         ("udevadm", ""),
+        ("partx", ""),
+        ("wipefs", ""),
+        ("sleep", ""),
         ("mount", ""),
         ("umount", ""),
         ("swapoff", ""),
         ("btrfs", ""),
         ("sync", ""),
         ("cryptsetup", ""),
+        ("losetup", ""),
+        ("dmsetup", ""),
         (
             "wol",
             "case \"$*\" in\n\"encrypt decide\"*) [ \"$WOLOS_TEST_UNLOCK\" = refuse ] && exit 1; echo ${WOLOS_TEST_UNLOCK:-off} ;;\n\
@@ -295,6 +303,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         fake(d, n, body);
     }
     let mut c = Command::new("sh");
+    c.env_remove("CLAUDECODE"); // an assistant's shell is a helper to `wol` (QA-PLUG-6)
     // A passphrase file next to the fakes is the autoinstall's wolos.passphrase= file.
     if d.join("passphrase").exists() {
         c.env("WOLOS_PASSPHRASE_FILE", d.join("passphrase"));
@@ -317,6 +326,7 @@ fn install_with(d: &Path, disk: &str, unlock: &str) -> Output {
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .env("WOLOS_INSTALL_LOG", d.join("install.log"))
         .env("WOLOS_RESULT_DIR", d.join("results"))
+        .env("WOLOS_PROC", d.join("proc"))
         .output()
         .unwrap()
 }
@@ -333,6 +343,15 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
         log(&d)
     );
     let l = log(&d);
+    // No plan (autoinstall): the languages are still generated, before the initramfs and before the
+    // seal (QA-FDAY-2).
+    let t = d.join("target");
+    let gen_at = l.find(&format!("wol install locales {}", t.display()));
+    assert!(gen_at.is_some(), "locales generated without a plan: {l}");
+    assert!(
+        gen_at < l.find("mkinitcpio -P") && gen_at < l.find("wol seal apply"),
+        "{l}"
+    );
     // Only the picked disk and its partitions are ever named (read-only queries may name the
     // boot medium to leave it out).
     for line in l.lines().filter(|x| {
@@ -580,6 +599,203 @@ fn a_new_try_closes_every_volume_the_last_one_left_open() {
     assert!(first < check, "closed before the disk is looked at: {l}");
 }
 
+/// QA-DOC-28: after a power cut the live system still holds the half install's partitions and
+/// repart's first add is 'Device or resource busy': the kernel forgets the old table before
+/// repart, and a busy try is retried once (the second attempt used to fail, the third worked).
+#[test]
+fn an_erase_after_a_cut_install_forgets_the_old_partitions_and_retries_a_busy_one() {
+    let d = scratch("repart-busy");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    let flag = d.join("repart-tried");
+    fake(
+        &d,
+        "systemd-repart",
+        &format!(
+            "[ -e {f} ] && exit 0; touch {f}\necho 'Failed to create new partition /dev/nvme0n1p1: Device or resource busy' >&2; exit 1",
+            f = flag.display()
+        ),
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    let l = log(&d);
+    let at = |w: &str| l.lines().position(|x| x.starts_with(w));
+    let reparts = l
+        .lines()
+        .filter(|x| x.starts_with("systemd-repart"))
+        .count();
+    assert_eq!(reparts, 2, "one retry: {l}");
+    assert!(at("partx -d /dev/nvme0n1") < at("systemd-repart"), "{l}");
+    assert!(
+        at("wipefs -a -q /dev/nvme0n1") < at("systemd-repart"),
+        "{l}"
+    );
+    // Busy twice: the install stops with the partition sentence, no third try.
+    let _ = fs::remove_file(&flag);
+    fake(&d, "systemd-repart", "exit 1");
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(
+        log(&d)
+            .lines()
+            .filter(|x| x.starts_with("systemd-repart"))
+            .count(),
+        2
+    );
+}
+
+/// IMG013-INSTALL-AFTER-CUT: after a power cut the disk still carries the first try's partitions;
+/// something holding one of them (a probe, a volume) makes systemd-repart fail with EBUSY. The
+/// installer lets go of the disk and settles udev before it partitions, and tries once more.
+#[test]
+fn a_busy_disk_is_let_go_and_partitioned_on_the_second_try() {
+    let d = scratch("busy-once");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    // The first call fails as on the 0.13 ISO, the next one works.
+    fake(
+        &d,
+        "systemd-repart",
+        &format!(
+            "n={}\nif [ ! -e \"$n\" ]; then : > \"$n\"; echo \"Failed to create new partition '/dev/nvme0n1p1': \
+             Device or resource busy\" >&2; exit 1; fi",
+            d.join("repart-once").display()
+        ),
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(o.status.success(), "{out}");
+    assert!(out.contains("wolos-install: done 100"), "{out}");
+    let l = log(&d);
+    let ran: Vec<&str> = l.lines().collect();
+    let repart: Vec<usize> = (0..ran.len())
+        .filter(|&i| ran[i].starts_with("systemd-repart "))
+        .collect();
+    assert_eq!(repart.len(), 2, "one more try: {l}");
+    // Before each try: the disk's holders asked, udev settled.
+    for (from, to) in [(0, repart[0]), (repart[0], repart[1])] {
+        let between = &ran[from..to];
+        assert!(
+            between
+                .iter()
+                .any(|x| x.starts_with("wol install mounts /dev/nvme0n1")),
+            "holders read before try: {between:?}"
+        );
+        assert!(
+            between.contains(&"udevadm settle"),
+            "udev settled before try: {between:?}"
+        );
+    }
+}
+
+/// A volume opened over a partition (a verity view, a disk unlocked in Files) and a loop over one
+/// hold the disk busy with nothing mounted: the check does not refuse the disk for them, and the
+/// installer closes and detaches them before it partitions (IMG013-INSTALL-AFTER-CUT).
+#[test]
+fn volumes_and_loops_over_the_disk_are_let_go_before_it_is_partitioned() {
+    let d = scratch("holders");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fs::rename(d.join("bin/lsblk"), d.join("bin/lsblk-base")).unwrap();
+    let json = r#"{"blockdevices":[{"name":"nvme0n1","path":"/dev/nvme0n1","size":512110190592,"type":"disk","children":[
+      {"name":"nvme0n1p1","path":"/dev/nvme0n1p1","type":"part","fstype":"vfat","mountpoints":[null]},
+      {"name":"nvme0n1p2","path":"/dev/nvme0n1p2","type":"part","fstype":"crypto_LUKS","mountpoints":[null],
+       "children":[{"name":"luks-1234","path":"/dev/mapper/luks-1234","type":"crypt","fstype":"btrfs","mountpoints":[null]}]}]}]}"#;
+    fake(
+        &d,
+        "lsblk",
+        &format!(
+            "case \"$*\" in *--json*/dev/nvme0n1) printf '%s\\n' '{}' ;; *) exec \"$(dirname \"$0\")/lsblk-base\" \"$@\" ;; esac",
+            json.replace('\n', "")
+        ),
+    );
+    fake(
+        &d,
+        "losetup",
+        "case \"$*\" in *--json*) printf '%s\\n' '{\"loopdevices\":[{\"name\":\"/dev/loop0\",\"back-file\":\"/run/archiso/bootmnt/airootfs.sfs\"},{\"name\":\"/dev/loop7\",\"back-file\":\"/dev/nvme0n1p2\"}]}' ;; esac",
+    );
+    let o = rerun(&d, "/dev/nvme0n1");
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(o.status.success(), "{out}");
+    let l = log(&d);
+    let at = |w: &str| {
+        l.lines()
+            .position(|x| x == w)
+            .unwrap_or_else(|| panic!("{w} not run: {l}"))
+    };
+    let repart = l
+        .lines()
+        .position(|x| x.starts_with("systemd-repart "))
+        .unwrap();
+    assert!(at("losetup -d /dev/loop7") < repart, "{l}");
+    assert!(at("cryptsetup close luks-1234") < repart, "{l}");
+    assert!(
+        !l.contains("losetup -d /dev/loop0"),
+        "the live medium's loop stays: {l}"
+    );
+}
+
+/// Still busy on the second try: the fail line says what holds the disk (its mounts, volumes,
+/// and the processes with one of its devices open), not only the tool's EBUSY.
+#[test]
+fn a_disk_that_stays_busy_says_what_holds_it() {
+    let d = scratch("busy-always");
+    let o = install(&d, "/dev/nvme0n1");
+    assert!(o.status.success());
+    fake(
+        &d,
+        "systemd-repart",
+        "echo \"Failed to create new partition '/dev/nvme0n1p1': Device or resource busy\" >&2; exit 1",
+    );
+    // A process has the second partition open (a probe that never let go); one on another disk
+    // is not named.
+    let fd = d.join("proc/4242/fd");
+    fs::create_dir_all(&fd).unwrap();
+    std::os::unix::fs::symlink("/dev/nvme0n1p2", fd.join("7")).unwrap();
+    fs::write(d.join("proc/4242/comm"), "udisksd\n").unwrap();
+    let other = d.join("proc/77/fd");
+    fs::create_dir_all(&other).unwrap();
+    std::os::unix::fs::symlink("/dev/sda1", other.join("3")).unwrap();
+    // A disk whose name starts with this one's (/dev/nvme0n10): not this disk.
+    let ns10 = d.join("proc/88/fd");
+    fs::create_dir_all(&ns10).unwrap();
+    std::os::unix::fs::symlink("/dev/nvme0n10", ns10.join("4")).unwrap();
+    fs::write(d.join("proc/88/comm"), "ns10\n").unwrap();
+    // A process that named itself with a pipe and a newline stays one clean line.
+    let odd = d.join("proc/99/fd");
+    fs::create_dir_all(&odd).unwrap();
+    std::os::unix::fs::symlink("/dev/nvme0n1p1", odd.join("5")).unwrap();
+    fs::write(d.join("proc/99/comm"), "ev|il\nx\n").unwrap();
+    let o = rerun(&d, "/dev/nvme0n1");
+    assert_eq!(o.status.code(), Some(1));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    let last = out.lines().last().unwrap();
+    assert!(
+        last.starts_with(
+            "wolos-install: fail disk could not partition /dev/nvme0n1 (held by: process 4242 (udisksd), process 99 (evilx))"
+        ),
+        "{last}"
+    );
+    assert!(last.contains("Device or resource busy"), "{last}");
+    assert!(
+        !last.contains("process 77"),
+        "another disk's user is not named: {last}"
+    );
+    assert!(
+        !last.contains("process 88"),
+        "/dev/nvme0n10 is another disk: {last}"
+    );
+    assert!(!last.contains('|'), "one line, no pipes: {last}");
+    assert_eq!(
+        log(&d)
+            .lines()
+            .filter(|x| x.starts_with("systemd-repart "))
+            .count(),
+        2,
+        "tried exactly twice"
+    );
+}
+
 /// install-run again on the fakes [`install_with`] left (some replaced since), on an empty target.
 fn rerun(d: &Path, disk: &str) -> Output {
     let t = d.join("target");
@@ -587,6 +803,7 @@ fn rerun(d: &Path, disk: &str) -> Output {
     fs::create_dir_all(&t).unwrap();
     let _ = fs::remove_file(d.join("log"));
     Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-run"))
         .arg(disk)
         .env("WOLOS_INSTALL_PATH", path(d))
@@ -604,6 +821,7 @@ fn rerun(d: &Path, disk: &str) -> Output {
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .env("WOLOS_INSTALL_LOG", d.join("install.log"))
         .env("WOLOS_RESULT_DIR", d.join("results"))
+        .env("WOLOS_PROC", d.join("proc"))
         .output()
         .unwrap()
 }
@@ -656,6 +874,16 @@ fn install_plan(d: &Path, wol: &str) -> (Output, PathBuf) {
 /// [`install_plan`], with `prep` run on the target and the plan folder just before install-run
 /// (what an earlier system left on the reused startup partition, what sits next to the plan).
 fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, PathBuf) {
+    install_plan_env(d, wol, prep, &[])
+}
+
+/// [`install_plan_on`] with more environment for the script.
+fn install_plan_env(
+    d: &Path,
+    wol: &str,
+    prep: impl FnOnce(&Path),
+    env: &[(&str, &str)],
+) -> (Output, PathBuf) {
     install_with(d, "/dev/nvme0n1", "off");
     let t = d.join("target");
     let _ = fs::remove_dir_all(&t);
@@ -670,6 +898,7 @@ fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, Pa
     fs::write(dir.join("account-password"), "pw\n").unwrap();
     prep(d);
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("install-run"))
         .arg("--plan")
         .arg(dir.join("plan.json"))
@@ -687,6 +916,8 @@ fn install_plan_on(d: &Path, wol: &str, prep: impl FnOnce(&Path)) -> (Output, Pa
         .env("WOLOS_BOOT_NOTE", d.join("note"))
         .env("WOLOS_SBSIGN", d.join("bin/sbsign-fake"))
         .env("WOLOS_RESULT_DIR", d.join("results"))
+        .env("WOLOS_MIN_CPU_FILE", d.join("no-min-cpu-level"))
+        .envs(env.iter().copied())
         .output()
         .unwrap();
     (o, t)
@@ -780,6 +1011,94 @@ fn a_tpm_disk_gets_the_account_password_as_its_fallback() {
     assert!(
         keys < encrypt,
         "the keys come before the disk unlock: {out}"
+    );
+}
+
+/// `wol mirror status --json` as the fake `wol` answers it: the x86-64 level of this computer.
+fn wol_at_level(level: u8) -> String {
+    WOL_ALONGSIDE.replace(
+        "esac",
+        &format!(
+            "\"mirror status\"*) echo '{{\"level\":{level},\"cachy_supported\":{},\"servers\":[]}}' ;;\nesac",
+            level >= 3
+        ),
+    )
+}
+
+/// IMAGE-F: an image that needs a higher x86-64 level than this processor (the image says so in
+/// `/usr/share/wolos/min-cpu-level`, here WOLOS_MIN_CPU_LEVEL) is refused before the first write.
+/// The reason is in words; AVX2 is named because that is what a v3 image needs.
+#[test]
+fn a_processor_below_the_images_minimum_is_refused_before_any_write() {
+    let d = scratch("cpu-refused");
+    let (o, _) = install_plan_env(
+        &d,
+        &wol_at_level(2),
+        |_| {},
+        &[("WOLOS_MIN_CPU_LEVEL", "3")],
+    );
+    assert_eq!(o.status.code(), Some(2));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        out.contains(
+            "wolos-install: fail prepare this processor is too old for this WolOS (it needs AVX2)"
+        ),
+        "{out}"
+    );
+    let l = log(&d);
+    assert!(
+        !l.contains("install layout") && !l.contains("unsquashfs") && !l.contains("systemd-repart"),
+        "nothing ran after the refusal: {l}"
+    );
+}
+
+/// The image on disk today needs level 1 (every 64-bit PC): an older processor installs, with the
+/// standard builds (`wol mirror gate` keeps the optimized repos off below v3) and a line in the log.
+#[test]
+fn a_processor_without_avx2_installs_the_standard_builds_and_the_log_says_so() {
+    let d = scratch("cpu-standard");
+    let (o, _) = install_plan_env(&d, &wol_at_level(2), |_| {}, &[]);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(!out.contains("wolos-install: fail"), "{out}");
+    let results = fs::read_to_string(d.join("results/log")).unwrap_or_default();
+    assert!(
+        results.contains("this processor has no AVX2: the standard builds are installed"),
+        "{results}"
+    );
+    // A processor that has it says nothing.
+    let d = scratch("cpu-fast");
+    let (o, _) = install_plan_env(&d, &wol_at_level(3), |_| {}, &[]);
+    assert!(!String::from_utf8_lossy(&o.stdout).contains("wolos-install: fail"));
+    let results = fs::read_to_string(d.join("results/log")).unwrap_or_default();
+    assert!(!results.contains("AVX2"), "{results}");
+}
+
+/// Fable review: an unreadable level never passes a minimum above 1 (fail closed); at the
+/// minimum of 1 the install goes on and the log says the level was not known.
+#[test]
+fn an_unreadable_processor_level_is_refused_when_the_image_needs_more_than_the_baseline() {
+    let d = scratch("cpu-unknown-refused");
+    // The fake `wol` has no answer for `mirror status`: no level at all.
+    let (o, _) = install_plan_env(&d, WOL_ALONGSIDE, |_| {}, &[("WOLOS_MIN_CPU_LEVEL", "3")]);
+    assert_eq!(o.status.code(), Some(2));
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(
+        out.contains("wolos-install: fail prepare the processor could not be identified, and this WolOS needs AVX2"),
+        "{out}"
+    );
+    let l = log(&d);
+    assert!(
+        !l.contains("install layout") && !l.contains("unsquashfs") && !l.contains("systemd-repart"),
+        "nothing ran after the refusal: {l}"
+    );
+    let d = scratch("cpu-unknown-baseline");
+    let (o, _) = install_plan_env(&d, WOL_ALONGSIDE, |_| {}, &[]);
+    let out = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(!out.contains("wolos-install: fail"), "{out}");
+    let results = fs::read_to_string(d.join("results/log")).unwrap_or_default();
+    assert!(
+        results.contains("the processor level could not be read"),
+        "{results}"
     );
 }
 
@@ -906,6 +1225,34 @@ fn the_keyboard_is_set_before_the_initramfs_is_built() {
         1,
         "written once, before the initramfs"
     );
+}
+
+/// QA-FDAY-2 / QA-SET-27: an install with no plan (autoinstall) still generates the languages
+/// Settings offers. The root is sealed at the end of the install and `/usr/lib/locale` with it, so
+/// the first boot's Setup Assistant (which writes LANG into /etc/locale.conf) cannot do it.
+#[test]
+fn an_install_without_a_plan_still_generates_the_locales() {
+    let run = read("files/usr/lib/wolos/install-run");
+    let lines: Vec<&str> = run.lines().map(str::trim).collect();
+    let at = |w: &str| {
+        lines
+            .iter()
+            .position(|x| x.starts_with(w))
+            .unwrap_or_else(|| panic!("{w} not in install-run"))
+    };
+    let settings = at("wol install settings");
+    let locales = at("wol install locales");
+    assert_eq!(
+        lines[settings + 1],
+        "else",
+        "the no-plan branch of the same if"
+    );
+    assert!(locales > settings && locales < at("arch-chroot \"$T\" mkinitcpio -P"));
+    assert!(
+        lines[locales].contains("|| fail"),
+        "a failed locale-gen stops the install"
+    );
+    assert_eq!(run.matches("wol install locales").count(), 1);
 }
 
 /// audit2 B4: `echo 'white rabbit' > passphrase` made the LUKS key "white rabbit\n", which no
@@ -1248,6 +1595,7 @@ fn esp_sync_gives_other_kernels_their_own_entry() {
     fs::create_dir_all(d.join("sb")).unwrap();
     let run = |args: &[&str]| {
         let st = Command::new("sh")
+            .env_remove("CLAUDECODE")
             .arg(lib("esp-sync"))
             .args(args)
             .env("WOLOS_ROOT", &root)
@@ -1471,6 +1819,7 @@ fn results_land_in_a_folder_the_installer_made_never_next_to_the_plan() {
     );
     let result = || {
         let o = Command::new("sh")
+            .env_remove("CLAUDECODE")
             .arg(lib("install-check"))
             .arg("--result")
             .env("WOLOS_RESULT_DIR", &r)
@@ -1680,6 +2029,7 @@ fn the_autoinstall_name_follows_the_settings_rule() {
         ("a;reboot", "wolos"),
     ] {
         let o = Command::new(env!("CARGO_BIN_EXE_wol"))
+            .env_remove("CLAUDECODE")
             .args(["install", "hostname", given])
             .output()
             .unwrap();
@@ -1721,6 +2071,7 @@ fn the_first_start_installs_the_queued_media_formats() {
     fake(&d, "logger", "");
     let run = || {
         Command::new("sh")
+            .env_remove("CLAUDECODE")
             .arg(lib("modules-install"))
             .arg("--root")
             .arg(&r)
@@ -1769,6 +2120,7 @@ fn the_first_start_installs_the_queued_media_formats() {
     assert!(!w.join("modules-pending").exists() && !w.join("packages-pending").exists());
     // A name that is not a package is refused before anything runs.
     let o = Command::new("sh")
+        .env_remove("CLAUDECODE")
         .arg(lib("modules-install"))
         .arg("--root")
         .arg(&r)

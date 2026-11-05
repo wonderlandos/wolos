@@ -3,7 +3,8 @@
 //! archive (hashes, Ed25519 signature, Info.json), extract the payload (a pacman package), plan the `wol pkg -- -U` install (the sealed-system pacman).
 use shared::bundle::{INFO_FILE, Info};
 use shared::package::{
-    Entry, Index, MANIFEST, MAX_SIZE, MEMBERS, PAYLOAD, SIGNATURE, is_app_id, is_version,
+    Entry, Index, MANIFEST, MAX_SCREENSHOT_SIZE, MAX_SCREENSHOTS, MAX_SIZE, MEMBERS, PAYLOAD,
+    SIGNATURE, is_app_id, is_screenshot_member, is_version,
 };
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
@@ -35,6 +36,32 @@ pub struct Verified {
     pub trust: Trust,
     pub payload: Member,
     pub icon: Option<Member>,
+    /// The listing screenshots (`screenshots/<name>.png|webp`), in archive order.
+    pub screenshots: Vec<Member>,
+}
+
+/// Where the screenshots sit in [`MEMBERS`] order: in front of `payload.pkg` (after `icon.png`).
+const SHOT_SLOT: usize = 2;
+
+/// A member's place in contract order; every screenshot shares [`SHOT_SLOT`], the members from the
+/// payload on move up by one.
+fn slot(name: &str) -> Option<usize> {
+    if is_screenshot_member(name) {
+        return Some(SHOT_SLOT);
+    }
+    MEMBERS
+        .iter()
+        .position(|(n, _)| *n == name)
+        .map(|i| if i >= SHOT_SLOT { i + 1 } else { i })
+}
+
+/// A PNG or WebP by its first bytes (the screenshot's name says which).
+fn picture_matches_name(head: &[u8], name: &str) -> bool {
+    if name.ends_with(".png") {
+        head.starts_with(b"\x89PNG\r\n\x1a\n")
+    } else {
+        head.len() >= 12 && &head[..4] == b"RIFF" && &head[8..12] == b"WEBP"
+    }
 }
 
 fn octal(b: &[u8]) -> Option<u64> {
@@ -75,6 +102,9 @@ pub fn members(path: &Path) -> Result<Vec<Member>, String> {
     }
 }
 
+/// Why a member other than a plain file is refused.
+const ONLY_PLAIN: &str = "only plain files are allowed";
+
 /// One ustar header block at `pos` of an archive `len` bytes long: the member, or None for the
 /// end-of-archive block. Only plain files without a name prefix pass.
 fn header(h: &[u8; BLOCK as usize], pos: u64, len: u64) -> Result<Option<Member>, String> {
@@ -99,7 +129,7 @@ fn header(h: &[u8; BLOCK as usize], pos: u64, len: u64) -> Result<Option<Member>
         return Err("not a ustar archive".into());
     }
     if !matches!(h[156], b'0' | 0) || !field(&h[345..500]).is_empty() {
-        return Err("only plain files are allowed".into());
+        return Err(ONLY_PLAIN.into());
     }
     let name = std::str::from_utf8(field(&h[..100]))
         .map_err(|_| "member name not UTF-8".to_string())?
@@ -198,15 +228,34 @@ fn parse_manifest(text: &str) -> Option<Vec<(&str, &str)>> {
 /// Check order, names, hashes, signature and Info.json. `keys`: trusted Ed25519 public keys.
 pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
     let ms = members(path)?;
-    // Exactly the contract members, each once, in contract order.
-    let mut want = MEMBERS.iter().peekable();
+    // Exactly the contract members, each once, in contract order. Between the icon and the payload
+    // may sit the hub's listing screenshots: up to MAX_SCREENSHOTS, each name once, each a PNG or
+    // WebP (by name and first bytes) of at most MAX_SCREENSHOT_SIZE.
+    let mut last: Option<usize> = None;
+    let mut shots: Vec<Member> = Vec::new();
     for m in &ms {
-        loop {
-            match want.next() {
-                Some((n, _)) if *n == m.name => break,
-                Some((_, false)) => continue,
-                _ => return Err(format!("unexpected member {}", m.name)),
+        let at = slot(&m.name).ok_or_else(|| format!("unexpected member {}", m.name))?;
+        if last.is_some_and(|l| at < l || (at == l && at != SHOT_SLOT)) {
+            return Err(format!("unexpected member {}", m.name));
+        }
+        if at == SHOT_SLOT {
+            if shots.len() >= MAX_SCREENSHOTS || shots.iter().any(|s| s.name == m.name) {
+                return Err(format!("unexpected member {}", m.name));
             }
+            if m.size > MAX_SCREENSHOT_SIZE {
+                return Err(format!("{} too large", m.name));
+            }
+            shots.push(m.clone());
+        }
+        last = Some(at);
+    }
+    for s in &shots {
+        let head = Member {
+            size: s.size.min(12),
+            ..s.clone()
+        };
+        if !picture_matches_name(&read_member(path, &head, 12)?, &s.name) {
+            return Err(format!("{} is not a PNG or WebP picture", s.name));
         }
     }
     let get = |n: &str| ms.iter().find(|m| m.name == n);
@@ -257,6 +306,7 @@ pub fn verify(path: &Path, keys: &[[u8; 32]]) -> Result<Verified, String> {
         trust,
         payload: get(PAYLOAD).cloned().ok_or("missing payload")?,
         icon: get(shared::package::ICON).cloned(),
+        screenshots: shots,
     })
 }
 
@@ -313,7 +363,14 @@ pub fn verify_wolplug(tar: &[u8], keys: &[[u8; 32]]) -> Result<VerifiedPlugin, S
     if tar.len() as u64 > WOLPLUG_MAX_TAR {
         return Err("The plugin file is too large.".into());
     }
-    let ms = members_in(tar).map_err(|e| format!("The plugin file is damaged ({e})."))?;
+    let ms = members_in(tar).map_err(|e| {
+        // QA-PLUG-20: a hand-made tar (folder entries) is not damaged, it is not a package.
+        if e == ONLY_PLAIN {
+            "The plugin file has folders or links in it, so it was not made by wol plugin pack. Make it with wol plugin pack.".to_owned()
+        } else {
+            format!("The plugin file is damaged ({e}).")
+        }
+    })?;
     let bytes = |m: &Member| &tar[m.offset as usize..(m.offset + m.size) as usize];
     let names: Vec<&str> = ms.iter().map(|m| m.name.as_str()).collect();
     let (man_at, sig) = match names[..] {
@@ -419,6 +476,50 @@ pub fn require_signed(v: VerifiedPlugin) -> Result<VerifiedPlugin, String> {
     }
 }
 
+/// Removes a staging folder; one that stays is found and removed by the next install.
+fn discard(stage: &Path) {
+    let _ = std::fs::remove_dir_all(stage);
+}
+
+/// Why a plugin could not be written: a full disk is named (QA-STORE-24), anything else carries
+/// the system's reason.
+fn plugin_write_error(e: std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::StorageFull || e.raw_os_error() == Some(28) {
+        "There is no room left on the disk. Free some space, then try again.".into()
+    } else {
+        format!("The plugin could not be written: {e}.")
+    }
+}
+
+/// Staging folders (`.stage-<id>-<pid>`) that an install left behind when its process died
+/// (QA-STORE-23): removed, and when it died between the two renames (the older version moved
+/// to the folder's `old`, the new one not yet in place) the older version goes back. A folder of
+/// a process that is still running is left alone.
+pub fn recover_stages(plugins_dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(plugins_dir) else {
+        return;
+    };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let Some((id, pid)) = name
+            .strip_prefix(".stage-")
+            .and_then(|r| r.rsplit_once('-'))
+            .and_then(|(id, pid)| Some((id, pid.parse::<u32>().ok()?)))
+        else {
+            continue;
+        };
+        if pid == std::process::id() || Path::new(&format!("/proc/{pid}")).exists() {
+            continue;
+        }
+        let (stage, dest) = (e.path(), plugins_dir.join(id));
+        let old = stage.join("old");
+        if old.is_dir() && !dest.exists() && !id.is_empty() && !id.contains(['/', '\0']) {
+            let _ = std::fs::rename(&old, &dest);
+        }
+        discard(&stage);
+    }
+}
+
 /// Writes a verified plugin as `<plugins_dir>/<id>/` for this account: staged next to it, checked
 /// with [`crate::plugins::check`], then moved in place of any older version. Returns the folder.
 pub fn install_plugin(
@@ -426,10 +527,11 @@ pub fn install_plugin(
     plugins_dir: &Path,
 ) -> Result<std::path::PathBuf, String> {
     let id = &v.manifest.id;
-    let fail = |e: std::io::Error| format!("The plugin could not be written: {e}.");
+    let fail = plugin_write_error;
     std::fs::create_dir_all(plugins_dir).map_err(fail)?;
+    recover_stages(plugins_dir);
     let stage = plugins_dir.join(format!(".stage-{id}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&stage);
+    discard(&stage);
     let staged = stage.join(id);
     let write = || -> std::io::Result<()> {
         std::fs::create_dir_all(&staged)?;
@@ -444,11 +546,11 @@ pub fn install_plugin(
         Ok(())
     };
     if let Err(e) = write() {
-        let _ = std::fs::remove_dir_all(&stage);
+        discard(&stage);
         return Err(fail(e));
     }
     if let Some(p) = crate::plugins::check(&staged, false).problems.first() {
-        let _ = std::fs::remove_dir_all(&stage);
+        discard(&stage);
         return Err(p.clone());
     }
     let dest = plugins_dir.join(id);
@@ -458,10 +560,10 @@ pub fn install_plugin(
         if moved_old {
             let _ = std::fs::rename(&old, &dest);
         }
-        let _ = std::fs::remove_dir_all(&stage);
+        discard(&stage);
         return Err(fail(e));
     }
-    let _ = std::fs::remove_dir_all(&stage);
+    discard(&stage);
     Ok(dest)
 }
 
@@ -761,7 +863,10 @@ pub fn fetch_argv(url: &str, dest: &str) -> Vec<String> {
     [
         "curl",
         "--disable",
-        "-fsSL",
+        // Silent: curl's own text never reaches the person ("curl: (22) The requested URL returned
+        // error: 404"; a missing .sig is normal); the caller words its exit status in one sentence
+        // (QA-STORE-61, QA-PWR-17).
+        "-fsL",
         "--proto",
         "=https",
         "--proto-redir",
@@ -871,6 +976,146 @@ mod tests {
             let mut m = good(Some(&SEED));
             edit(&mut m);
             assert!(verify(&write(&m), &[public_of(&SEED)]).is_err(), "{what}");
+        }
+    }
+
+    /// A PNG-looking picture of `n` bytes (the reader checks the first bytes only).
+    fn png(n: usize) -> Vec<u8> {
+        let mut b = b"\x89PNG\r\n\x1a\n".to_vec();
+        b.resize(n, 7);
+        b
+    }
+
+    fn webp() -> Vec<u8> {
+        let mut b = b"RIFF\x20\0\0\0WEBPVP8L".to_vec();
+        b.resize(40, 3);
+        b
+    }
+
+    /// `good()` with the given screenshots between the icon and the payload, manifest and signature redone.
+    fn with_shots(shots: &[(&str, Vec<u8>)]) -> Vec<(String, Vec<u8>)> {
+        let mut m: Vec<(String, Vec<u8>)> = vec![
+            ("Info.json".into(), INFO.into()),
+            (ICON.into(), b"\x89PNG".to_vec()),
+        ];
+        m.extend(shots.iter().map(|(n, b)| ((*n).into(), b.clone())));
+        m.push((PAYLOAD.into(), b"pkg payload bytes".to_vec()));
+        let refs: Vec<(&str, &[u8])> = m.iter().map(|(n, b)| (n.as_str(), b.as_slice())).collect();
+        let man = manifest(&refs);
+        let sig = sign(&SEED, man.as_bytes()).to_vec();
+        m.push((MANIFEST.into(), man.into_bytes()));
+        m.push((SIGNATURE.into(), sig));
+        m
+    }
+
+    /// The hub's listing pictures (hubcheck `facts`) are part of the contract: `screenshots/<name>.png|webp`
+    /// between the icon and the payload, up to eight, each a real picture of at most 2 MiB.
+    #[test]
+    fn screenshots_are_accepted_and_bounded() {
+        let keys = [public_of(&SEED)];
+        let ok = |m: &[(String, Vec<u8>)]| verify(&write(m), &keys);
+        let v = ok(&with_shots(&[
+            ("screenshots/main.png", png(100)),
+            ("screenshots/two_2.webp", webp()),
+        ]))
+        .unwrap();
+        assert_eq!(v.trust, Trust::Signed(0));
+        assert_eq!(
+            v.screenshots
+                .iter()
+                .map(|m| m.name.as_str())
+                .collect::<Vec<_>>(),
+            ["screenshots/main.png", "screenshots/two_2.webp"]
+        );
+        assert!(v.icon.is_some());
+        // none at all is still a package
+        assert!(ok(&with_shots(&[])).unwrap().screenshots.is_empty());
+        // eight are the most
+        let eight: Vec<(String, Vec<u8>)> = (0..8)
+            .map(|i| (format!("screenshots/s{i}.png"), png(64)))
+            .collect();
+        let refs: Vec<(&str, Vec<u8>)> =
+            eight.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        assert_eq!(ok(&with_shots(&refs)).unwrap().screenshots.len(), 8);
+        let nine: Vec<(String, Vec<u8>)> = (0..9)
+            .map(|i| (format!("screenshots/s{i}.png"), png(64)))
+            .collect();
+        let refs: Vec<(&str, Vec<u8>)> =
+            nine.iter().map(|(n, b)| (n.as_str(), b.clone())).collect();
+        assert!(ok(&with_shots(&refs)).is_err(), "nine screenshots");
+        // size: 2 MiB is the limit
+        assert!(ok(&with_shots(&[("screenshots/big.png", png(2 << 20))])).is_ok());
+        let e = ok(&with_shots(&[("screenshots/big.png", png((2 << 20) + 1))])).unwrap_err();
+        assert!(e.contains("too large"), "{e}");
+        // names: charset, length, extension, directory
+        for bad in [
+            "screenshots/Main.png",
+            "screenshots/a b.png",
+            "screenshots/a.gif",
+            "screenshots/a.svg",
+            "screenshots/.png",
+            "screenshots/sub/a.png",
+            "screenshots/../a.png",
+            "screenshots/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.png",
+            "shots/a.png",
+            "screenshots.png",
+        ] {
+            assert!(ok(&with_shots(&[(bad, png(64))])).is_err(), "{bad}");
+        }
+        // the same name twice; a picture that is not what its name says
+        assert!(
+            ok(&with_shots(&[
+                ("screenshots/a.png", png(64)),
+                ("screenshots/a.png", png(65))
+            ]))
+            .is_err()
+        );
+        assert!(
+            ok(&with_shots(&[("screenshots/a.png", webp())])).is_err(),
+            "webp bytes named .png"
+        );
+        assert!(
+            ok(&with_shots(&[("screenshots/a.webp", png(64))])).is_err(),
+            "png bytes named .webp"
+        );
+        assert!(ok(&with_shots(&[("screenshots/a.png", b"<svg/>".to_vec())])).is_err());
+        assert!(
+            ok(&with_shots(&[("screenshots/a.png", Vec::new())])).is_err(),
+            "empty"
+        );
+    }
+
+    /// Screenshots keep their slot: not before the icon or Info.json, not after the payload or the manifest,
+    /// and a changed byte is still a hash mismatch.
+    #[test]
+    fn screenshots_have_their_place_in_the_archive() {
+        let keys = [public_of(&SEED)];
+        let base = with_shots(&[("screenshots/a.png", png(64))]);
+        // [Info, icon, shot, payload, SHA256, SHA256.sig]
+        assert!(verify(&write(&base), &keys).is_ok());
+        for (what, edit) in [
+            (
+                "shot first",
+                (|m: &mut Vec<(String, Vec<u8>)>| m.swap(0, 2)) as fn(&mut Vec<_>),
+            ),
+            ("shot before Info.json", |m| m.swap(0, 2)),
+            ("shot before the icon", |m| m.swap(1, 2)),
+            ("shot after the payload", |m| m.swap(2, 3)),
+            ("shot after the manifest", |m| m.swap(2, 4)),
+            ("shot byte", |m| m[2].1[20] ^= 1),
+            ("shot not in the manifest", |m| {
+                let t = String::from_utf8(m[4].1.clone()).unwrap();
+                let t: String = t
+                    .lines()
+                    .filter(|l| !l.contains("screenshots/"))
+                    .map(|l| format!("{l}\n"))
+                    .collect();
+                m[4].1 = t.into_bytes();
+            }),
+        ] {
+            let mut m = base.clone();
+            edit(&mut m);
+            assert!(verify(&write(&m), &keys).is_err(), "{what}");
         }
     }
 
@@ -1071,6 +1316,11 @@ not-a-key x
         let has = |w: &[&str]| a.windows(w.len()).any(|x| x == w);
         assert!(has(&["--proto", "=https"]) && has(&["--proto-redir", "=https"]));
         assert!(has(&["--max-filesize", "33554432"]));
+        // QA-PWR-17: curl stays silent; a 404 on the index (or its optional .sig) is wol's to word.
+        assert!(
+            has(&["-fsL"]) && !a.iter().any(|x| x.contains('S')),
+            "{a:?}"
+        );
         assert_eq!(
             a[a.len() - 2..],
             ["--", "https://x/a.wol"],
@@ -1238,6 +1488,37 @@ not-a-key x
         ustar(&all)
     }
 
+    /// QA-PLUG-20: a hand-made archive (`tar -cf`, with its folder entry) is refused with what to
+    /// do (make it with `wol plugin pack`), not as "damaged".
+    #[test]
+    fn a_hand_made_tar_names_wol_plugin_pack() {
+        let d = std::env::temp_dir().join(format!("wol-handtar-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(d.join("alice.hand")).unwrap();
+        std::fs::write(d.join("alice.hand/plugin.toml"), "schema = 1\n").unwrap();
+        let out = std::process::Command::new("tar")
+            .args(["--format=ustar", "-cf", "-", "-C"])
+            .arg(&d)
+            .arg("alice.hand")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let e = verify_wolplug(&out.stdout, &[]).unwrap_err();
+        assert!(
+            e.contains("wol plugin pack") && !e.contains("damaged"),
+            "{e}"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// QA-PLUG-21: the manual names the per-file cap `check` enforces, next to the 1 MiB total.
+    #[test]
+    fn the_manual_names_the_per_file_cap() {
+        let doc = include_str!("../../../docs/modules/plugins.md");
+        let cap = format!("{} KiB per file", crate::plugins::MAX_FILE / 1024);
+        assert!(doc.contains(&cap), "{cap}");
+    }
+
     #[test]
     fn a_signed_wolplug_verifies_and_installs_for_the_account() {
         let keys = [public_of(&OTHER), public_of(&SEED)];
@@ -1257,6 +1538,53 @@ not-a-key x
         assert!(!at.join("stale.txt").exists());
         let left: Vec<_> = std::fs::read_dir(&d).unwrap().flatten().collect();
         assert_eq!(left.len(), 1, "only the plugin folder stays");
+    }
+
+    /// QA-STORE-23: the staging a dead install left is removed by the next one, the older
+    /// version it had moved aside comes back, and a running process's staging is left alone.
+    #[test]
+    fn a_dead_installs_staging_is_cleaned_and_its_old_version_restored() {
+        let dead = {
+            let mut c = std::process::Command::new("true").spawn().unwrap();
+            c.wait().unwrap();
+            c.id()
+        };
+        let d = dir();
+        // Died between the renames: the older "alice.old" is only in the staging's `old`.
+        let s1 = d.join(format!(".stage-alice.old-{dead}"));
+        std::fs::create_dir_all(s1.join("old")).unwrap();
+        std::fs::write(s1.join("old/plugin.toml"), "kept").unwrap();
+        // Died before the swap: the plugin folder is in place, the staging is junk.
+        std::fs::create_dir_all(d.join("alice.here")).unwrap();
+        let s2 = d.join(format!(".stage-alice.here-{dead}/alice.here"));
+        std::fs::create_dir_all(&s2).unwrap();
+        // A process still running (init) owns this one.
+        let live = d.join(".stage-bob.x-1");
+        std::fs::create_dir_all(&live).unwrap();
+        let tar = wolplug(&plugin_files("alice.demo"), Some(&SEED));
+        let v = verify_wolplug(&tar, &[public_of(&SEED)]).unwrap();
+        install_plugin(&v, &d).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.join("alice.old/plugin.toml")).unwrap(),
+            "kept"
+        );
+        assert!(d.join("alice.here").is_dir());
+        assert!(!s1.exists() && !s2.exists());
+        assert!(live.exists());
+    }
+
+    /// QA-STORE-24: a plugin that does not fit says the disk is full, not "os error 28".
+    #[test]
+    fn a_full_disk_is_named_when_a_plugin_is_written() {
+        let full = std::io::Error::from_raw_os_error(28);
+        let m = plugin_write_error(full);
+        assert!(m.contains("no room left on the disk"), "{m}");
+        assert!(!m.contains("os error"), "{m}");
+        let other = plugin_write_error(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(
+            other.starts_with("The plugin could not be written"),
+            "{other}"
+        );
     }
 
     #[test]
@@ -1351,6 +1679,58 @@ not-a-key x
         let refs: Vec<(&str, &[u8])> = vec![("alice.demo/plugin.toml", b"x")];
         let e = verify_wolplug(&ustar(&refs), &keys).unwrap_err();
         assert!(e.contains("SHA256"), "{e}");
+    }
+
+    /// A plugin from the hub names its store-page picture and screenshots in plugin.toml (hubcheck
+    /// `facts`, WolOS 0.13): they travel in the folder, are checked like every other named file, and a
+    /// manifest that uses the keys without min_wolos 0.13 is refused.
+    #[test]
+    fn a_wolplug_may_carry_its_store_page_pictures() {
+        let keys = [public_of(&SEED)];
+        let listed = |min: &str, with_files: bool| {
+            let mut f = plugin_files("alice.demo");
+            let toml = f
+                .iter_mut()
+                .find(|(n, _)| n.ends_with("plugin.toml"))
+                .unwrap();
+            let old: String = String::from_utf8(toml.1.clone())
+                .unwrap()
+                .lines()
+                .filter(|l| !l.starts_with("min_wolos"))
+                .map(|l| format!("{l}\n"))
+                .collect();
+            toml.1 = format!(
+                "{min}icon = \"icon.png\"\nscreenshots = [\"shots/a.png\"]\nabout = \"One.\\nTwo.\"\n{old}"
+            )
+            .into_bytes();
+            if with_files {
+                f.push(("alice.demo/icon.png".into(), b"\x89PNG".to_vec()));
+                f.push(("alice.demo/shots/a.png".into(), b"\x89PNG".to_vec()));
+            }
+            wolplug(&f, Some(&SEED))
+        };
+        let v = verify_wolplug(&listed("min_wolos = \"0.13\"\n", true), &keys).unwrap();
+        assert_eq!(v.manifest.icon, "icon.png");
+        assert_eq!(v.manifest.screenshots, ["shots/a.png"]);
+        assert_eq!(v.manifest.about, "One.\nTwo.");
+        assert!(v.files.iter().any(|(r, _)| r == "shots/a.png"));
+        // the picture the manifest names must be in the file
+        let e = verify_wolplug(&listed("min_wolos = \"0.13\"\n", false), &keys).unwrap_err();
+        assert!(e.contains("not in the plugin"), "{e}");
+        // 0.12 systems refuse these keys: the manifest has to say so
+        let e = verify_wolplug(&listed("min_wolos = \"0.12\"\n", true), &keys).unwrap_err();
+        assert!(e.contains("min_wolos"), "{e}");
+        let e = verify_wolplug(&listed("", true), &keys).unwrap_err();
+        assert!(e.contains("min_wolos"), "{e}");
+        // installed for the account, the folder has the pictures and `wol plugin check` is clean
+        let dir = dir();
+        let v = verify_wolplug(&listed("min_wolos = \"0.13\"\n", true), &keys).unwrap();
+        let at = install_plugin(&v, &dir).unwrap();
+        assert!(at.join("shots/a.png").is_file() && at.join("icon.png").is_file());
+        assert_eq!(
+            crate::plugins::check(&at, false).problems,
+            Vec::<String>::new()
+        );
     }
 
     #[test]

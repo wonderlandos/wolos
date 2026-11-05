@@ -35,6 +35,10 @@ pub struct Account {
     pub full_name: String,
     /// Monogram colour (`shared::login::AVATAR_TONES`).
     pub tone: String,
+    /// The password hint from the account page ("" = none). A plan written before 0.13 has
+    /// none (QA-LIVE-24: the installer dropped it, the lock screen never showed one).
+    #[serde(default)]
+    pub hint: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -403,6 +407,37 @@ pub fn alongside_range(d: &Disk, p: &Part) -> Option<(u64, u64)> {
     Some((lo, good))
 }
 
+/// Where the slider opens: half way between [`alongside_range`]'s ends, unless that leaves WolOS
+/// less than [`ROOMY_ROOT`] while Windows could give it that much (QA-DOC-32: on a 64 GB disk
+/// the half way split opened at 39 GB under the page's own 'leaves room' warning). Then the
+/// most Windows can keep with WolOS at [`ROOMY_ROOT`], to the MiB.
+pub fn alongside_default(d: &Disk, p: &Part) -> Option<u64> {
+    let (lo, hi) = alongside_range(d, p)?;
+    let root = |keep: u64| {
+        compile(&alongside(d, Some((&p.uuid, keep))), d, false)
+            .map(|c| c.root_bytes)
+            .unwrap_or(0)
+    };
+    let mid = lo + (hi - lo) / 2;
+    if root(mid) >= ROOMY_ROOT || root(lo) < ROOMY_ROOT {
+        return Some(mid);
+    }
+    // root(lo) is roomy, root(mid) is not: the largest roomy keep between them.
+    let (mut good, mut bad) = (lo, mid);
+    while bad - good > MIB {
+        let m = (good + (bad - good) / 2) / MIB * MIB;
+        if m == good {
+            break;
+        }
+        if root(m) >= ROOMY_ROOT {
+            good = m;
+        } else {
+            bad = m;
+        }
+    }
+    Some(good)
+}
+
 /// A password typed at the disk's prompt, before any desktop exists, on the console keymap:
 /// printable ASCII is what every keymap types the same.
 pub fn console_typable(p: &str) -> bool {
@@ -434,7 +469,9 @@ pub fn console_keymap(xkb: &str) -> &'static str {
         "es" => "es",
         "gb" => "uk",
         "it" => "it",
+        "jp" => "jp106",
         "pt" => "pt-latin1",
+        "ru" => "ru",
         _ => "us",
     }
 }
@@ -726,6 +763,7 @@ mod tests {
                 name: "alice".into(),
                 full_name: "Alice".into(),
                 tone: "violet".into(),
+                hint: String::new(),
             }),
             secure_boot: Some(false),
             modules: vec!["dev".into(), "creative".into()],
@@ -812,6 +850,53 @@ mod tests {
         full.parts[1].sectors = 100 * GB / 512 / 2048 * 2048;
         full.last = (150 * GB + 2048 * 512) / 512;
         assert_eq!(alongside_range(&full, &full.parts[1]), None);
+    }
+
+    /// QA-DOC-32: a 64 GB disk, Windows using 344 MB: the slider opened at WolOS 39 GB, under
+    /// the page's own '40 GB or more leaves room' warning. It opens at 40 GB or more now; a big
+    /// disk keeps the half way split.
+    #[test]
+    fn alongside_default_is_roomy_on_64gb() {
+        let mut esp = part(1, 0, 1, ESP_TYPE, "vfat");
+        esp.free_bytes = Some(800 * MIB);
+        let mut win = part(2, 1, 62, "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7", "ntfs");
+        win.min_bytes = Some(344 * MIB);
+        let d = Disk {
+            path: "/dev/vda".into(),
+            bytes: 64 * GB,
+            sector: 512,
+            table: Table::Gpt,
+            id: "t".into(),
+            first: 2048,
+            last: 64 * GB / 512 - 34,
+            parts: vec![esp, win],
+            ..Disk::default()
+        };
+        let w = &d.parts[1];
+        let root = |keep: u64| {
+            compile(&alongside(&d, Some(("u2", keep))), &d, false)
+                .unwrap()
+                .root_bytes
+        };
+        let (lo, hi) = alongside_range(&d, w).unwrap();
+        assert!(
+            root(lo + (hi - lo) / 2) < ROOMY_ROOT,
+            "the half way split is not roomy here"
+        );
+        let keep = alongside_default(&d, w).unwrap();
+        assert!(root(keep) >= ROOMY_ROOT, "{}", root(keep));
+        assert!(
+            root(keep + 2 * MIB) < ROOMY_ROOT,
+            "and Windows keeps the rest"
+        );
+        assert!((lo..=hi).contains(&keep) && keep.is_multiple_of(MIB));
+        // A big disk: the half way split is roomy and stays.
+        let big = disk();
+        let (lo, hi) = alongside_range(&big, &big.parts[1]).unwrap();
+        assert_eq!(
+            alongside_default(&big, &big.parts[1]),
+            Some(lo + (hi - lo) / 2)
+        );
     }
 
     #[test]

@@ -14,8 +14,15 @@ wpa_supplicant.conf writer is gone (QA-NET-20).
 | Setup Assistant join | `wol-login` `SETUP_WIFI` | root |
 
 Surfaces: Settings > Wi-Fi (`shell ui/settings/wifi.rs`), Control Center's Wi-Fi page (`ui/control_center/pages.rs`),
-Settings > Network (`ui/settings/network.rs`), Settings > General > Sharing (`ui/settings/sharing.rs`),
-`wol wifi …` and `wol network` (`controller/src/verbs.rs`), wold's `network.info` for apps (`api/src/facts.rs`).
+Settings > Network (`ui/settings/network.rs`, its VPN section `ui/settings/network_vpn.rs`, its subpages
+`ui/settings/ip_settings.rs`, `ui/settings/proxy.rs`, `ui/settings/dns_over_tls.rs`), Settings > General > Sharing
+(`ui/settings/sharing.rs`), `wol wifi …` and `wol network` (`controller/src/verbs.rs`), `wol network ip`, `wol vpn`,
+`wol proxy`, `wol dns`, `wol airplane` (`controller/src/netverbs.rs`), wold's `network.info` for apps (`api/src/facts.rs`).
+
+| What (NET-3) | Where | As |
+|---|---|---|
+| A link's IPv4 address (Automatic or Manual), VPN import, connect, disconnect, forget, airplane mode | `wol_core::controls` (`controls/net.rs`; pure parts in `netconf.rs`, `vpn.rs`) | the person at the computer: NetworkManager's polkit rules, rfkill through the session's `uaccess` on /dev/rfkill |
+| System proxy, DNS over TLS | wol-admind `proxy`, `dns-over-tls` (`wol_core::admin`) | root, after the Authenticate sheet with the password typed every time |
 
 ## Joining
 
@@ -61,8 +68,72 @@ bar's "Sign In to This Network" notice, posted once per portal (NET2-3). The pro
 
 A tunnel (WireGuard, OpenVPN tun: `link_type none`) is a VPN; it is up while it carries traffic,
 and each link shows its own DNS servers (`nmcli … device show`, QA-NET-28).
-`nmcli connection import type wireguard file x.conf` works with the shipped kernel; there is no
-import UI yet (lead call, QA-NET-21).
+
+## IP Settings: a static address (QA-LIVE3-14)
+
+Settings > Network > a link > IP settings > Configure… (the IP Settings page) and `wol network ip <link>
+[auto | manual <address/prefix> [router] [dns…]]` change the IPv4 method of the profile active on that
+link (`nmcli -g GENERAL.CON-UUID device show`), by UUID: `nmcli connection modify uuid <u> ipv4.method
+manual ipv4.addresses … ipv4.gateway … ipv4.dns …` (Automatic clears the three), then `nmcli connection
+up uuid <u>`. Checked before anything runs (`wol_core::netconf::validate_ipv4`): an address with its
+prefix that is not the subnet's own number or broadcast (prefixes 31 and 32 have none), a router inside
+that subnet, DNS servers that are IP addresses.
+
+A Manual address then gets a 15-second trial: once a second the link must be connected (device state
+100) and reach at least as far as before (`nmcli networking connectivity check`: full before and none
+after is lost). When it does not, the profile goes back to what it was (its earlier Manual address, else Automatic) by itself and Settings says
+so; `wol network ip` exits non-zero. Only IPv4 is typed in; IPv6 stays automatic.
+
+## VPN
+
+Settings > Network > VPN lists the WireGuard and VPN profiles (`nmcli -t -f NAME,UUID,TYPE,ACTIVE
+connection show`; a `vpn` profile's plugin from `vpn.service-type`), each with Connect or Disconnect and
+Forget; Add VPN picks a file, and `wol vpn import <file>` does the same. A WireGuard `.conf` is imported
+with `nmcli connection import type wireguard file`, from a private copy named after the file as an
+interface name (at most 15 letters, digits, `-`, `_`: NetworkManager names the tunnel after the file).
+Its private key then moves into the login keyring (`secret-tool store`, libsecret) and out of the
+profile (`wireguard.private-key-flags 2`, not saved; `connection.autoconnect no`); Connect looks it up
+and hands it to `nmcli connection up uuid <u> passwd-file /dev/stdin`, never in argv. When no keyring
+answers, the key stays in NetworkManager's root-only profile file and Connect works without it.
+An OpenVPN `.ovpn` needs NetworkManager's OpenVPN plugin (networkmanager-openvpn, with openvpn): the image
+ships both through wolos-system's depends (wolos-pkgbuilds `checks/tests/recipe_network_vpn.rs`); where the plugin
+is missing, import says so. A password OpenVPN asks for is typed in Settings (or given
+on stdin to `wol vpn connect`), sent the same way and remembered in the keyring once it worked. Forget
+deletes the profile and its keyring entries.
+
+## Proxy
+
+Settings > Network > Proxy and `wol proxy [off | auto <url> [no-proxy=…] | manual http=host:port
+https=… socks=… no-proxy=…]`: Off, Automatic (a PAC file) or Manual, with the hosts reached directly.
+wol-admind `proxy` writes `/etc/wolos/proxy.conf` (what Settings reads back) and the login environment
+`/etc/profile.d/wolos-proxy.sh` (`http_proxy`, `https_proxy`, `all_proxy` as `socks5h://`, `no_proxy`
+with localhost added, both spellings; a PAC file has no variable). Then, as the person, the desktop's
+keys (`org.gnome.system.proxy`: mode, autoconfig-url, ignore-hosts, http, https, socks) and
+NetworkManager's `proxy.method auto` with the PAC address on the profile of the default route (`none`
+otherwise). Every value is checked twice (Settings, then wol-admind) to hold no quote, `$` or space: it
+is written into a shell file.
+
+## DNS over TLS
+
+Settings > Network > DNS over TLS and `wol dns tls <off|opportunistic|strict> [server…]`: wol-admind
+`dns-over-tls` writes `/etc/systemd/resolved.conf.d/50-wolos-dns-over-tls.conf` (`DNSOverTLS=no`,
+`opportunistic` or `yes`, and `DNS=` with the servers, `9.9.9.9#dns.quad9.net`: the name after `#` is
+the one the server's certificate must have) and restarts systemd-resolved. Always (strict) is refused
+without a server of the computer's own: a home router does not speak TLS and every lookup would fail
+(network-r2: 347 tries on port 853, no answer). The shipped `/usr/lib/systemd/resolved.conf.d/wolos.conf`
+sets neither key, so the drop-in wins (`controller/tests/image_network.rs`). Because every lookup goes
+through resolved (see "Names and the firewall" below), the setting applies to every program.
+
+## Airplane mode
+
+Control Center's Airplane Mode tile (first in the grid on a computer with a radio), Settings > Network >
+Airplane Mode and `wol airplane on|off`: on remembers which radio types were on
+(`/var/lib/wolos/airplane/radios`, the computer's list that every account shares, one rfkill type per
+line; kept when it was on already; without that folder, `$XDG_STATE_HOME/wolos/airplane`) and runs
+`rfkill block all` (Wi-Fi, Bluetooth, mobile broadband); off unblocks only those types (every type
+without the list) and removes the list. Airplane mode reads as on while the list exists and a radio is
+still blocked, so `rfkill unblock all` in a terminal ends it. The menu bar shows the plane
+(`airplane-mode-symbolic`) unless a wired link carries the traffic.
 
 ## Names and the firewall
 
@@ -98,7 +169,10 @@ has the internet), brought up with the password on stdin; it never connects by i
 The live account has no password, so Sharing greys the administrator rows and says why, and
 Remote Login is not offered (QA-NET-6, NET2-8). Joining, Disconnect and the hotspot work there.
 
-Tests: `crates/core/src/{wifi,controls,netinfo,sharing,admin}.rs`, `crates/core/tests/admin_plans.rs`,
+Tests: `crates/core/src/{wifi,controls,netinfo,sharing,admin,netconf,vpn}.rs`, `crates/core/src/controls/net.rs`,
+`crates/controller/tests/net3.rs`, `crates/core/tests/admin_plans.rs`,
 `crates/api/src/facts.rs`, `crates/controller/tests/{dispatch,image_network}.rs`,
-`crates/shell/src/ui/settings/{wifi,network,sharing,machine}.rs`, `ui/control_center/pages.rs`;
-wolvm journeys `qa100-net-*`, `qa100-net2-*`, `qa100-b7-wifi-hotspot-hidden`.
+`crates/shell/src/ui/settings/{wifi,network,network_vpn,ip_settings,proxy,dns_over_tls,sharing,machine}.rs`,
+`ui/control_center/pages.rs`, `status.rs`; goldens `settings-network-all-wide`, `settings-ipsettings-*`, `settings-proxy-*`,
+`settings-dnsovertls-*`, `controlcenter-airplane`; wolvm journeys `qa100-net-*`, `qa100-net2-*`,
+`qa100-b7-wifi-hotspot-hidden`, `qa100-net3-*`.

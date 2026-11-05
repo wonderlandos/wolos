@@ -1,16 +1,17 @@
-# Scripts: sh, bash and Ruby (ADR 0041)
+# Scripts: sh, bash, Ruby and rsh (ADR 0041)
 
-Decision: ADR 0041. Code: `crates/controller/src/script.rs` (`wol script`, the `KINDS` table), `crates/controller/src/verbs.rs` (`as_script`, the helper gate), `crates/core/src/automation/audit.rs` (the audit log). Rules: docs/RULES-ruby.md (`RB-nnn`) beside docs/RULES-system.md (`RS-nnn`). Tests: `crates/controller/tests/script.rs` (every case for `.sh` and `.rb`), `crates/controller/tests/rules_ruby.rs`, `crates/proxy/tests/script_entry.rs`, `crates/core/tests/widget_ruby.rs`.
+Decision: ADR 0041. Code: `crates/controller/src/script.rs` (`wol script`, the `KINDS` table), `crates/controller/src/verbs.rs` (`as_script`, the helper gate), `crates/core/src/automation/audit.rs` (the audit log). Rules: docs/RULES-ruby.md (`RB-nnn`) beside docs/RULES-system.md (`RS-nnn`). Tests: `crates/controller/tests/script.rs` (every case for `.sh`, `.rb` and `.rsh`), `crates/controller/tests/rules_ruby.rs`, `crates/proxy/tests/script_entry.rs`, `crates/core/tests/widget_ruby.rs`.
 
 ## What a script is
 
-A script is a text file you edit and run: its first line names the interpreter (`#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/ruby`, `#!/usr/bin/env ruby`), or, without that line, its name ends in `.sh`, `.bash` or `.rb`. WolOS treats a Ruby script exactly as it treats a shell script. Why Ruby: Crystal is the language of apps and tools (ADR 0036), but it compiles; a script should run the moment you save it. The interpreter (`ruby`) is part of the system; the linter (`rubocop`) comes with the Developer module.
+A script is a text file you edit and run: its first line names the interpreter (`#!/bin/sh`, `#!/usr/bin/env bash`, `#!/usr/bin/ruby`, `#!/usr/bin/env ruby`, `#!/usr/bin/rsh`, `#!/usr/bin/env rsh`), or, without that line, its name ends in `.sh`, `.bash`, `.rb` or `.rsh`. WolOS treats a Ruby script exactly as it treats a shell script. Why Ruby: Crystal is the language of apps and tools (ADR 0036), but it compiles; a script should run the moment you save it. The interpreter (`ruby`) is part of the system; the linter (`rubocop`) comes with the Developer module.
 
 | Kind | Name | Interpreter | Checked with | Linter (when installed) |
 |---|---|---|---|---|
 | `sh` | `.sh` | `/bin/sh` | `sh -n` | `shellcheck -S error -s sh` |
 | `bash` | `.bash` | `/bin/bash` | `bash -n` | `shellcheck -S error -s bash` |
 | `ruby` | `.rb` | `/usr/bin/ruby` | `ruby -wc` | `rubocop` with the WolOS cop list |
+| `rsh` | `.rsh` | `/usr/bin/rsh` | `rsh -n` | `rsh --lint` (rsh's own warnings: unknown commands, risky forms) |
 
 `wol script` (or `wol script --json`) prints this table.
 

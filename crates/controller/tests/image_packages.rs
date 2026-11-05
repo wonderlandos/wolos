@@ -29,6 +29,8 @@ fn ships(p: &str) -> bool {
 /// `"packages": [...]` of a registry record (the records are flat, one string per entry).
 fn record_packages(id: &str) -> Vec<String> {
     let path = match id {
+        "dev" => "files/usr/share/wolos/modules/dev.json",
+        "creative" => "files/usr/share/wolos/modules/creative.json",
         "ime" => "files/usr/share/wolos/modules/ime.json",
         "scanner" => "files/usr/share/wolos/modules/scanner.json",
         _ => panic!("{id}: no such record in this test"),
@@ -354,6 +356,86 @@ fn plugin_schema_is_installed() {
     ));
 }
 
+/// QA-PWR-4: the Developer module can compile and link. `crystal build` links through `cc`, `make`
+/// runs a `wol app` project and mise builds some runtimes from source: the C toolchain comes with the
+/// module (`base-devel`), not with the image, and the size the module promises grew with it.
+#[test]
+fn dev_module_carries_a_c_toolchain() {
+    let pk = record_packages("dev");
+    assert!(pk.iter().any(|p| p == "base-devel"), "{pk:?}");
+    assert!(
+        pk.iter().any(|p| p == "crystal"),
+        "crystal needs the toolchain it links with"
+    );
+    // The image lists live in wolos-iso (a sibling: absent in a checkout of this repo alone).
+    if siblings::root().join("profile/packages.x86_64").exists() {
+        assert!(
+            !ships("base-devel"),
+            "the toolchain belongs to the module, not to the image"
+        );
+    }
+    let t = read("files/usr/share/wolos/modules/dev.json");
+    let m = wol_core::modules::Module::parse(&t).expect("dev record");
+    assert!(
+        m.summary.contains("C toolchain"),
+        "the record tells what the module brings: {}",
+        m.summary
+    );
+    assert!(
+        m.size_mb >= 450,
+        "base-devel adds about 94 MiB to the download (pacman -Sp, measured): {}",
+        m.size_mb
+    );
+}
+
+/// `wol script check` runs ShellCheck on shell scripts (controller/src/script.rs) and the manual sends people to it: the
+/// Developer module brings it (about 22 MiB with the Haskell libraries it needs, `pacman -Sp`
+/// measured on top of the module's other packages), and says so in its summary.
+#[test]
+fn dev_module_carries_shellcheck() {
+    let pk = record_packages("dev");
+    assert!(pk.iter().any(|p| p == "shellcheck"), "{pk:?}");
+    let m = wol_core::modules::Module::parse(&read("files/usr/share/wolos/modules/dev.json"))
+        .expect("dev record");
+    assert!(m.summary.contains("ShellCheck"), "{}", m.summary);
+    assert!(
+        m.size_mb >= 470,
+        "shellcheck adds about 22 MiB over the 450 MiB the module promised: {}",
+        m.size_mb
+    );
+    assert!(
+        read("docs/modules/modules.md").contains("`shellcheck`"),
+        "the module reference names it"
+    );
+}
+
+/// wol-hue (themes from a picture, ADR 0031) is part of the Creative module: the manual's Hue page
+/// and the Creative page promise it with Krita and GIMP. It is a `[wolos]` package (a Crystal
+/// program), so the record, not the image, carries it.
+#[test]
+fn creative_module_carries_wol_hue() {
+    let pk = record_packages("creative");
+    assert!(pk.iter().any(|p| p == "wolos-hue"), "{pk:?}");
+    // The image lists live in wolos-iso (a sibling: absent in a checkout of this repo alone).
+    if siblings::root().join("profile/packages.x86_64").exists() {
+        assert!(
+            !ships("wolos-hue"),
+            "the Creative module brings wol-hue, the image does not"
+        );
+    }
+    let m = wol_core::modules::Module::parse(&read("files/usr/share/wolos/modules/creative.json"))
+        .expect("creative record");
+    assert!(m.summary.contains("wol-hue"), "{}", m.summary);
+    assert!(
+        m.size_mb >= 1340,
+        "the binary and its libraries add to the 1330: {}",
+        m.size_mb
+    );
+    let d = read("docs/modules/modules.md");
+    assert!(d.contains("`wolos-hue`"), "the module reference names it");
+    assert!(read("docs/modules/hue.md").contains("Creative module"));
+}
+
 /// The `ime` (fcitx5) and `scanner` (sane) optional modules: a registry record each, the packages of
 /// the meta package recipe in wolos-pkgbuilds (same list, same order), the record's own promises
 /// (`ime` needs the session to export the toolkit variables).
@@ -425,6 +507,36 @@ fn ime_session_exports_only_with_fcitx5() {
         lua.lines()
             .any(|l| l.contains("[ -x /usr/bin/fcitx5 ]") && l.contains("exec fcitx5 -d")),
         "hyprland.lua starts fcitx5 -d when /usr/bin/fcitx5 exists"
+    );
+}
+
+/// QA-PWR-10: ~/.local/bin (the Console module installs pwsh there, hints send programs there)
+/// is on every login shell's PATH, first, and only once however often the profile is read.
+#[test]
+fn login_path_has_local_bin_first_once() {
+    let f = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../desktop/overlay/etc/profile.d/wolos-console.sh");
+    let run = |path: &str| {
+        let o = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                ". '{}'; . '{}'; printf %s \"$PATH\"",
+                f.display(),
+                f.display()
+            ))
+            .env("HOME", "/home/ana")
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        String::from_utf8(o.stdout).unwrap()
+    };
+    assert_eq!(
+        run("/usr/local/bin:/usr/bin"),
+        "/home/ana/.local/bin:/usr/local/bin:/usr/bin"
+    );
+    assert_eq!(
+        run("/usr/bin:/home/ana/.local/bin"),
+        "/usr/bin:/home/ana/.local/bin"
     );
 }
 

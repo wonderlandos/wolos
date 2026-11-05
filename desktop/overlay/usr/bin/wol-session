@@ -25,6 +25,23 @@ if [ -z "${XDG_RUNTIME_DIR:-}" ]; then
 	chmod 700 "$XDG_RUNTIME_DIR"
 	export XDG_RUNTIME_DIR
 fi
+# First sign-in (shell::first_login): until this account's own Setup is done (privacy, look, online
+# accounts, keyboard, the helper), the flag below tells the compositor's start line to run
+# `wol-setup --first-login` before the shell. Every account gets it at its own first sign-in; an
+# account that signed in before this release (its compositor file is there, no setup ever started)
+# counts as done. Never on the live system. wol-setup itself stops asking after the third Later.
+fl_state=${XDG_STATE_HOME:-$HOME/.local/state}/wolos
+fl_flag=$XDG_RUNTIME_DIR/wol-first-login
+rm -f "$fl_flag"
+if [ ! -e "${WOLOS_LIVE_MARK:-/etc/wolos-live}" ] && [ ! -e "$fl_state/setup-done" ]; then
+	fl_lua=${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua
+	if [ -e "$fl_lua" ] && [ ! -e "$fl_state/setup-started" ] && [ ! -e "$fl_state/setup-later" ]; then
+		mkdir -p "$fl_state" && echo "done before-first-login" > "$fl_state/setup-done"
+	else
+		mkdir -p "$fl_state" && : > "$fl_state/setup-started"
+		: > "$fl_flag"
+	fi
+fi
 # WOLOS_SHARE: shipped defaults (overridable so a live test runs this script from the repo).
 share=${WOLOS_SHARE:-/usr/share/wolos}
 lua=${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.lua

@@ -85,3 +85,36 @@ fn the_file_sorts_before_the_distribution_defaults() {
     assert!(name.as_bytes() < b"50-default.rules".as_slice(), "{name}");
     assert!(rules().starts_with("// SPDX-License-Identifier: GPL-2.0-or-later\n"));
 }
+
+/// QA-FILES-23: a standard user who clicks an internal disk in Files is refused, not shown an
+/// administrator password dialog; administrators keep the prompt (the wheel pass-through comes
+/// first). The installer's key partition is not listed at all.
+#[test]
+fn a_standard_user_cannot_mount_an_internal_disk() {
+    let c = code();
+    let wheel = c.find("isInGroup(\"wheel\")").unwrap();
+    for id in [
+        "filesystem-mount-system",
+        "filesystem-fstab",
+        "encrypted-unlock-system",
+    ] {
+        let at = c
+            .find(&format!("\"org.freedesktop.udisks2.{id}\""))
+            .unwrap_or_else(|| panic!("{id} is not refused"));
+        assert!(at > wheel, "{id}: administrators keep upstream behaviour");
+    }
+    assert!(
+        c.contains(
+            "\"org.freedesktop.udisks2.encrypted-unlock-system\" ) { return polkit.Result.NO; }"
+        ),
+        "{c}"
+    );
+    let udev = std::fs::read_to_string(
+        siblings::root().join("files/usr/lib/udev/rules.d/80-wolos-udisks.rules"),
+    )
+    .unwrap();
+    assert!(
+        udev.contains(r#"ENV{ID_FS_LABEL}=="WOLOSKEY", ENV{UDISKS_IGNORE}="1""#),
+        "{udev}"
+    );
+}

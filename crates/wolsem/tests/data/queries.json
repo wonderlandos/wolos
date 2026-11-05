@@ -1,0 +1,445 @@
+{
+ "manual": [
+  {
+   "q": "turn on dark mode",
+   "lang": "en",
+   "want": [
+    "/manual/dark-mode"
+   ]
+  },
+  {
+   "q": "my screen is too bright at night",
+   "lang": "en",
+   "want": [
+    "/manual/night-shift"
+   ]
+  },
+  {
+   "q": "the computer will not start after an update",
+   "lang": "en",
+   "want": [
+    "/manual/recovery",
+    "/manual/updates"
+   ]
+  },
+  {
+   "q": "how do I install an app",
+   "lang": "en",
+   "want": [
+    "/manual/store",
+    "/manual/first-app"
+   ]
+  },
+  {
+   "q": "undo a setting I changed",
+   "lang": "en",
+   "want": [
+    "/manual/backups"
+   ]
+  },
+  {
+   "q": "play Windows games",
+   "lang": "en",
+   "want": [
+    "/manual/steam",
+    "/manual/games",
+    "/manual/game-fixes"
+   ]
+  },
+  {
+   "q": "join a wireless network",
+   "lang": "en",
+   "want": [
+    "/manual/control-center",
+    "/manual/network"
+   ]
+  },
+  {
+   "q": "keep Windows and WolOS on the same computer",
+   "lang": "en",
+   "want": [
+    "/manual/dual-boot"
+   ]
+  },
+  {
+   "q": "type in another language",
+   "lang": "en",
+   "want": [
+    "/manual/keyboard"
+   ]
+  },
+  {
+   "q": "take a picture of my screen",
+   "lang": "en",
+   "want": [
+    "/manual/screenshots"
+   ]
+  },
+  {
+   "q": "stop notifications while I watch a film",
+   "lang": "en",
+   "want": [
+    "/manual/notifications",
+    "/manual/full-screen-games"
+   ]
+  },
+  {
+   "q": "share my internet connection with a phone",
+   "lang": "en",
+   "want": [
+    "/manual/sharing"
+   ]
+  },
+  {
+   "q": "lock the computer when I walk away",
+   "lang": "en",
+   "want": [
+    "/manual/lock-screen"
+   ]
+  },
+  {
+   "q": "change a keyboard shortcut",
+   "lang": "en",
+   "want": [
+    "/manual/keyboard"
+   ]
+  },
+  {
+   "q": "set up a vpn",
+   "lang": "en",
+   "want": [
+    "/manual/network"
+   ]
+  },
+  {
+   "q": "write my first script",
+   "lang": "en",
+   "want": [
+    "/manual/first-shell-script",
+    "/manual/scripts-and-shells",
+    "/manual/first-ruby-script",
+    "/manual/ruby-script"
+   ]
+  },
+  {
+   "q": "music crackles and sound is delayed",
+   "lang": "en",
+   "want": [
+    "/manual/audio-latency",
+    "/manual/sound"
+   ]
+  },
+  {
+   "q": "change the wallpaper",
+   "lang": "en",
+   "want": [
+    "/manual/wallpapers"
+   ]
+  },
+  {
+   "q": "the laptop battery runs out fast",
+   "lang": "en",
+   "want": [
+    "/manual/power"
+   ]
+  },
+  {
+   "q": "an app stopped answering",
+   "lang": "en",
+   "want": [
+    "/manual/desktop",
+    "/manual/recovery"
+   ]
+  },
+  {
+   "q": "restore my files from a copy",
+   "lang": "en",
+   "want": [
+    "/manual/backups"
+   ]
+  },
+  {
+   "q": "modo escuro",
+   "lang": "pt-BR",
+   "want": [
+    "/manual/dark-mode"
+   ]
+  },
+  {
+   "q": "tirar uma captura da tela",
+   "lang": "pt-BR",
+   "want": [
+    "/manual/screenshots"
+   ]
+  },
+  {
+   "q": "instalar um aplicativo",
+   "lang": "pt-BR",
+   "want": [
+    "/manual/store",
+    "/manual/first-app"
+   ]
+  },
+  {
+   "q": "o computador não inicia depois de uma atualização",
+   "lang": "pt-BR",
+   "want": [
+    "/manual/recovery",
+    "/manual/updates"
+   ]
+  },
+  {
+   "q": "conectar ao Wi-Fi",
+   "lang": "pt-BR",
+   "want": [
+    "/manual/control-center",
+    "/manual/network"
+   ]
+  },
+  {
+   "q": "trocar o papel de parede",
+   "lang": "pt-BR",
+   "want": [
+    "/manual/wallpapers"
+   ]
+  },
+  {
+   "q": "ダークモードにする",
+   "lang": "ja",
+   "want": [
+    "/manual/dark-mode"
+   ]
+  },
+  {
+   "q": "スクリーンショットを撮る",
+   "lang": "ja",
+   "want": [
+    "/manual/screenshots"
+   ]
+  },
+  {
+   "q": "壁紙を変える",
+   "lang": "ja",
+   "want": [
+    "/manual/wallpapers"
+   ]
+  },
+  {
+   "q": "activer le mode sombre",
+   "lang": "fr",
+   "want": [
+    "/manual/dark-mode"
+   ]
+  },
+  {
+   "q": "installer une application",
+   "lang": "fr",
+   "want": [
+    "/manual/store",
+    "/manual/first-app"
+   ]
+  },
+  {
+   "q": "changer le fond d’écran",
+   "lang": "fr",
+   "want": [
+    "/manual/wallpapers"
+   ]
+  },
+  {
+   "q": "Bildschirmfoto aufnehmen",
+   "lang": "de",
+   "want": [
+    "/manual/screenshots"
+   ]
+  },
+  {
+   "q": "Tastenkürzel ändern",
+   "lang": "de",
+   "want": [
+    "/manual/keyboard"
+   ]
+  },
+  {
+   "q": "Dunkelmodus einschalten",
+   "lang": "de",
+   "want": [
+    "/manual/dark-mode"
+   ]
+  },
+  {
+   "q": "сделать снимок экрана",
+   "lang": "ru",
+   "want": [
+    "/manual/screenshots"
+   ]
+  },
+  {
+   "q": "установить приложение",
+   "lang": "ru",
+   "want": [
+    "/manual/store",
+    "/manual/first-app"
+   ]
+  },
+  {
+   "q": "тёмная тема",
+   "lang": "ru",
+   "want": [
+    "/manual/dark-mode",
+    "/manual/themes"
+   ]
+  },
+  {
+   "q": "cambiare lo sfondo",
+   "lang": "it",
+   "want": [
+    "/manual/wallpapers"
+   ]
+  },
+  {
+   "q": "condividere la connessione internet",
+   "lang": "it",
+   "want": [
+    "/manual/sharing"
+   ]
+  }
+ ],
+ "settings": [
+  {
+   "q": "turn off the firewall",
+   "lang": "en",
+   "want": [
+    "Network/Firewall"
+   ]
+  },
+  {
+   "q": "make the cursor bigger",
+   "lang": "en",
+   "want": [
+    "Accessibility/Pointer size"
+   ]
+  },
+  {
+   "q": "the mouse moves too slowly",
+   "lang": "en",
+   "want": [
+    "Trackpad & Mouse/Tracking speed",
+    "Trackpad & Mouse"
+   ]
+  },
+  {
+   "q": "change my password",
+   "lang": "en",
+   "want": [
+    "Users & Groups/Password",
+    "Users & Groups/Change Password…",
+    "Users & Groups"
+   ]
+  },
+  {
+   "q": "reduce animations",
+   "lang": "en",
+   "want": [
+    "Accessibility/Reduce motion"
+   ]
+  },
+  {
+   "q": "warmer screen in the evening",
+   "lang": "en",
+   "want": [
+    "Displays/Night Shift"
+   ]
+  },
+  {
+   "q": "hide the dock",
+   "lang": "en",
+   "want": [
+    "Desktop & Dock/Automatically hide and show the Dock"
+   ]
+  },
+  {
+   "q": "remove noise from my microphone",
+   "lang": "en",
+   "want": [
+    "Sound/Reduce background noise"
+   ]
+  },
+  {
+   "q": "make the text bigger",
+   "lang": "en",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  },
+  {
+   "q": "more time to read notifications",
+   "lang": "en",
+   "want": [
+    "Accessibility/Give me more time"
+   ]
+  },
+  {
+   "q": "deixar o texto maior",
+   "lang": "pt-BR",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  },
+  {
+   "q": "desligar o firewall",
+   "lang": "pt-BR",
+   "want": [
+    "Network/Firewall"
+   ]
+  },
+  {
+   "q": "tela mais quente à noite",
+   "lang": "pt-BR",
+   "want": [
+    "Displays/Night Shift"
+   ]
+  },
+  {
+   "q": "文字を大きくする",
+   "lang": "ja",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  },
+  {
+   "q": "agrandir le texte",
+   "lang": "fr",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  },
+  {
+   "q": "Text größer machen",
+   "lang": "de",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  },
+  {
+   "q": "увеличить текст",
+   "lang": "ru",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  },
+  {
+   "q": "ingrandire il testo",
+   "lang": "it",
+   "want": [
+    "Accessibility/Larger text"
+   ]
+  }
+ ],
+ "nothing": [
+  "no such thing anywhere",
+  "qwertyuiop asdfgh",
+  "banana smoothie recipe",
+  "ukulele chords for beginners"
+ ]
+}

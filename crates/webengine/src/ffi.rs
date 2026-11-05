@@ -65,6 +65,8 @@ pub type SetChannelFn = unsafe extern "C" fn(
 ) -> i32;
 // SAFETY: WWE_1.1 `wwe_view_post_message`: a live view and `len` readable bytes.
 pub type PostMessageFn = unsafe extern "C" fn(*mut ViewH, *const u8, usize) -> i32;
+// SAFETY: WWE_1.3 `wwe_view_present`: a live view of a window target.
+pub type PresentFn = unsafe extern "C" fn(*mut ViewH);
 
 // SAFETY: WWE_1.2 (ADR 0052) `wwe_body_fn`: the library's body sink, valid during a load call.
 pub type BodyFn = unsafe extern "C" fn(*mut c_void, *const u8, usize);
@@ -190,6 +192,10 @@ pub struct Lib {
     pub post_message: Option<PostMessageFn>,
     /// WWE_1.2 (ADR 0052), absent in a library of an earlier build: the host's `fed:` scheme.
     pub set_scheme: Option<SetSchemeFn>,
+    /// WWE_1.3, absent in a library of the earlier builds: shows the frame the engine painted. A
+    /// window target shows nothing until this is called after each new frame
+    /// ([`crate::WebView::spin`] does).
+    pub view_present: Option<PresentFn>,
     /// The loaded library: the function pointers above live as long as it.
     _handle: libloading::Library,
 }
@@ -252,6 +258,7 @@ fn open(path: &str) -> Result<Lib, String> {
         set_host_channel: opt!(b"wwe_engine_set_host_channel"),
         post_message: opt!(b"wwe_view_post_message"),
         set_scheme: opt!(b"wwe_engine_set_scheme"),
+        view_present: opt!(b"wwe_view_present"),
         _handle: handle,
     };
     // SAFETY: resolved above with its declared type.

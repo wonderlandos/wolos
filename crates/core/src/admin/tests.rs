@@ -398,7 +398,7 @@ fn plan_maps_to_fixed_argv() {
         (
             UserAdd,
             &["bob", "Bob B", "yes", "s3cret-pw"],
-            "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin",
+            "useradd -m -c Bob B -s /usr/bin/zsh -G wheel,seat,video bob; chpasswd <stdin; /usr/lib/wolos/home-quota",
         ),
         (UserRemove, &["bob"], "userdel bob"),
         (UserRemove, &["bob", "with-files"], "userdel -r bob"),
@@ -569,6 +569,13 @@ fn settings_verbs_allow_list() {
         (AutoUpdate, &["roaming", "on"], false),
         (AutoUpdate, &["on", "off"], false),
         (AutoUpdate, &["metered"], false),
+        (MirrorGate, &[], true),
+        (MirrorGate, &["--yes"], false),
+        (MirrorGate, &["on"], false),
+        (CoolingHelper, &["on"], true),
+        (CoolingHelper, &["off"], true),
+        (CoolingHelper, &["maybe"], false),
+        (CoolingHelper, &[], false),
         (Reports, &["on"], true),
         (Reports, &["off"], true),
         (Reports, &["yes"], false),
@@ -883,6 +890,63 @@ fn settings_verbs_merge_files() {
     assert!(!c.render(Some(old)).contains("screen-capture"));
 }
 
+/// NET-3: the proxy writes its own file and the login environment; DNS over TLS writes the
+/// resolved drop-in and restarts resolved. Both ask for the password every time, and a
+/// value that could break out of the shell file is refused before any step.
+#[test]
+fn proxy_and_dns_over_tls_plans() {
+    let steps = plan(&r(Proxy, &["manual", "proxy.lan:3128", "-", "-", "-"])).unwrap();
+    let paths: Vec<&str> = steps
+        .iter()
+        .filter_map(|s| match s {
+            AdminStep::Write { path, .. } => Some(path.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        [crate::netconf::PROXY_CONF, crate::netconf::PROXY_PROFILE]
+    );
+    let AdminStep::Write { content, mode, .. } = &steps[1] else {
+        panic!("{steps:?}")
+    };
+    assert_eq!(*mode, 0o644);
+    assert!(
+        content
+            .render(None)
+            .contains("export http_proxy='http://proxy.lan:3128/'")
+    );
+    for bad in [
+        &["manual", "proxy.lan:3128';id;'", "-", "-", "-"][..],
+        &["auto", "http://x/$(id)", "-"],
+        &[],
+    ] {
+        assert!(validate(&r(Proxy, bad)).is_some(), "{bad:?}");
+    }
+    let steps = plan(&r(DnsOverTls, &["opportunistic", "9.9.9.9#dns.quad9.net"])).unwrap();
+    assert_eq!(steps.len(), 3);
+    assert_eq!(
+        steps[2],
+        argv(&["systemctl", "restart", "systemd-resolved.service"])
+    );
+    let AdminStep::Write { path, content, .. } = &steps[1] else {
+        panic!("{steps:?}")
+    };
+    assert_eq!(path, crate::netconf::DOT_DROPIN);
+    assert!(
+        content
+            .render(None)
+            .contains("DNSOverTLS=opportunistic\nDNS=9.9.9.9#dns.quad9.net\n")
+    );
+    assert!(
+        validate(&r(DnsOverTls, &["strict"])).is_some(),
+        "strict needs a server"
+    );
+    assert!(validate(&r(DnsOverTls, &["off", "x;y"])).is_some());
+    assert!(needs_fresh_password(&r(Proxy, &["off"])));
+    assert!(needs_fresh_password(&r(DnsOverTls, &["off"])));
+}
+
 /// A printer URI may carry credentials (`ipp://user:pass@host`): never logged.
 #[test]
 fn describe_hides_printer_credentials() {
@@ -940,6 +1004,16 @@ fn write_contents() {
         (content.render(None).as_str(), *mode),
         (r#"{"lock_after_secs":60}"#, 0o644)
     );
+}
+
+/// QA-LIVE-17: a new account sets (again) the cap on the homes' subvolume, last, after the
+/// account and its password exist; the helper takes no argument that could carry a secret.
+#[test]
+fn a_new_account_sets_the_home_quota() {
+    let p = plan(&r(UserAdd, &["bob", "Bob", "no", "s3cret-pw"])).unwrap();
+    assert_eq!(p.len(), 3);
+    assert!(matches!(&p[2], AdminStep::Run(v) if v == &["/usr/lib/wolos/home-quota"]));
+    assert_eq!(users::HOME_QUOTA, "/usr/lib/wolos/home-quota");
 }
 
 #[test]
@@ -1013,6 +1087,8 @@ fn every_action_is_classified() {
         PkgInstallFile,
         SystemRollback,
         SystemChannel,
+        Proxy,
+        DnsOverTls,
     ] {
         assert_eq!(fresh_rule(a), Fresh::Always, "{a:?}");
     }
@@ -1079,13 +1155,14 @@ fn root_package_changes_are_admin_actions_on_the_staged_copy() {
         "wol update rollback"
     );
     assert!(validate(&r(SystemRollback, &["x"])).is_some());
-    let ch = plan(&r(SystemChannel, &["beta"])).unwrap();
+    let ch = plan(&r(SystemChannel, &["stable"])).unwrap();
     assert!(matches!(
         &ch[..],
         [AdminStep::Write { path, mode: 0o644, content: WriteContent::Fixed(t) }]
-            if path == CHANNEL_FILE && t == "beta\n"
+            if path == CHANNEL_FILE && t == "stable\n"
     ));
-    for bad in ["alpha", "", "--x", "beta\nnightly"] {
+    // QA-STORE-68: 0.13 offers stable only; a testing channel is never written.
+    for bad in ["alpha", "", "--x", "beta\nnightly", "beta", "nightly"] {
         assert!(validate(&r(SystemChannel, &[bad])).is_some(), "{bad:?}");
     }
     for a in [PkgInstallFile, SystemRollback, SystemChannel] {
@@ -1244,4 +1321,54 @@ fn wol_package_actions() {
         &["/h/a.wol", "signed"]
     )));
     assert!(!needs_fresh_password(&r(PkgUpgrade, &[])));
+}
+
+/// IMAGE-F: the two changes `wol doctor hardware` offers a button for. Mirror Gate runs the
+/// repo gate as root (CPU level against the optimized sections of pacman.conf); the cooling
+/// helper turns thermald on or off with its unit, and nothing else.
+#[test]
+fn the_doctor_hardware_actions_plan_exactly_one_command_each() {
+    assert_eq!(
+        plan(&r(MirrorGate, &[])).unwrap(),
+        [AdminStep::Run(
+            ["wol", "mirror", "gate", "--yes"]
+                .map(String::from)
+                .to_vec()
+        )]
+    );
+    assert_eq!(
+        plan(&r(CoolingHelper, &["on"])).unwrap(),
+        [AdminStep::Run(
+            ["systemctl", "enable", "--now", "thermald.service"]
+                .map(String::from)
+                .to_vec()
+        )]
+    );
+    assert_eq!(
+        plan(&r(CoolingHelper, &["off"])).unwrap(),
+        [AdminStep::Run(
+            ["systemctl", "disable", "--now", "thermald.service"]
+                .map(String::from)
+                .to_vec()
+        )]
+    );
+    // Repo changes need the password every time; the cooling switch is an everyday change.
+    assert_eq!(fresh_rule(MirrorGate), Fresh::Always);
+    assert_eq!(fresh_rule(CoolingHelper), Fresh::Cached);
+    assert!(!is_user_level(MirrorGate) && !is_user_level(CoolingHelper));
+    assert_eq!(MirrorGate.name(), "mirror-gate");
+    assert_eq!(CoolingHelper.name(), "cooling-helper");
+}
+
+/// QA-A7-17: a process the compositor started has no `$USER`; the name then follows the uid into
+/// `passwd`, so an administrator is not read as a standard account.
+#[test]
+fn the_admin_check_works_without_user_in_the_environment() {
+    let passwd = "root:x:0:0::/root:/bin/sh\nada:x:1000:1000::/home/ada:/bin/bash\nbob:x:1001:1001::/home/bob:/bin/bash\n";
+    let group = "wheel:x:998:ada\nusers:x:100:bob\n";
+    assert!(account_is_admin(None, 1000, passwd, group));
+    assert!(account_is_admin(Some(""), 1000, passwd, group));
+    assert!(!account_is_admin(None, 1001, passwd, group));
+    assert!(account_is_admin(Some("ada"), 1001, passwd, group));
+    assert!(!account_is_admin(None, 4242, passwd, group), "unknown uid");
 }

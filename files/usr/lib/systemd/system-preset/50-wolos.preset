@@ -13,6 +13,7 @@ enable wolos-shm-limit.service
 enable wolos-gpu.service
 enable wolos-firstboot.service
 enable wolos-power.service
+enable wolos-mm.service
 enable wolos-update-check.timer
 enable wolos-update-download.timer
 enable wolos-report.timer
@@ -33,6 +34,9 @@ enable avahi-daemon.service
 enable systemd-timesyncd.service
 enable udisks2.service
 enable seatd.service
+# Out of memory: oomd ends the app under pressure before the machine stalls (ManagedOOMMemoryPressure=
+# in user-.slice.d/70-wolos-limits.conf); the kernel's own OOM kill comes minutes later on 4 GB.
+enable systemd-oomd.service
 # Virtual machines: each runs only under its own hypervisor (ConditionVirtualization=oracle,
 # vmware); the QEMU guest agent and SPICE agent start from udev when their port is there.
 enable vboxservice.service

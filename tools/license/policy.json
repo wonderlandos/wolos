@@ -77,11 +77,31 @@
       "spdx": "BSD-2-Clause"
     },
     {
+      "glob": "crates/wolkit-render/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/wolkit-web/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "design/tools/dom-stub.mjs",
+      "spdx": "BSD-2-Clause"
+    },
+    {
       "glob": "crates/webengine/**",
       "spdx": "BSD-2-Clause"
     },
     {
       "glob": "wolos-crystal/shards/wolkit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "webapps/kit/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "webapps/hello/**",
       "spdx": "BSD-2-Clause"
     },
     {
@@ -127,6 +147,26 @@
     {
       "glob": "crates/shell/tests/offers.rs",
       "spdx": "MIT"
+    },
+    {
+      "glob": "crates/federate/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/atlas-fed/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/wolcrypt/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/wolkeyring/**",
+      "spdx": "BSD-2-Clause"
+    },
+    {
+      "glob": "crates/wolsem/**",
+      "spdx": "BSD-2-Clause"
     }
   ],
   "code": {

@@ -425,6 +425,24 @@ fn make_exec(p: &Path) -> Result<()> {
         .map_err(|_| Error::unavailable("The app cannot be made runnable."))
 }
 
+/// The file name an AppImage URL's last part gives, safe as one name in the staging folder:
+/// no query or fragment, never `.`/`..`, no `/`, `\\` or NUL, never hidden; else
+/// `app.AppImage` (QA-STORE-26).
+pub fn url_file_name(url: &str) -> String {
+    let path = url.split(['?', '#']).next().unwrap_or_default();
+    let last = path.rsplit('/').next().unwrap_or_default();
+    let clean: String = last
+        .chars()
+        .filter(|c| !matches!(c, '\\' | '\0') && !c.is_control())
+        .collect();
+    let clean = clean.trim_start_matches('.');
+    if clean.is_empty() || clean.len() > 200 {
+        "app.AppImage".into()
+    } else {
+        clean.to_owned()
+    }
+}
+
 pub fn install(
     ctx: &Context,
     r: &InstallRequest,
@@ -435,12 +453,7 @@ pub fn install(
         .map_err(|_| Error::unavailable("~/Applications cannot be created."))?;
     let (src, file_name) = match (&r.url, &r.path) {
         (Some(u), None) => {
-            let file = u
-                .rsplit('/')
-                .next()
-                .filter(|f| !f.is_empty())
-                .unwrap_or("app.AppImage")
-                .to_owned();
+            let file = url_file_name(u);
             let dest = staging.join(&file);
             let item = crate::fetch::Item {
                 url: u.clone(),
@@ -603,7 +616,7 @@ pub fn zsync_url(ctx: &Context, u: &UpdateInfo, api_base: &str) -> Result<String
                 .get(&api)
                 .header("Accept", "application/vnd.github+json")
                 .call()
-                .map_err(|e| Error::unavailable(format!("GitHub could not be reached ({e}).")))?;
+                .map_err(|_| Error::unavailable("GitHub could not be reached."))?;
             if resp.status().as_u16() != 200 {
                 return Err(Error::unavailable(format!(
                     "GitHub has no release for {owner}/{repo}."
@@ -803,9 +816,12 @@ fn update_one(
     };
     let zurl = zsync_url(ctx, &u, api)?;
     ctx.net.check_url(&zurl)?;
-    let resp = ctx.net.agent.get(&zurl).call().map_err(|e| {
-        Error::unavailable(format!("The update server could not be reached ({e})."))
-    })?;
+    let resp = ctx
+        .net
+        .agent
+        .get(&zurl)
+        .call()
+        .map_err(|_| Error::unavailable("The update server could not be reached."))?;
     if resp.status().as_u16() != 200 {
         return Err(Error::unavailable(format!(
             "The update server answered {}.",
@@ -1032,6 +1048,29 @@ pub mod tests {
             ..Default::default()
         })
         .unwrap()
+    }
+
+    /// QA-STORE-26: a URL's last part is never `.`/`..`, a hidden name, or a path.
+    #[test]
+    fn url_file_name_is_sanitised() {
+        assert_eq!(
+            url_file_name("https://x/a/Foo-1.AppImage"),
+            "Foo-1.AppImage"
+        );
+        assert_eq!(
+            url_file_name("https://x/a/Foo.AppImage?x=1#y"),
+            "Foo.AppImage"
+        );
+        for bad in [
+            "https://x/..",
+            "https://x/.",
+            "https://x/",
+            "https://x/a/..",
+        ] {
+            assert_eq!(url_file_name(bad), "app.AppImage", "{bad}");
+        }
+        assert_eq!(url_file_name("https://x/.hidden"), "hidden");
+        assert_eq!(url_file_name("https://x/a\\b"), "ab");
     }
 
     #[test]

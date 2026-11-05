@@ -136,7 +136,8 @@ pub const HELPER_VERBS: &[HelperVerb] = &[
     hv(&["shard", "add"], Change, "files"),
     hv(&["shard", "update"], Change, "files"),
     // Crystal apps (wolos-crystal/skill/SKILL.md): `new` writes one new project folder; `check`
-    // reads the project and type-checks it. `run` opens the person's windows and stays for people.
+    // reads the project (for a helper the rules only, never its Makefile: app.rs). `run` opens
+    // the person's windows and stays for people.
     hv(&["app", "new"], Change, "files"),
     hv(&["app", "check"], Read, "read"),
     // Scripts (ADR 0041): helpers may list the kinds and check a file (parsing runs nothing);
@@ -159,6 +160,10 @@ impl Verb {
     }
     pub fn access(&self) -> Option<Access> {
         self.helper.map(|h| h.access)
+    }
+    /// [`Self::usage`] for a table: long choice lists named, not spelled out (QA-PWR-15).
+    pub fn short_usage(&self) -> String {
+        format!("wol {}", crate::cli::usage_line(self.cmd, false))
     }
     /// `wol theme set <id>` usage line.
     pub fn usage(&self) -> String {
@@ -356,7 +361,18 @@ pub fn argv(
                 if let Some(s) = skipped {
                     return Err(format!("argument '{}' needs '{s}' too", a.name));
                 }
-                out.push(text(a.name, x)?);
+                let t = text(a.name, x)?;
+                // QA-PLUG-24: checked before the approval sheet, which quotes it ("set the volume
+                // to abc%" was asked on screen); the verb's own rule (verbs::percent).
+                if a.name == "percent" {
+                    let min = u8::from(v.cmd.path == ["display", "brightness"]);
+                    if crate::verbs::percent(&t, min).is_none() {
+                        return Err(format!(
+                            "argument 'percent' is a whole number from {min} to 100"
+                        ));
+                    }
+                }
+                out.push(t);
             }
             None if a.optional || a.rest => skipped = Some(a.name),
             None => return Err(format!("missing argument '{}'", a.name)),

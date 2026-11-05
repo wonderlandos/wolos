@@ -5,6 +5,7 @@
 //! depends on `shared` and `core` only (BSD-2-Clause), and no GPL crate may depend on it back.
 //! libwol (ADR 0020): `wol-abi` is the stable C ABI; `wol-lua` (Lua widgets) builds on it and nothing else may.
 //! Plugins (ADR 0031): `controller` may use `wol-lua` too, so `wol plugin check|run` runs plugin Lua headless.
+//! Search by meaning: `wolsem` (BSD-2-Clause) is a leaf crate (no workspace dependency); `controller` and `shell` use it.
 use std::collections::BTreeMap;
 use std::process::Command;
 
@@ -45,9 +46,13 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
         for dep in deps {
             let ok = match pkg.as_str() {
                 "shared" => false,
-                "core" => dep == "shared",
+                // wolcrypt (ADR 0055): only behind core's `tls` feature, for the one TLS provider
+                // (`wol_core::net`); a BSD-2-Clause leaf that depends on nothing of ours.
+                "core" => dep == "shared" || dep == "wolcrypt",
+                "wolcrypt" => false,
                 // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
-                "controller" => ["shared", "core", "wol-lua"].contains(&dep.as_str()),
+                // `wol help <words>` finds a command by meaning (wolsem, docs/modules/search.md).
+                "controller" => ["shared", "core", "wol-lua", "wolsem"].contains(&dep.as_str()),
                 p if ADAPTORS.contains(&p) => dep == "shared" || dep == "core",
                 "wol-lua" => ["shared", "core", "wol-abi"].contains(&dep.as_str()),
                 // Links only libc and libclamav: a GPL-2.0-only program stays alone (ADR 0028).
@@ -57,7 +62,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The App Store links the package core directly (ADR 0021); the desktop runs Lua
                 // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
                 // the audio adaptor (wol_audio::pw::Handle).
-                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio"].contains(&dep.as_str()),
+                // Settings and the Search bar rank by meaning with wolsem (docs/modules/search.md).
+                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio", "wolsem"]
+                    .contains(&dep.as_str()),
                 // The web-app runtime (ADR 0042) paints into wolkit surface nodes and reads wolkit's
                 // event records; BSD-2-Clause like wolkit, so the licence rule holds. It serves
                 // fed:// through `federate` (ADR 0052), a BSD-2-Clause leaf with no workspace
@@ -66,6 +73,14 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The Federate client (ADR 0052) uses wolcrypt (a BSD-2-Clause leaf, no workspace
                 // dependency) for the hybrid TLS group and to seal its local state.
                 "federate" => dep == "wolcrypt",
+                // The local keyring (ADR 0054, BSD-2-Clause) seals its items with wolcrypt too and
+                // keeps to the shared types; it does not use core.
+                "wolkeyring" => dep == "wolcrypt" || dep == "shared",
+                // The render targets (wgpu, Vulkan, CPU) and the browser module (ADR 0060,
+                // "wolkit on WebGPU and WASM"): BSD-2-Clause like wolkit; they build for
+                // wasm32, where `core` does not, so they take `shared` and `wolkit` only.
+                "wolkit-render" => ["shared", "wolkit"].contains(&dep.as_str()),
+                "wolkit-web" => ["shared", "wolkit", "wolkit-render"].contains(&dep.as_str()),
                 // The browser's Federate helper (ADR 0052 "Atlas"): a process beside the browser that
                 // answers fed:// loads with the one verifier; it links nothing else of the workspace.
                 "atlas-fed" => dep == "federate",
@@ -157,6 +172,17 @@ fn violations_table() {
         (&[("controller", &["api"])], &["controller -> api"]),
         (&[("webengine", &["wolkit", "core", "shared"])], &[]),
         (&[("webengine", &["api"])], &["webengine -> api"]),
+        (&[("wolkit-render", &["wolkit", "shared"])], &[]),
+        (&[("wolkit-render", &["core"])], &["wolkit-render -> core"]),
+        (
+            &[("wolkit-web", &["wolkit-render", "wolkit", "shared"])],
+            &[],
+        ),
+        (&[("wolkit-web", &["api"])], &["wolkit-web -> api"]),
+        (
+            &[("shell", &["wolkit-render"])],
+            &["shell -> wolkit-render"],
+        ),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

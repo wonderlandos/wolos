@@ -1,0 +1,42 @@
+# The keyring daemon (ADR 0054): the fast-path socket for WolOS apps, the Secret Service subset for
+# Chromium/Helium, libsecret and NetworkManager, the idle/sleep/screen lock, and the sign-in
+# unlock with the TPM device key. It owns org.freedesktop.secrets, so it replaces gnome-keyring's
+# secrets component only after `wol keyring migrate` has copied the old login keyring (the image
+# does not enable this unit before that step is wired; the session target does not Want it yet).
+[Unit]
+Description=WolOS keyring (wol-keyringd)
+After=dbus.socket
+# A crash burst never leaves it dead (RH-221): restarts slow down to one every 30 s instead of a start limit.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/wol-keyringd
+Restart=on-failure
+RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
+# Argon2id at unlock needs 64 MiB; the rest is small.
+MemoryMax=256M
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+# Only Unix sockets: the session bus, the system bus, its own socket. (systemd-creds, fprintd and
+# fido2-assert run as its children and need nothing else either.)
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=yes
+# No core file can hold the keys (the program also drops PR_SET_DUMPABLE and RLIMIT_CORE itself).
+LimitCORE=0
+# ProtectProc= must stay at its default: the daemon names a caller by reading /proc/<pid>/exe, /cgroup of
+# other processes of the same user, and ProtectProc=invisible or ptraceable would hide exactly those.
+# Its own files and its socket; nothing else is writable.
+ReadWritePaths=-%h/.local/share/wolos -%t/wolos

@@ -23,7 +23,12 @@ command -v sccache >/dev/null && export RUSTC_WRAPPER=sccache
 eval cargo build --release --workspace --locked $S $F
 B=${CARGO_TARGET_DIR:-$REPO/target}/release
 mkdir -p "$DEST/usr/bin" "$DEST/usr/lib"
-for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-flatpak-consent wol-analyze wol-kit-host wol-plugin-maker; do
+for b in wold wol-admind wol wol-login wol-run wol-realtime wol-shell wol-search wol-lock wol-settings wol-loginwindow wol-setup wol-installer wol-window-shot wol-app wol-store wol-monitor wol-flatpak-consent wol-analyze wol-share wol-kit-host wol-plugin-maker wol-webhost; do
+  [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
+  install -m 755 "$B/$b" "$DEST/usr/bin/$b"
+done
+# Quick Look (E2E-QL): the previewer Files calls for Space; D-Bus activates it (desktop/overlay/usr/share/dbus-1/services).
+for b in wol-quicklook; do
   [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
   install -m 755 "$B/$b" "$DEST/usr/bin/$b"
 done
@@ -45,9 +50,28 @@ install -m 4755 "$B/wol-authcheck" "$DEST/usr/lib/wol-authcheck"
 [ -x "$B/wol-session-pam" ] || { echo "build-rust.sh: binary wol-session-pam not produced" >&2; exit 1; }
 install -m 755 "$B/wol-session-pam" "$DEST/usr/lib/wol-session-pam"
 
+# Memory tuning for JavaScript engines (ADR 0061): KSM opt-in before an exec, page-out of an idle app.
+[ -x "$B/wolos-mm" ] || { echo "build-rust.sh: binary wolos-mm not produced" >&2; exit 1; }
+install -m 755 "$B/wolos-mm" "$DEST/usr/bin/wolos-mm"
+
+# The post-quantum keyring (ADR 0054) and the Tor layer (ADR 0056). Installed so the commands exist
+# (`wol keyring`, `wol-tor`); wolos-keyringd.service is not Wanted by the session target, so
+# gnome-keyring stays the login keyring until the unlock path is wired and reviewed.
+for b in wol-keyring wol-keyringd wol-tor; do
+  [ -x "$B/$b" ] || { echo "build-rust.sh: binary $b not produced" >&2; exit 1; }
+  install -m 755 "$B/$b" "$DEST/usr/bin/$b"
+done
+# The Atlas browser's bridge to Share, Open With and Trash (ADR 0043): socket-activated by the user unit.
+[ -x "$B/atlas-bridge" ] || { echo "build-rust.sh: binary atlas-bridge not produced" >&2; exit 1; }
+install -m 755 "$B/atlas-bridge" "$DEST/usr/lib/atlas-bridge"
+
 # Files' right-click "Check for Malware": starts wol-analyze, links only Nautilus' library.
 EXT=$DEST$(pkg-config --variable=extensiondir libnautilus-extension-4)
 mkdir -p "$EXT"
 # shellcheck disable=SC2046
 cc -shared -fPIC -O2 -Wall -Wextra -Werror "$REPO/desktop/nautilus/wolos-analyze.c" \
   $(pkg-config --cflags --libs libnautilus-extension-4) -o "$EXT/libwolos-analyze.so"
+# Files' right-click "Share…": starts wol-share with the one file selected.
+# shellcheck disable=SC2046
+cc -shared -fPIC -O2 -Wall -Wextra -Werror "$REPO/desktop/nautilus/wolos-share.c" \
+  $(pkg-config --cflags --libs libnautilus-extension-4) -o "$EXT/libwolos-share.so"

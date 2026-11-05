@@ -27,7 +27,9 @@ fn apps() -> Vec<PathBuf> {
     let mut v: Vec<PathBuf> = std::fs::read_dir(webapps())
         .unwrap()
         .map(|e| e.unwrap().path())
-        .filter(|p| p.is_dir() && p.file_name().unwrap() != KIT)
+        .filter(|p| {
+            p.is_dir() && p.file_name().unwrap() != KIT && p.file_name().unwrap() != "launchers"
+        })
         .collect();
     v.sort();
     assert!(!v.is_empty(), "no web apps");
@@ -193,7 +195,12 @@ fn the_kit_is_small_plain_and_self_contained() {
     for f in &all {
         let text = read(f).replace("http://www.w3.org/2000/svg", "");
         let rel = f.strip_prefix(webapps()).unwrap().display().to_string();
-        if rel.starts_with("kit/") {
+        // The generated launcher entries and the ship list are the package's (tests/launchers.rs).
+        if rel.starts_with("launchers/") || rel == "SHIPPED" {
+            continue;
+        }
+        // What is installed counts: the kit's own tests (node, development files) are not shipped.
+        if rel.starts_with("kit/") && rel.split('/').nth(1) != Some("test") {
             kit += text.len();
         }
         // The kit is BSD-2-Clause (any app may ship it); an app names its own licence. JSON (a
@@ -396,4 +403,95 @@ fn hello_runs_in_a_browser_against_the_mock_bridge() {
         }
     }
     assert_ne!(shots[0], shots[3], "light and dark are the same picture");
+}
+
+/// QA-WEB-6: `bridge.js` gives no page-side time limit to the administrator methods (a person at
+/// the sheet takes their time) and one to every other; its list is the catalog's.
+#[test]
+fn the_bridge_names_exactly_the_administrator_methods() {
+    let js = read(&webapps().join(KIT).join("bridge.js"));
+    let line = js
+        .lines()
+        .find(|l| l.trim_start().starts_with("var ADMIN = ["))
+        .expect("bridge.js: var ADMIN = [...]");
+    let listed: BTreeSet<String> = line
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_owned)
+        .collect();
+    let catalog: BTreeSet<String> = PERMISSIONS
+        .iter()
+        .filter(|p| p.admin)
+        .flat_map(|p| p.methods.iter().map(|m| m.to_string()))
+        .collect();
+    assert_eq!(
+        listed, catalog,
+        "bridge.js ADMIN vs the catalog's administrator methods"
+    );
+}
+
+/// QA-WEB-35: the page's two lanes (reads, which wait, and administrator methods, which are never
+/// queued) add up to the calls the host takes at once, so the host never has to say "busy" to a
+/// page that follows the kit.
+#[test]
+fn the_bridge_lanes_add_up_to_what_the_host_takes() {
+    let js = read(&webapps().join(KIT).join("bridge.js"));
+    let lane = |name: &str| -> usize {
+        js.lines()
+            .find_map(|l| l.trim().strip_prefix(&format!("var {name} = ")))
+            .and_then(|r| r.trim_end_matches(';').parse().ok())
+            .unwrap_or_else(|| panic!("bridge.js: var {name} = N;"))
+    };
+    assert_eq!(
+        lane("READ_LANE") + lane("ADMIN_LANE"),
+        webengine::host::MAX_IN_FLIGHT
+    );
+}
+
+/// QA-WEB-19: the page refuses a request at the number the host reads and wold takes.
+#[test]
+fn the_bridge_and_the_host_cap_a_request_at_the_same_number() {
+    let js = read(&webapps().join(KIT).join("bridge.js"));
+    let n: usize = js
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("var MAX_BYTES = "))
+        .and_then(|r| r.trim_end_matches(';').parse().ok())
+        .expect("bridge.js: var MAX_BYTES = N;");
+    assert_eq!(n, webengine::bridge::MAX_REQUEST);
+    assert!(n < shared::portal::MAX_LINE);
+}
+
+/// QA-WEB-9: the reasons the host passes to the kit's error page (`process::error_url` callers)
+/// have words in `error.js`, and the page needs only the kit's stylesheet and bridge.
+#[test]
+fn the_error_page_has_words_for_every_reason_the_host_names() {
+    let js = read(&webapps().join(KIT).join("error.js"));
+    for reason in [
+        "crashed", "manifest", "kit", "refused", "channel", "generic",
+    ] {
+        assert!(
+            js.contains(&format!("    {reason}: [")),
+            "error.js: no words for {reason}"
+        );
+    }
+    let host = read(&repo().join("crates/webengine/src/bin/wol-webhost.rs"));
+    for used in host.match_indices("error_url(&kit, \"").map(|(i, _)| {
+        let rest = &host[i + "error_url(&kit, \"".len()..];
+        rest[..rest.find('"').unwrap()].to_owned()
+    }) {
+        assert!(
+            js.contains(&format!("    {used}: [")),
+            "the host names reason {used}"
+        );
+    }
+    let html = read(&webapps().join(KIT).join("error.html"));
+    assert!(
+        html.contains("wolkit.css") && html.contains("error.js"),
+        "{html}"
+    );
+    assert!(
+        !html.contains("wolkit.js"),
+        "the page must work when the rest of the kit is gone"
+    );
 }

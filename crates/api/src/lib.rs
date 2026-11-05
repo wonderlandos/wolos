@@ -7,6 +7,7 @@ pub mod devices;
 pub mod facts;
 pub mod ipc;
 pub mod jobfiles;
+pub mod media;
 pub mod memsaver;
 pub mod os;
 pub mod packages;

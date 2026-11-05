@@ -368,6 +368,74 @@ fn file_verbs_reach_wold_and_answer_from_c() {
 }
 
 #[test]
+fn media_recent_color_print_reach_wold_and_answer_from_c() {
+    use shared::portal::{MediaState, MediaStatus};
+    let (out, calls) = run("media_verbs", |c, _| match c {
+        Call::ColorPick {} => Answer::with(json!({"color": "#0a1b2c"})),
+        Call::PrintFile { .. } => Answer::with(json!({"done": "printed"})),
+        _ => Answer::ok(),
+    });
+    assert_eq!(
+        out,
+        [
+            "twice: 1 This context already publishes a player.",
+            "bad status: 1",
+            "negative position: 1",
+            "nan position: 1",
+            "relative art: 1",
+            "unknown ability: 1",
+            "key: 6 -5.0",
+            "key: 2 0.0",
+            "relative recent: 1",
+            "color: 0a1b2c 1",
+            "null rgb: 1",
+            "print: printed",
+            "bad print path: 1",
+        ]
+    );
+    let state = |status, title: &str, art: &str, length_us, position_us, can| Call::MediaState {
+        state: MediaState {
+            status,
+            title: title.into(),
+            artist: if title.is_empty() { "" } else { "Band" }.into(),
+            album: if title.is_empty() { "" } else { "Record" }.into(),
+            art: art.into(),
+            length_us,
+            position_us,
+            can,
+        },
+    };
+    let art = "/home/a/.cache/p/cover.png";
+    let p = |s: &str| s.to_owned();
+    assert_eq!(
+        calls,
+        [
+            Call::MediaPublish {},
+            state(MediaStatus::Stopped, "", "", 0, 0, 0),
+            state(MediaStatus::Stopped, "Song", "", 215_500_000, 0, 0),
+            state(MediaStatus::Stopped, "Song", art, 215_500_000, 0, 0),
+            state(MediaStatus::Stopped, "Song", art, 215_500_000, 0, 5),
+            state(
+                MediaStatus::Playing,
+                "Song",
+                art,
+                215_500_000,
+                12_500_000,
+                5
+            ),
+            Call::RecentAdd {
+                path: p("/home/a/Documents/report.pdf")
+            },
+            Call::ColorPick {},
+            Call::PrintFile {
+                path: p("/home/a/Documents/report.pdf")
+            },
+        ],
+        "a bad argument never left the library"
+    );
+}
+
+#[test]
 fn service() {
     let (out, calls) = run("service", |c, _| match c {
         Call::ServiceStatus { .. } => Answer::with(json!({"state": "running"})),

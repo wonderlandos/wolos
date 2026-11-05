@@ -28,6 +28,9 @@ pub const RESERVED_PREFIX: &str = "org.wolos.";
 pub const MAX_TOTAL_SIZE: u64 = 1 << 20;
 /// `wol.state` JSON per plugin.
 pub const MAX_STATE: usize = 64 * 1024;
+/// Largest output of one `wol.run` or `wol.http_get`, in the shell and in `wol plugin run` alike
+/// (QA-PLUG-35); the manual says 64 KB.
+pub const MAX_RUN_OUTPUT: usize = 64 * 1024;
 pub const MAX_ID: usize = 64;
 pub const MAX_ENTRY_ID: usize = 32;
 pub const MAX_NAME: usize = 40;
@@ -172,8 +175,10 @@ impl Kind {
     }
 
     /// Kinds the manifest format knows but no part of WolOS applies yet (audit X6-1): `check`
-    /// refuses them, `new` and Plugin Maker do not offer them.
-    pub const PLANNED: [Kind; 2] = [Kind::Look, Kind::Hypr];
+    /// refuses them, `new` and Plugin Maker do not offer them. `[[panel]]` and `[[search]]` run
+    /// in `wol plugin run` and the Lua sandbox, but the shell hosts neither yet (QA-PLUG-4); the
+    /// shell's `every_offered_kind_has_a_host` keeps this list honest.
+    pub const PLANNED: [Kind; 4] = [Kind::Panel, Kind::Search, Kind::Look, Kind::Hypr];
 
     /// See [`Kind::PLANNED`].
     pub fn is_planned(self) -> bool {
@@ -198,7 +203,7 @@ impl Kind {
 }
 
 /// Header keys, in file order.
-pub const HEADER_KEYS: [&str; 9] = [
+pub const HEADER_KEYS: [&str; 14] = [
     "schema",
     "id",
     "name",
@@ -208,7 +213,25 @@ pub const HEADER_KEYS: [&str; 9] = [
     "description",
     "min_wolos",
     "permissions",
+    "icon",
+    "screenshots",
+    "categories",
+    "homepage",
+    "about",
 ];
+
+/// The header keys that only describe the plugin for the hub's store page (hubcheck `facts`):
+/// new in WolOS 0.13, so a manifest that sets one says `min_wolos = "0.13"` or newer (a 0.12
+/// reader refuses unknown header keys).
+pub const LISTING_KEYS: [&str; 5] = ["icon", "screenshots", "categories", "homepage", "about"];
+/// The WolOS that reads [`LISTING_KEYS`]: (major, minor).
+pub const LISTING_MIN_WOLOS: (u32, u32) = (0, 13);
+/// Most screenshots in a listing.
+pub const MAX_SCREENSHOTS: usize = 8;
+/// Longest `about` text (characters), the hub's limit for a listing description.
+pub const MAX_ABOUT: usize = 4000;
+/// Longest `homepage` address.
+pub const MAX_HOMEPAGE: usize = 200;
 
 /// Bar slot a `[[menubar]]` item goes to (`shared::layout::Layout` slots).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -518,6 +541,21 @@ pub struct Manifest {
     /// Lowest WolOS version that has every API the plugin uses; empty = any.
     pub min_wolos: String,
     pub permissions: Vec<Permission>,
+    /// Store-page picture: a `.png` or `.webp` in the folder (needs 0.13, [`LISTING_KEYS`]); empty = none.
+    #[serde(default)]
+    pub icon: String,
+    /// Store-page screenshots: `.png` or `.webp` files in the folder, at most [`MAX_SCREENSHOTS`].
+    #[serde(default)]
+    pub screenshots: Vec<String>,
+    /// App Store categories ([`crate::package::CATEGORIES`]).
+    #[serde(default)]
+    pub categories: Vec<String>,
+    /// `https://` address of the project; empty = none.
+    #[serde(default)]
+    pub homepage: String,
+    /// Longer description for the store page, with line breaks; empty = none.
+    #[serde(default)]
+    pub about: String,
     pub menubar: Vec<MenubarEntry>,
     pub dock: Vec<DockEntry>,
     pub widget: Vec<WidgetEntry>,
@@ -543,6 +581,7 @@ impl Manifest {
             .collect()
     }
 
+    /// How many entries of kind `k` the manifest declares.
     pub fn count(&self, k: Kind) -> usize {
         match k {
             Kind::Menubar => self.menubar.len(),
@@ -612,7 +651,7 @@ impl Manifest {
     }
 
     /// Every file the manifest names, relative to the folder (scripts, theme/look/hypr files,
-    /// image icons), without duplicates and in table order.
+    /// image icons, the listing icon and screenshots), without duplicates and in table order.
     pub fn files(&self) -> Vec<&str> {
         let mut v: Vec<&str> = self.scripts().iter().map(|s| s.2).collect();
         let icons = self
@@ -626,6 +665,8 @@ impl Manifest {
         v.extend(self.theme.iter().map(|e| e.file.as_str()));
         v.extend(self.look.iter().map(|e| e.file.as_str()));
         v.extend(self.hypr.iter().map(|e| e.file.as_str()));
+        v.extend(Some(self.icon.as_str()).filter(|i| !i.is_empty()));
+        v.extend(self.screenshots.iter().map(String::as_str));
         let mut seen: Vec<&str> = Vec::new();
         v.retain(|f| {
             let new = !seen.contains(f);
@@ -635,6 +676,7 @@ impl Manifest {
         v
     }
 
+    /// Whether the manifest asks for permission `p`.
     pub fn has(&self, p: Permission) -> bool {
         self.permissions.contains(&p)
     }
@@ -692,6 +734,21 @@ impl Manifest {
         if !self.permissions.is_empty() {
             let p: Vec<String> = self.permissions.iter().map(|p| p.id().into()).collect();
             out.push_str(&format!("permissions = {}\n", list(&p)));
+        }
+        if !self.icon.is_empty() {
+            out.push_str(&format!("icon = {}\n", s(&self.icon)));
+        }
+        if !self.screenshots.is_empty() {
+            out.push_str(&format!("screenshots = {}\n", list(&self.screenshots)));
+        }
+        if !self.categories.is_empty() {
+            out.push_str(&format!("categories = {}\n", list(&self.categories)));
+        }
+        if !self.homepage.is_empty() {
+            out.push_str(&format!("homepage = {}\n", s(&self.homepage)));
+        }
+        if !self.about.is_empty() {
+            out.push_str(&format!("about = {}\n", s(&self.about)));
         }
         for e in &self.menubar {
             out.push_str(&format!(
@@ -857,6 +914,32 @@ pub fn is_plugin_path(p: &str) -> bool {
 /// Icon given as an image file in the folder (else it is an icon theme name).
 pub fn is_icon_file(s: &str) -> bool {
     [".png", ".svg"].iter().any(|e| s.ends_with(e))
+}
+
+/// A picture file of the store page: a plugin path ending `.png` or `.webp`.
+pub fn is_listing_picture(s: &str) -> bool {
+    [".png", ".webp"].iter().any(|e| s.ends_with(e)) && is_plugin_path(s)
+}
+
+/// An `https://` address of up to [`MAX_HOMEPAGE`] characters with a host and no user name:
+/// the same rule as the hub's check of `homepage`.
+pub fn is_homepage(s: &str) -> bool {
+    s.len() <= MAX_HOMEPAGE
+        && s.strip_prefix("https://").is_some_and(|rest| {
+            let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
+            !host.is_empty()
+                && !host.contains('@')
+                && host
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b".-:".contains(&c))
+        })
+        && s.bytes().all(|c| c.is_ascii_graphic())
+}
+
+/// Whether the WolOS version `v` (`0.13`, `0.13.1`) is at least `(major, minor)`.
+pub fn wolos_at_least(v: &str, (major, minor): (u32, u32)) -> bool {
+    let mut p = v.split('.').map(|x| x.parse::<u32>().ok());
+    matches!((p.next().flatten(), p.next().flatten()), (Some(a), Some(b)) if (a, b) >= (major, minor))
 }
 
 fn is_icon(s: &str) -> bool {
@@ -1041,6 +1124,8 @@ struct Toml<'a> {
     line: usize,
     /// Lists open around the value being read (bounded by [`MAX_NESTING`]).
     depth: usize,
+    /// The value being read is the header's `about`: `\n` may stand for a line break there.
+    lines: bool,
 }
 
 /// Deepest list nesting plugin.toml may use (`sizes = [[2, 2]]` is 2): without a bound a file of
@@ -1180,7 +1265,10 @@ impl<'a> Toml<'a> {
             }
         }
         out.push_str(&String::from_utf8_lossy(&buf));
-        if out.chars().any(|c| c.is_control() && c != '\t') {
+        if out
+            .chars()
+            .any(|c| c.is_control() && c != '\t' && !(self.lines && c == '\n'))
+        {
             return Err(self.err("Strings cannot contain control characters."));
         }
         Ok(out)
@@ -1328,7 +1416,10 @@ impl<'a> Toml<'a> {
             }
             self.at += 1;
             self.skip_blanks();
-            let value = self.value()?;
+            self.lines = current.is_none() && key == "about";
+            let value = self.value();
+            self.lines = false;
+            let value = value?;
             self.end_line()?;
             match current {
                 None => {
@@ -1508,6 +1599,7 @@ pub fn to_json(text: &str) -> Result<serde_json::Value, String> {
         at: 0,
         line: 1,
         depth: 0,
+        lines: false,
     };
     let root = t.document()?;
     Ok(serde_json::Value::Object(
@@ -1516,12 +1608,97 @@ pub fn to_json(text: &str) -> Result<serde_json::Value, String> {
 }
 
 /// `plugin.toml` text to a validated manifest, or one sentence to fix.
+/// The store-page keys of the header ([`LISTING_KEYS`]), checked as the hub's check reads them.
+#[derive(Default)]
+struct Listing {
+    icon: String,
+    screenshots: Vec<String>,
+    categories: Vec<String>,
+    homepage: String,
+    about: String,
+}
+
+fn parse_listing(h: &Field, min_wolos: &str) -> Result<Listing, String> {
+    let mut l = Listing::default();
+    let used: Vec<&str> = LISTING_KEYS
+        .into_iter()
+        .filter(|k| h.get(k).is_some())
+        .collect();
+    if used.is_empty() {
+        return Ok(l);
+    }
+    if !wolos_at_least(min_wolos, LISTING_MIN_WOLOS) {
+        return Err(format!(
+            "plugin.toml: {} need WolOS {}.{}; add min_wolos = \"{}.{}\" (older systems refuse these keys).",
+            used.join(", "),
+            LISTING_MIN_WOLOS.0,
+            LISTING_MIN_WOLOS.1,
+            LISTING_MIN_WOLOS.0,
+            LISTING_MIN_WOLOS.1
+        ));
+    }
+    if let Some(i) = h.text("icon")? {
+        if !is_listing_picture(i) {
+            return Err("plugin.toml: icon is a .png or .webp file inside the plugin folder, like \"icon.png\".".into());
+        }
+        l.icon = i.to_owned();
+    }
+    for p in h.list("screenshots")?.unwrap_or_default() {
+        if !is_listing_picture(&p) {
+            return Err(format!(
+                "plugin.toml: screenshots are .png or .webp files inside the plugin folder; \"{p}\" is not."
+            ));
+        }
+        if l.screenshots.contains(&p) {
+            return Err(format!(
+                "plugin.toml: the screenshot \"{p}\" is listed twice."
+            ));
+        }
+        l.screenshots.push(p);
+    }
+    if l.screenshots.len() > MAX_SCREENSHOTS {
+        return Err(format!(
+            "plugin.toml: screenshots has {} files; the store shows at most {MAX_SCREENSHOTS}.",
+            l.screenshots.len()
+        ));
+    }
+    for c in h.list("categories")?.unwrap_or_default() {
+        if !crate::package::CATEGORIES.contains(&c.as_str()) {
+            return Err(format!(
+                "plugin.toml: categories are any of {}; \"{c}\" is not.",
+                crate::package::CATEGORIES.join(", ")
+            ));
+        }
+        if !l.categories.contains(&c) {
+            l.categories.push(c);
+        }
+    }
+    if let Some(u) = h.text("homepage")? {
+        if !is_homepage(u) {
+            return Err(format!(
+                "plugin.toml: homepage is an https:// address of up to {MAX_HOMEPAGE} characters."
+            ));
+        }
+        l.homepage = u.to_owned();
+    }
+    if let Some(a) = h.text("about")? {
+        if a.chars().count() > MAX_ABOUT {
+            return Err(format!(
+                "plugin.toml: about is up to {MAX_ABOUT} characters (line breaks written \\n)."
+            ));
+        }
+        l.about = a.to_owned();
+    }
+    Ok(l)
+}
+
 pub fn parse(text: &str) -> Result<Manifest, String> {
     let mut t = Toml {
         s: text.as_bytes(),
         at: 0,
         line: 1,
         depth: 0,
+        lines: false,
     };
     let root = t.document()?;
     let header: Vec<(String, Val)> = root
@@ -1587,6 +1764,7 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
         }
     }
     permissions.sort();
+    let listing = parse_listing(&h, min_wolos)?;
     let mut m = Manifest {
         schema,
         id: id.to_owned(),
@@ -1597,6 +1775,11 @@ pub fn parse(text: &str) -> Result<Manifest, String> {
         description: description.to_owned(),
         min_wolos: min_wolos.to_owned(),
         permissions,
+        icon: listing.icon,
+        screenshots: listing.screenshots,
+        categories: listing.categories,
+        homepage: listing.homepage,
+        about: listing.about,
         ..Manifest::default()
     };
     let mut ids: Vec<String> = Vec::new();
@@ -1840,6 +2023,19 @@ pub fn is_reserved_id(id: &str) -> bool {
 /// argv that calls a `wol` verb (argv[0] is `wol`), so the helper policy applies.
 pub fn is_wol_argv(argv: &[String]) -> bool {
     argv.first().is_some_and(|a| a == "wol")
+}
+
+/// The argv that launches a plugin command (`wol.run`, `[[toggle]]`, `[[dock]]`, `[[hotkey]]`):
+/// a `wol` verb runs as the plugin's helper (`env WOL_HELPER=<plugin> wol ...`), so the helper
+/// policy, the approval sheet and the audit log apply; anything else runs unchanged. Every
+/// launcher builds its argv here (QA-PLUG-5: the Dock spawned `wol` verbs without it).
+pub fn helper_argv(plugin: &str, argv: &[String]) -> Vec<String> {
+    let mut cmd: Vec<String> = Vec::new();
+    if is_wol_argv(argv) {
+        cmd.extend(["env".to_owned(), format!("WOL_HELPER={plugin}")]);
+    }
+    cmd.extend(argv.iter().cloned());
+    cmd
 }
 
 #[cfg(test)]

@@ -323,6 +323,26 @@ pub const PERMISSIONS: &[(&str, Enforcement, &str)] = &[
         Enforcement::System,
         "WolOS moves the file the app names to your Trash, as you, where you can put it back",
     ),
+    (
+        "media",
+        Enforcement::System,
+        "WolOS gives the player a name on the desktop so the media keys can pause or skip it, and shows only the title, artist and picture the app gives",
+    ),
+    (
+        "recents",
+        Enforcement::System,
+        "WolOS adds the file the app names to your recent files, as you, only if it exists and is not hidden",
+    ),
+    (
+        "print",
+        Enforcement::System,
+        "WolOS shows you the print dialog for the file the app names; nothing is printed until you choose a printer",
+    ),
+    (
+        "color-picker",
+        Enforcement::System,
+        "WolOS lets you click a colour on the screen and hands the app that colour alone, never a picture of the screen",
+    ),
 ];
 
 /// [`PERMISSIONS`] entry of a capability.
@@ -331,13 +351,15 @@ pub fn enforcement(capability: &str) -> Option<Enforcement> {
 }
 
 /// Programs that may copy the screen (and see the pointer in it) directly: the portal (it asks
-/// which screen to share), the shell and its screenshot, recording and Overview tools.
+/// which screen to share), the shell and its screenshot, recording and Overview tools, and the colour
+/// picker (Ctrl+Super+P reads one pixel under the pointer; it needs the pointer position too).
 pub const SCREENCOPY_SYSTEM: &[&str] = &[
     "/usr/lib/xdg-desktop-portal-hyprland",
     "/usr/bin/grim",
     "/usr/bin/wf-recorder",
     "/usr/bin/wol-window-shot",
     "/usr/bin/wol-shell",
+    "/usr/bin/hyprpicker",
 ];
 
 /// Compositor plugins load only from the root-owned plugin folder (hyprbars, wol-hypr).
@@ -569,6 +591,7 @@ mod tests {
                 "^/usr/bin/wf-recorder$",
                 "^/usr/bin/wol-window-shot$",
                 "^/usr/bin/wol-shell$",
+                "^/usr/bin/hyprpicker$",
             ]
         );
         let tail = &rules[rules.len() - 5..];

@@ -1,10 +1,10 @@
 {
   "id": "creative",
   "name": "Creative",
-  "summary": "Blender, GIMP, Krita, Inkscape, OBS Studio, darktable, Kdenlive, Ardour and Audacity, colour management and a low-latency audio profile",
+  "summary": "Blender, GIMP, Krita, Inkscape, OBS Studio, darktable, Kdenlive, Ardour and Audacity, colour management, a low-latency audio profile and wol-hue, themes from a picture",
   "icon": "applications-graphics-symbolic",
   "category": "creative",
-  "size_mb": 1330,
+  "size_mb": 1340,
   "packages": [
     "blender",
     "gimp",
@@ -17,7 +17,8 @@
     "audacity",
     "colord",
     "pipewire-jack",
-    "gst-plugin-pipewire"
+    "gst-plugin-pipewire",
+    "wolos-hue"
   ],
   "flatpaks": [],
   "recipes": [],

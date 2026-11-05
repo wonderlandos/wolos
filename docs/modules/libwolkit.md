@@ -77,14 +77,14 @@ Property value words by type: `f32`, `i32`, `bool`, `enum`, `token`, `str`, `u32
 | TEXT_CHANGED, TEXT_SUBMIT | `u32 caret`, `u32 anchor`, `u32 length`, then the text bytes |
 | TOGGLE | `u32 on` |
 | SLIDER | `f32 value` |
-| SCROLL | of a scroll container or list: `f32 x`, `f32 y`, the new offset. Of a `surface` node that binds it (an embedded page, which scrolls itself): `f32 dx`, `f32 dy`, the wheel's distance as the compositor sent it (down is positive), then `f32 x`, `f32 y`, the pointer in window pixels |
+| SCROLL | `f32 x`, `f32 y` |
 | FOCUS | `u32 gained` |
 | RESIZE | `u32 width`, `u32 height`, `f32 scale` |
 | THEME_CHANGED | `u32 dark`, `u32 accent_rgb`, `u32 flags` |
 | DIAGNOSTIC | `u32 level` (0 note, 1 warning, 2 error), `u32 length`, the text bytes |
 | others | defined with the part that makes them (drop, drag, list range, surface, a11y action) |
 
-The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize, frame tick or hover event replaces the pending one of the same node (a surface's wheel record adds its distance to the pending one instead, and keeps the newer point); when the queue is full the oldest of those is dropped first and the next record carries the overflow flag. A buffer of `WOLKIT_EVENT_MAX_RECORD` (about 64 KiB) bytes always makes progress.
+The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize, frame tick or hover event replaces the pending one of the same node; when the queue is full the oldest of those is dropped first and the next record carries the overflow flag. A buffer of `WOLKIT_EVENT_MAX_RECORD` (about 64 KiB) bytes always makes progress.
 
 ## Backends
 
@@ -97,6 +97,24 @@ The queue holds at most 4,096 records and 4 MiB. A newer scroll, slider, resize,
 `wolkit_window_render_rgba` and the native `wl_shm` path draw the same frame (`window::pipeline::render_rgba`): the scene lowered to a display list with its computed styles, the token colours of the built-in light or dark theme under the person's accent and contrast (`src/paint/palette.rs`), and text shaped with real fonts (`src/paint/scene.rs`), then the CPU rasteriser. Layout measures text with the same shaper through a per-window paragraph cache keyed by text, width and style (`src/text/measure.rs`), so paint reuses what layout shaped. Fonts are one set per process (the first engine decides it): an engine made through the C ABI indexes the person's font folders (lazily, at the first window), except a headless one (`WOLKIT_ENGINE_HEADLESS`), which reads only the pinned folder `/usr/share/fonts/inter` (the UI face the goldens use; `WOLKIT_FONT_DIR` names another), so its screenshots are the same on every machine that has that folder; an engine made in-process without that (the Rust tests) has no fonts and draws every glyph as the missing-glyph box, which is the same on every machine.
 
 Kit lowering, and what does not survive: `box` becomes a row or a stack (direction), spacing the nearest of 0, 4, 8, 12, 16, 24; `text` a label with its role; `button`, `toggle` and `text_input` take their label from their text, else their first text child, else their accessibility name (none is an error); `slider`, `image` (size snapped to the Kit's sizes) and `vlist` (all mounted rows as a list) map directly. Custom style properties, padding, borders, shadows, transforms and animations are ignored. `canvas` and `surface` become one placeholder sentence; `overlay`, `divider` and hidden parts are omitted. More than 200 parts or 12 levels is `WOLKIT_ERR_LIMIT`. A part's wire id is its node id, so a click on the wire maps straight back. Golden: `tests/kit_golden/kit_app.json` (rerun with `WOLKIT_BLESS=1` and review the diff).
+
+## Render targets (ADR 0060)
+
+The pipeline ends in a `DisplayList` and the instance batcher; what draws it is a `wolkit_render::Renderer` (`crates/wolkit-render`, BSD-2-Clause): `render_image(FrameIn) -> Image`, premultiplied RGBA8 out.
+
+| Target | Where | Notes |
+|---|---|---|
+| `CpuRenderer` | everywhere | `wolkit::cpu::raster`, the reference every other target is held to |
+| `VulkanRenderer` | native (feature `native`) | the ash renderer of the Wayland window (`wolkit::gpu`), wrapped, not copied |
+| `WgpuRenderer` | native (Vulkan, lavapipe in CI) and `wasm32-unknown-unknown` (the browser's WebGPU) | `src/shaders/ui.wgsl`, a port of `shaders/ui.{vert,frag}`; a 256-byte uniform slot per draw replaces push constants |
+
+Both GPU targets use `wolkit::gpu::prepare` (shadow placement, layer composites, the byte images of the instance ring and the clip table). The tolerance against the CPU image is the Vulkan golden one: no channel off by more than 2, at most 0.1 % of pixels off by more than 1 (`wolkit_render::MAX_CHANNEL_DIFF`, `MAX_DIFF_SHARE`).
+
+The `native` feature of `wolkit` (default) holds everything that needs Linux: Wayland, ash, zbus, xkbcommon, libc, `wol_core`, the engine on file descriptors, the Kit socket and the C ABI. Without it the crate is the portable pipeline (scene, style, layout, text, paint, CPU raster, input, headless window) and builds for `wasm32-unknown-unknown`; the built-in themes then come from the same JSON files as `ThemeCatalog::builtin` (`paint::palette::portable`, held to the catalog by a native test). In the web build there are no decode threads: pictures and icons decode inline, and `image::icon::register` hands the page its symbolic icons (no icon folder).
+
+`wolkit_render::page::Page` is a window without a display: the scene with the kit look and the shell's tokens, fonts from memory, input records in (`pointer`, `key`, `text`), a display list out; `wolkit_render::view::raise` shows a `shared::view` tree in it. `crates/wolkit-web` mounts a `Page` in a `<canvas>` (wasm-bindgen) and `site/public/kit/kit.js` forwards DOM events. Build: `bash crates/wolkit-web/build-site.sh` (needs the `wasm32-unknown-unknown` target and `wasm-bindgen` CLI 0.2.130). Check: `node crates/wolkit-web/check-browser.mjs SITE NATIVE_DIR` (headless Chromium with SwiftShader WebGPU; compares the browser frame with the native wgpu frame, light and dark, and clicks the switch).
+
+Tests: `cargo test -p wolkit-render` (`tests/wgpu_golden.rs`: the 13 shared golden scenes on every target against the CPU image, `WOLKIT_GPU_REQUIRED=1` turns a missing adapter into a failure, `WOLKIT_GPU_HARDWARE=1` uses a hardware adapter; `tests/page.rs`: the page against the CPU, against the GTK golden `app-window-parts` (at most 4 % of pixels more than 48 off), a click on the switch, the named icon; `tests/wgsl_port.rs`: the WGSL against the GLSL).
 
 ## Pictures (`image` nodes, ABI 1.1)
 
@@ -149,7 +167,7 @@ An `image` node shows a picture: `WOLKIT_PROP_IMAGE_ID` names one the app made w
 
 ## Security and untrusted input
 
-The patch stream, style tables, style sheets, images and fonts are untrusted. Each is bounded, validated before use and fuzzed (`fuzz/fuzz_targets/wolkit_patch.rs`, `wolkit_wsb.rs`, `wolkit_wolcss.rs`, `wolkit_image.rs`; seeds in `fuzz/regressions/`; `crates/wolkit/tests/patch_fuzz.rs` replays them and a deterministic mutation on stable, `tests/image.rs` mutates the picture fixtures). The picture decoders are permissively licensed crates `deny.toml` allows; a decoder panic on a worker becomes a FAILED picture. A panic stops at the boundary as `WOLKIT_ERR_INTERNAL`. The engine opens the Kit socket (kit backend), on the native backend the Wayland socket, and the picture files the app names (an `image-source` path or `wolkit_image_create_file`, read on a worker, at most 64 MiB); it has no privilege and sends no telemetry.
+The patch stream, style tables, style sheets, images and fonts are untrusted. Each is bounded, validated before use and fuzzed (`fuzz/fuzz_targets/wolkit_patch.rs`, `wolkit_wsb.rs`, `wolkit_wolcss.rs`, `wolkit_image.rs`, and `wolkit_text.rs` for the text buffer behind `text_input`; seeds in `fuzz/regressions/`; `crates/wolkit/tests/patch_fuzz.rs` replays them and a deterministic mutation on stable, `tests/image.rs` mutates the picture fixtures). The picture decoders are permissively licensed crates `deny.toml` allows; a decoder panic on a worker becomes a FAILED picture. A panic stops at the boundary as `WOLKIT_ERR_INTERNAL`. The engine opens the Kit socket (kit backend), on the native backend the Wayland socket, and the picture files the app names (an `image-source` path or `wolkit_image_create_file`, read on a worker, at most 64 MiB); it has no privilege and sends no telemetry.
 
 ## Tests
 

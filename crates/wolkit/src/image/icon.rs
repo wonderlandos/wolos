@@ -70,6 +70,9 @@ const ALIASES: &[(&str, &str)] = &[
 ];
 
 static DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+/// Icons held in memory by file name (`weather-clear-symbolic.svg`), read before the folders: a
+/// platform with no file system (the web build) hands its icons over with [`register`].
+static MEMORY: LazyLock<Mutex<HashMap<String, Arc<str>>>> = LazyLock::new(Default::default);
 /// Rasterised icons by name, pixel size and packed colour.
 type Cached = HashMap<(String, u32, u32), Arc<Entry>>;
 static CACHE: LazyLock<Mutex<Cached>> = LazyLock::new(Default::default);
@@ -184,6 +187,12 @@ pub fn get(src: &str, w: f32, h: f32, color: Color) -> Option<Arc<Entry>> {
     Some(e)
 }
 
+/// Holds the symbolic SVG `svg` as the icon file `file` (`weather-clear-symbolic.svg`): drawn
+/// before any icon folder is read. Rasterised icons already cached stay as they are.
+pub fn register(file: &str, svg: &str) {
+    lock(&MEMORY).insert(file.to_owned(), Arc::from(svg));
+}
+
 /// Memory Saver: forget the rasterised icons.
 pub fn trim() {
     lock(&CACHE).clear();
@@ -192,6 +201,14 @@ pub fn trim() {
 /// Worker side: find, read and draw the icon `name` at `px` pixels square.
 pub fn load(name: &str, px: u32, color: Color) -> Result<Pixels> {
     let none = || Error::invalid(format!("There is no icon named {name}."));
+    let held = {
+        let m = lock(&MEMORY);
+        candidates(name).iter().find_map(|f| m.get(f).cloned())
+    };
+    if let Some(svg) = held {
+        let level = raster(&svg, px, color)?;
+        return Ok(Pixels::from_level(px, px, level));
+    }
     let file = candidates(name)
         .into_iter()
         .flat_map(|f| dirs().iter().map(move |d| d.join(&f)))
@@ -633,6 +650,17 @@ mod tests {
         assert!(t[0] <= t[3] && t[2] <= t[3], "premultiplied {t:?}");
         assert_eq!(alpha(&l, 0, 0), 128, "opacity 0.5");
         assert_eq!(alpha(&l, 15, 15), 0, "fill none");
+    }
+
+    #[test]
+    fn a_registered_icon_is_found_without_any_folder() {
+        assert!(
+            load("held-ring", 16, Color::rgb(0, 0, 0)).is_err(),
+            "not registered yet"
+        );
+        register("held-ring-symbolic.svg", RING);
+        let px = load("held-ring", 16, Color::rgb(0, 0, 0)).expect("held in memory");
+        assert_eq!((px.width, px.height), (16, 16));
     }
 
     #[test]

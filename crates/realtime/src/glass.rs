@@ -292,7 +292,7 @@ mod tests {
         assert!(c.rule_for("wol-menubar").is_some());
         let dock = c.rule_for("wol-dock").unwrap();
         assert_eq!(dock.radius, 24.0);
-        assert!(c.rule_for("helium").is_none());
+        assert!(c.rule_for("atlas").is_none());
     }
 
     #[test]

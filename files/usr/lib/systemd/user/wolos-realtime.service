@@ -8,6 +8,8 @@ After=wolos-session.target
 StartLimitIntervalSec=0
 
 [Service]
+# oomd ranks every descendant of user@.service: the session cannot lose this one (QA-A7-12).
+ManagedOOMPreference=omit
 ExecStart=/usr/bin/wol-realtime
 StandardOutput=null
 Restart=on-failure

@@ -6,15 +6,19 @@
 # or the default input (micmute), then `wol shell show osd` (`osd-mic` after micmute: the OSD
 # shows the microphone state, not the speaker). Exit 64 on an unknown word.
 set -eu
+# No default output (WirePlumber down, no sound card): wpctl fails, and the OSD still shows,
+# with the state the shell reads ('no output'), instead of nothing at all (QA-DEV-8). The key's
+# exit status is wpctl's.
+rc=0
 case ${1:-} in
-up) wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ ;;
-down) wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- ;;
-mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle ;;
-micmute) wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle ;;
+up) wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+ || rc=$? ;;
+down) wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%- || rc=$? ;;
+mute) wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle || rc=$? ;;
+micmute) wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle || rc=$? ;;
 *) echo "usage: wol-volume up|down|mute|micmute" >&2; exit 64 ;;
 esac
 # The shell reads the new level now and shows the OSD (no wait for its status poll).
-if [ "${1:-}" = micmute ]; then
-	exec wol shell show osd-mic
-fi
-exec wol shell show osd
+osd=osd
+[ "$1" != micmute ] || osd=osd-mic
+wol shell show "$osd" || :
+exit "$rc"

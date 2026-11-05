@@ -19,6 +19,7 @@ use crate::mcp::ToolEnv;
 use crate::run::Env;
 use serde_json::{Map, Value, json};
 use shared::errors::ErrorCode;
+use wol_core::automation::Outcome;
 
 /// Largest params text and reply wold takes (`shared::portal::MAX_LINE`).
 pub const MAX_PARAMS: usize = shared::portal::MAX_LINE;
@@ -33,6 +34,13 @@ fn code_of(exit: i32) -> ErrorCode {
         .into_iter()
         .find(|c| c.exit() == exit && *c != ErrorCode::Ok)
         .unwrap_or(ErrorCode::Failed)
+}
+
+/// The shell's own sentence in the gate's message for an administrator change it ran that did not
+/// work (`approve::decide`'s `Answer::Failed` wording); None for every other stop (nothing ran).
+fn shell_failure(msg: &str) -> Option<&str> {
+    let rest = msg.strip_prefix("The user allowed it, but it did not work: ")?;
+    Some(rest.strip_suffix(" Nothing changed.").unwrap_or(rest))
 }
 
 /// The reply value for one call (the caller prints it as a line).
@@ -70,6 +78,32 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
             &format!("no verb has the action {method:?}"),
         );
     };
+    // `sys` lists its topics as text when it has none: the page asked for data, so it must name one
+    // (QA-WEB-34).
+    if method == "sys"
+        && args
+            .get("topic")
+            .and_then(Value::as_str)
+            .is_none_or(str::is_empty)
+    {
+        return fault(
+            ErrorCode::Usage,
+            "The request was not understood.",
+            "sys needs a topic",
+        );
+    }
+    // A check that does not exist is `not-found` before the gate asks anyone for anything, and its
+    // name is not echoed into a sentence (QA-WEB-31).
+    if method == "doctor.fix" {
+        let id = args.get("id").and_then(Value::as_str).unwrap_or_default();
+        if !crate::doctor::exists(env, id) {
+            return fault(
+                ErrorCode::NotFound,
+                "WolOS has no check with that name.",
+                &format!("no check {id:?}"),
+            );
+        }
+    }
     let verb = catalog::Verb {
         cmd,
         helper: catalog::HELPER_VERBS.iter().find(|h| h.path == cmd.path),
@@ -99,6 +133,15 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
         };
         // What the verb's own --json would have said, read before the change (the check after).
         let before = (method == "update.install").then(|| crate::run::update_install_result(env));
+        // The steps the sheet will show, to say which one stopped a fix that failed (QA-100 H3-2).
+        let asked = if method == "doctor.fix" {
+            match crate::doctor::approval(env, inv.get("id").unwrap_or_default()) {
+                Ok(Some(shared::shell::ApprovalRequest::DoctorFix { steps, .. })) => steps,
+                _ => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
         match approve::decide(env, app, &verb.tool(), rule, &inv, secret) {
             Verdict::Done(what) => {
                 return json!({"ok": match method {
@@ -106,6 +149,15 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
                     "doctor.fix" => crate::doctor::after(env, inv.get("id").unwrap_or_default()),
                     _ => json!({"status": "done", "request": what}),
                 }});
+            }
+            // The shell ran the fix and a step did not work: the steps before it may have changed
+            // things, so the answer is the check as it is now and which step stopped.
+            Verdict::Stop(Outcome::Failed, msg) if method == "doctor.fix" => {
+                if let Some(why) = shell_failure(&msg) {
+                    let id = inv.get("id").unwrap_or_default();
+                    return json!({"ok": crate::doctor::after_failed(env, id, &asked, why)});
+                }
+                return fault(ErrorCode::Denied, &msg, "");
             }
             Verdict::Stop(_, msg) => return fault(ErrorCode::Denied, &msg, ""),
             // Allowed on the consent sheet: a fix of the person's own services runs below (the
@@ -123,6 +175,27 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
     let mut te = ToolEnv::new(env, format!("webapp:{app}"));
     let code = crate::run::dispatch(&inv, &mut te);
     let (out, err) = (te.out, te.err);
+    let read = wol_core::sysapp::permission_of(method).is_some_and(|p| !p.admin);
+    // The Doctor's check exits 1 when something needs a fix, and its fix exits non-zero when it did
+    // not work: both print the report as JSON first, and the report is the answer (QA-WEB-24: the
+    // app showed "It did not work." exactly when the computer had a problem). Only a refusal that
+    // never ran (`ran: false` with an `error`) stays an error. Any other read verb whose stdout is
+    // one JSON object and stderr is empty answers the same way (`report_of`).
+    let doctor = matches!(method, "doctor.check" | "doctor.fix");
+    let report = if code == 0 {
+        None
+    } else if doctor {
+        serde_json::from_str::<Value>(out.trim())
+            .ok()
+            .filter(|r| r.is_object() && !(r["ran"] == false && r.get("error").is_some()))
+    } else if read {
+        report_of(&out, &err)
+    } else {
+        None
+    };
+    if let Some(report) = report {
+        return json!({"ok": report});
+    }
     if code != 0 {
         let msg = err.trim().trim_start_matches("wol: ").trim().to_string();
         let msg = if msg.is_empty() {
@@ -134,6 +207,18 @@ pub fn call(app: &str, method: &str, params: &str, env: &mut dyn Env) -> Value {
     }
     let text = out.trim_end();
     json!({"ok": serde_json::from_str::<Value>(text).unwrap_or_else(|_| Value::String(text.to_string()))})
+}
+
+/// The JSON report a read verb printed though it exited non-zero, when that is all it said: a
+/// check's exit status says what it found (`wol doctor` exits 1 when a check fails, QA-WEB-24),
+/// and the report is the answer. None when stderr has words or stdout is not one JSON object.
+fn report_of(out: &str, err: &str) -> Option<Value> {
+    if !err.trim().is_empty() {
+        return None;
+    }
+    serde_json::from_str::<Value>(out.trim_end())
+        .ok()
+        .filter(Value::is_object)
 }
 
 /// The verb: prints the reply line, exit status 0 whenever a reply was printed (the reply says).
@@ -162,6 +247,23 @@ mod tests {
         )
     }
 
+    /// QA-DOC-2: the gate's "The user allowed it, but it did not work: <why> Nothing changed." is
+    /// the shell's own sentence; the Doctor's answer keeps the reason and drops the gate's frame.
+    #[test]
+    fn the_shells_failure_sentence_is_found_in_the_gates_message() {
+        assert_eq!(
+            shell_failure(
+                "The user allowed it, but it did not work: The password was wrong. Nothing changed."
+            ),
+            Some("The password was wrong.")
+        );
+        assert_eq!(
+            shell_failure("The user allowed it, but it did not work: Out of space."),
+            Some("Out of space.")
+        );
+        assert_eq!(shell_failure("The user said no."), None);
+    }
+
     #[test]
     fn a_read_verb_answers_with_its_json_output() {
         let mut env = FakeEnv::default();
@@ -177,6 +279,40 @@ mod tests {
         assert_eq!(v["ok"]["os"], "WolOS", "{v}");
     }
 
+    /// QA-WEB-24: `wol doctor` exits 1 when a check fails, so Doctor showed "It did not work."
+    /// exactly when the computer had a problem. A read verb's JSON report is the answer whatever
+    /// its exit status says; a failing read with nothing on stdout is still a fault.
+    #[test]
+    fn a_check_that_finds_a_problem_answers_with_its_report() {
+        let mut env = FakeEnv {
+            captures: vec![(
+                "systemctl show -p UnitFileState --value nftables.service".into(),
+                "disabled\n".into(),
+            )],
+            ..Default::default()
+        };
+        let v = call(
+            "org.wolos.webapp.doctor",
+            "doctor.check",
+            r#"{"area":"security"}"#,
+            &mut env,
+        );
+        assert_eq!(v["ok"]["ready"], false, "{v}");
+        let fw = v["ok"]["checks"]
+            .as_array()
+            .and_then(|c| c.iter().find(|c| c["id"] == "security.firewall"))
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(fw["status"], "fail", "{v}");
+        assert_eq!(report_of("", "wol: no such area\n"), None);
+        assert_eq!(report_of("not json", ""), None);
+        assert_eq!(report_of("[1]", ""), None, "an object only");
+        assert_eq!(
+            report_of("{\"ready\":false}\n", ""),
+            Some(json!({"ready": false}))
+        );
+    }
+
     #[test]
     fn what_is_not_a_verb_or_not_an_object_is_refused_with_a_code() {
         assert_eq!(ask("rm.rf", "{}")["err"]["code"], "not-found");
@@ -186,6 +322,36 @@ mod tests {
             ask("sys", &"x".repeat(MAX_PARAMS + 1))["err"]["code"],
             "usage"
         );
+    }
+
+    /// QA-WEB-34 and QA-WEB-31: `sys` without a topic is `usage` (it printed its topic list as
+    /// text), and a check that does not exist is `not-found` whatever its name holds, with no
+    /// password sheet and nothing run.
+    #[test]
+    fn sys_needs_a_topic_and_an_unknown_check_is_not_found() {
+        for p in ["{}", r#"{"topic":""}"#, r#"{"topic":7}"#] {
+            assert_eq!(ask("sys", p)["err"]["code"], "usage", "{p}");
+        }
+        for id in [
+            "x; rm -rf /",
+            "fire\nwall",
+            "kitchen.sink",
+            "security.nope",
+            "",
+        ] {
+            let mut env = FakeEnv::default();
+            let v = call(
+                "org.wolos.webapp.t",
+                "doctor.fix",
+                &json!({ "id": id }).to_string(),
+                &mut env,
+            );
+            assert_eq!(v["err"]["code"], "not-found", "{id:?}: {v}");
+            let msg = v["err"]["message"].as_str().unwrap();
+            assert!(!msg.contains(id.trim()) || id.is_empty(), "{msg}");
+            assert!(!msg.contains('\n'), "{msg:?}");
+            assert!(env.execs.is_empty() && env.requests.is_empty(), "{id:?}");
+        }
     }
 
     #[test]
@@ -269,6 +435,30 @@ mod tests {
         assert!(env.requests.is_empty() && env.admin.lock().unwrap().sent.is_empty());
     }
 
+    /// QA-ACC-6: with Settings > Accessibility > Timeouts at x5 the sheet stays open five times as
+    /// long, so the wait for its answer is that much longer (wold reads the same file).
+    #[test]
+    fn a_patient_account_waits_longer_for_the_sheet() {
+        use shared::shell::Answer;
+        let waits = |text: Option<&str>| {
+            let mut env = session();
+            if let Some(t) = text {
+                let f = env.home.join(shared::patience::FILE);
+                env.files.push((f, t.into()));
+            }
+            env.replies = vec![wold(Answer::Done)];
+            call("org.wolos.webapp.t", "update.install", "", &mut env);
+            env.waits[0]
+        };
+        let normal = waits(None);
+        assert_eq!(waits(Some("5\n")), normal + 200, "50 s -> 250 s");
+        assert_eq!(
+            waits(Some("never")),
+            normal - shared::shell::APPROVAL_TIMEOUT_SECS + shared::patience::NEVER_SECS
+        );
+        assert_eq!(waits(Some("bogus")), normal);
+    }
+
     const FIREWALL_OFF: &str = "systemctl show -p UnitFileState --value nftables.service";
 
     #[test]
@@ -302,7 +492,7 @@ mod tests {
             env.admin.lock().unwrap().sent.is_empty() && env.execs.is_empty(),
             "the shell runs it, not wol"
         );
-        // A check with nothing to fix asks nothing.
+        // A check that does not exist asks nothing and is not found (QA-WEB-31).
         let mut env = session();
         let v = call(
             "org.wolos.webapp.doctor",
@@ -310,7 +500,7 @@ mod tests {
             r#"{"id":"security.nope"}"#,
             &mut env,
         );
-        assert_eq!(v["err"]["code"], "denied", "{v}");
+        assert_eq!(v["err"]["code"], "not-found", "{v}");
         assert!(env.requests.is_empty());
     }
 

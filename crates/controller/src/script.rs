@@ -17,7 +17,7 @@ use wol_core::automation::{Outcome, audit};
 /// One script language: how to recognise it, run it, read it from stdin and check it.
 #[derive(Clone, Copy, Debug)]
 pub struct Kind {
-    /// `sh`, `bash`, `ruby`.
+    /// `sh`, `bash`, `ruby`, `rsh`.
     pub id: &'static str,
     /// Interpreter names a shebang may give (`#!/usr/bin/ruby`, `#!/usr/bin/env ruby`).
     pub interpreters: &'static [&'static str],
@@ -99,6 +99,19 @@ pub const KINDS: &[Kind] = &[
             ],
         )),
         lint_only: RUBOCOP_COPS,
+    },
+    // rsh 0.9.0: Ruby with command lines (`#!/usr/bin/rsh`, `#!/usr/bin/env rsh`). `rsh -n`
+    // compiles without running; `rsh --lint` adds its own warnings (exit 1) and errors (exit 2).
+    Kind {
+        id: "rsh",
+        interpreters: &["rsh"],
+        extensions: &[".rsh"],
+        program: "/usr/bin/rsh",
+        run_args: &[],
+        stdin_args: &["-s", "--"],
+        syntax: &["-n"],
+        lint: Some(("rsh", &["--lint"])),
+        lint_only: &[],
     },
 ];
 
@@ -492,6 +505,8 @@ mod tests {
             ("#!/usr/bin/env ruby", Some("ruby")),
             ("#!/usr/bin/env -S ruby -w", Some("ruby")),
             ("#!/usr/bin/ruby3.4", Some("ruby")),
+            ("#!/usr/bin/rsh", Some("rsh")),
+            ("#!/usr/bin/env rsh", Some("rsh")),
             ("#! /usr/bin/python3", Some("python")),
             ("# a comment", None),
             ("#!", None),
@@ -506,9 +521,11 @@ mod tests {
         assert_eq!(kind_of("x.rb", "puts 1\n").unwrap().id, "ruby");
         assert_eq!(kind_of("x.SH", "echo\n").unwrap().id, "sh");
         assert_eq!(kind_of("x", "#!/bin/bash\n").unwrap().id, "bash");
+        assert_eq!(kind_of("x.rsh", "ls\n").unwrap().id, "rsh");
+        assert_eq!(kind_of("x", "#!/usr/bin/env rsh\n").unwrap().id, "rsh");
         let e = kind_of("x.py", "#!/usr/bin/python3\n").unwrap_err();
         assert!(
-            e.contains("python script") && e.contains("sh, bash and ruby"),
+            e.contains("python script") && e.contains("sh, bash, ruby and rsh"),
             "{e}"
         );
         let e = kind_of("notes.txt", "hello\n").unwrap_err();

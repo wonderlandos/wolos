@@ -6,22 +6,38 @@ use super::{Kind, Record, app_key, package_key};
 use crate::ffi::{Error, Result};
 use std::io::{BufReader, Read};
 
-/// gzip, zstd or plain bytes by magic number.
+/// The most a downloaded index may expand to (the largest real one, the community metadata
+/// dump, is well under 100 MiB): an index is unsigned input, and a gzip or zstd bomb must end
+/// in an error, never in the out-of-memory killer (QA-STORE-16).
+pub const MAX_DECOMPRESSED: u64 = 512 << 20;
+/// The most [`decompress`] reserves up front, whatever the input claims.
+const MAX_RESERVE: usize = 64 << 20;
+
+/// gzip, zstd or plain bytes by magic number, at most [`MAX_DECOMPRESSED`] bytes out.
 pub fn decompress(bytes: &[u8]) -> Result<Vec<u8>> {
+    decompress_at_most(bytes, MAX_DECOMPRESSED)
+}
+
+fn decompress_at_most(bytes: &[u8], max: u64) -> Result<Vec<u8>> {
     let bad = |_| Error::untrusted("A downloaded index is damaged.");
+    let reserve = bytes.len().saturating_mul(6).min(MAX_RESERVE);
+    let read = |r: &mut dyn Read| -> Result<Vec<u8>> {
+        let mut out = Vec::with_capacity(reserve);
+        r.take(max.saturating_add(1))
+            .read_to_end(&mut out)
+            .map_err(bad)?;
+        if out.len() as u64 > max {
+            return Err(Error::untrusted("A downloaded index is too large."));
+        }
+        Ok(out)
+    };
     if bytes.starts_with(&[0x1f, 0x8b]) {
-        let mut out = Vec::with_capacity(bytes.len() * 6);
-        flate2::read::MultiGzDecoder::new(bytes)
-            .read_to_end(&mut out)
-            .map_err(bad)?;
-        Ok(out)
+        read(&mut flate2::read::MultiGzDecoder::new(bytes))
     } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
-        let mut out = Vec::with_capacity(bytes.len() * 6);
-        ruzstd::decoding::StreamingDecoder::new(bytes)
-            .map_err(|_| Error::untrusted("A downloaded index is damaged."))?
-            .read_to_end(&mut out)
-            .map_err(bad)?;
-        Ok(out)
+        read(
+            &mut ruzstd::decoding::StreamingDecoder::new(bytes)
+                .map_err(|_| Error::untrusted("A downloaded index is damaged."))?,
+        )
     } else {
         Ok(bytes.to_vec())
     }
@@ -497,6 +513,20 @@ pub mod tests_support {
 mod tests {
     use super::tests_support::{gz, tar};
     use super::*;
+
+    /// QA-STORE-16: a gzip bomb (here 64 MiB of zeros in about 64 KiB) is refused past the cap
+    /// with a sentence, and a real-sized index still expands.
+    #[test]
+    fn a_decompression_bomb_is_refused() {
+        let bomb = gz(&vec![0u8; 64 << 20]);
+        assert!(bomb.len() < 1 << 20, "{}", bomb.len());
+        let e = decompress_at_most(&bomb, 8 << 20).unwrap_err();
+        assert!(e.to_string().contains("too large"), "{e}");
+        assert_eq!(decompress_at_most(&bomb, 64 << 20).unwrap().len(), 64 << 20);
+        assert_eq!(decompress(&gz(b"abc")).unwrap(), b"abc");
+        // The cap the callers get is bounded too.
+        const { assert!(MAX_DECOMPRESSED <= 1 << 30) };
+    }
 
     #[test]
     fn pacman_database_gzip_and_plain() {

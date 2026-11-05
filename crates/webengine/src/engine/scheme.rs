@@ -325,6 +325,22 @@ pub fn referrer_is_fed(referrer: Option<&str>, map: impl Fn(&str) -> Option<Stri
     referrer.is_some_and(|r| r.starts_with("fed://") || map(r).is_some())
 }
 
+/// Whether the page that makes a request is a Federate page, decided from the two things the
+/// shim knows that a page cannot forge or lose: the request's referrer (`referrer_is_fed`), and
+/// the view's current document URL (`document`, the page the view shows). The referrer alone is
+/// not enough: under the default referrer policy a secure Federate page that names its own file
+/// in the compatibility spelling (`http://home.fed/x.css`) sends no referrer (secure to
+/// insecure), so it would be refused although it is the Federate page itself (QA-A9-WEB-ATLAS-16).
+/// A web page is neither: its document is not `fed://`, and a framed web page inside a Federate
+/// page is the Federate page author's own choice.
+pub fn requester_is_fed(
+    referrer: Option<&str>,
+    document: Option<&str>,
+    map: impl Fn(&str) -> Option<String>,
+) -> bool {
+    referrer_is_fed(referrer, &map) || referrer_is_fed(document, &map)
+}
+
 /// The page a refused Federate-host http(s) load becomes: it says where the address is.
 pub fn refused_fed_body(url: &str) -> String {
     let url: String = url

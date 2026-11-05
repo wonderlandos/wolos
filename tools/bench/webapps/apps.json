@@ -3,24 +3,24 @@
   "about": "Apps the web-app benchmark measures (tools/bench/webapps/README.md). kind web: the window is drawn by a browser engine; kind native: a comparison app measured the same way; kind candidate: a runtime under evaluation, not shipped. origin: base (in the image), store:<catalog id> (wol_core::store::CATALOG), module:<id> (files/usr/share/wolos/modules/<id>.json), webapp (wol_core::webapps launcher). crates/controller/tests/bench_webapps.rs keeps this list in step with the Store, the modules and the web-app launcher.",
   "apps": [
     {
-      "id": "helium",
+      "id": "atlas",
       "kind": "web",
       "runtime": "browser",
       "engine": "chromium",
       "packages": [
-        "helium-browser"
+        "atlas-browser"
       ],
       "origin": [
         "base"
       ],
       "argv": [
-        "helium",
+        "atlas",
         "--no-first-run",
         "--no-default-browser-check",
         "--new-window",
         "{url}/page.html"
       ],
-      "class": "^helium$",
+      "class": "^atlas$",
       "interact": "scroll+type",
       "features": true
     },
@@ -30,14 +30,14 @@
       "runtime": "web app window (--app)",
       "engine": "chromium",
       "packages": [
-        "helium-browser"
+        "atlas-browser"
       ],
       "origin": [
         "base",
         "webapp"
       ],
       "argv": [
-        "helium",
+        "atlas",
         "--no-first-run",
         "--no-default-browser-check",
         "--app={url}/page.html",
@@ -193,6 +193,46 @@
       ],
       "class": "^org\\.gnome\\.TextEditor$",
       "interact": "scroll+type"
+    },
+    {
+      "id": "wol-doctor",
+      "kind": "web",
+      "runtime": "WolOS system web app (Doctor, wol-webhost on the Rust engine; ADR 0048)",
+      "engine": "servo",
+      "packages": [
+        "wolos-webapps",
+        "webengine-wolos"
+      ],
+      "origin": [
+        "example"
+      ],
+      "argv": [
+        "/usr/bin/wol-webhost",
+        "/usr/share/wolos/webapps/doctor/app.toml"
+      ],
+      "class": "^org\\.wolos\\.webapp\\.doctor$",
+      "interact": "none",
+      "optional": true
+    },
+    {
+      "id": "wol-hello",
+      "kind": "web",
+      "runtime": "WolOS system web app (Hello, wol-webhost on the Rust engine; ADR 0048)",
+      "engine": "servo",
+      "packages": [
+        "wolos-webapps",
+        "webengine-wolos"
+      ],
+      "origin": [
+        "example"
+      ],
+      "argv": [
+        "/usr/bin/wol-webhost",
+        "/usr/share/wolos/webapps/hello/app.toml"
+      ],
+      "class": "^org\\.wolos\\.webapp\\.hello$",
+      "interact": "none",
+      "optional": true
     },
     {
       "id": "wolkit-todos",

@@ -16,11 +16,20 @@ use std::path::Path;
 pub const PREFS_FILE: &str = "wolos/desktop.json";
 /// Rendered file, loaded by the user hyprland.lua through `hypr/wolos/*.lua` (`prefs::ensure_require`).
 pub const INCLUDE: &str = "hypr/wolos/settings.lua";
+/// wol-hypr's edge snapping switch (plugins/wol-hypr, `plugin:wol:edge_snap`).
+pub const SNAP_KEY: &str = "plugin:wol:edge_snap";
 /// Named rules in the shipped hyprland.lua: everything floats; listed apps keep floating while tiling.
 pub const FLOAT_RULE: &str = "wol-float";
+/// The rule that keeps the listed apps floating while the rest tile.
 pub const FLOAT_APPS_RULE: &str = "wol-float-apps";
 /// Cursor theme the shipped session exports (`env = XCURSOR_THEME`).
 pub const CURSOR_THEME: &str = "Adwaita";
+
+/// Lines a mouse wheel notch scrolls: what Settings offers (1 to 10) and the shipped value, where
+/// the compositor's `input:scroll_factor` is 1.0.
+pub const SCROLL_LINES: std::ops::RangeInclusive<u32> = 1..=10;
+/// The shipped number of lines a wheel notch scrolls.
+pub const SCROLL_LINES_DEFAULT: u32 = 3;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -44,6 +53,9 @@ impl Layout {
 pub struct DesktopPrefs {
     /// Windows tile instead of floating (floating is the default).
     pub tiling: bool,
+    /// A window dragged to a screen edge snaps there (half, quarter or zoom, with a preview), and
+    /// resting on the zoom button offers the snap layouts. The Super+arrow keys work either way.
+    pub snap: bool,
     pub layout: Layout,
     /// Effects & Looks (gaps, corners, blur, borders, shadows, motion). Flattened: its keys sit at the
     /// top level of desktop.json (older files' `gaps` keeps working).
@@ -60,6 +72,10 @@ pub struct DesktopPrefs {
     /// Pointer speed, -1.0..=1.0 (0 = unchanged).
     pub pointer_speed: f32,
     pub mouse_natural_scroll: bool,
+    /// Mouse wheel speed: lines per notch, [`SCROLL_LINES`] (3 as shipped). The compositor takes it
+    /// as `input:scroll_factor` (lines / 3), so toolkits and the browser see longer or shorter
+    /// wheel events and need no setting of their own.
+    pub scroll_lines: u32,
     pub touchpad_natural_scroll: bool,
     pub tap_to_click: bool,
     pub two_finger_secondary: bool,
@@ -79,6 +95,7 @@ impl Default for DesktopPrefs {
     fn default() -> Self {
         Self {
             tiling: false,
+            snap: true,
             layout: Layout::Dwindle,
             looks: crate::looks::Looks::default(),
             float_apps: Vec::new(),
@@ -87,6 +104,7 @@ impl Default for DesktopPrefs {
             repeat_delay: 400,
             pointer_speed: 0.0,
             mouse_natural_scroll: false, // a wheel scrolls the page the way it turns; natural stays on for the trackpad
+            scroll_lines: SCROLL_LINES_DEFAULT,
             touchpad_natural_scroll: true,
             tap_to_click: true,
             two_finger_secondary: true,
@@ -148,6 +166,29 @@ fn xkb(layouts: &[String]) -> (String, String) {
     (l.join(","), v.join(","))
 }
 
+/// Where wol-login (root) keeps the keyboard layout of the account that last used this computer:
+/// two lines, the xkb layouts and the variants (comma lists). The login window's compositor
+/// config reads it, so the login window types on the layout a person set in Settings, not the
+/// one chosen at install time for ever (QA-A7-16).
+pub const LAST_LAYOUT: &str = "/var/lib/wolos/last-layout";
+
+/// The text of [`LAST_LAYOUT`] for an account's `prefs`. Only layouts WolOS offers are kept (the
+/// file is made by root from a file the account can write, and read by a compositor config);
+/// none left is the US layout.
+pub fn last_layout_text(prefs: &DesktopPrefs) -> String {
+    let mut known: Vec<String> = prefs
+        .layouts
+        .iter()
+        .filter(|l| crate::prefs::LAYOUTS.iter().any(|k| k.0 == l.as_str()))
+        .cloned()
+        .collect();
+    if known.is_empty() {
+        known.push("us".into());
+    }
+    let (kb, variant) = xkb(&known);
+    format!("{kb}\n{variant}\n")
+}
+
 impl DesktopPrefs {
     /// Missing or broken file = defaults; unknown keys ignored.
     pub fn parse(text: Option<&str>) -> Self {
@@ -198,6 +239,7 @@ impl DesktopPrefs {
             ),
             kv(&format!("windowrule[{FLOAT_APPS_RULE}]:enable"), b(apps)),
             kv("general:layout", self.layout.name().into()),
+            kv(SNAP_KEY, b(self.snap)),
             kv("input:kb_layout", kb),
             kv("input:kb_variant", variant),
             kv(
@@ -215,6 +257,16 @@ impl DesktopPrefs {
                 format!("{:.2}", self.pointer_speed.clamp(-1.0, 1.0)),
             ),
             kv("input:natural_scroll", b(self.mouse_natural_scroll)),
+            kv(
+                "input:scroll_factor",
+                format!(
+                    "{:.2}",
+                    self.scroll_lines
+                        .clamp(*SCROLL_LINES.start(), *SCROLL_LINES.end())
+                        as f32
+                        / SCROLL_LINES_DEFAULT as f32
+                ),
+            ),
             kv(
                 "input:touchpad:natural_scroll",
                 b(self.touchpad_natural_scroll),
@@ -280,7 +332,13 @@ impl DesktopPrefs {
             s += " })\n";
         }
         for (k, v) in rest {
-            s += &crate::looks::keyword_lua(&k, &v);
+            let line = crate::looks::keyword_lua(&k, &v);
+            // A plugin's keys exist once it is loaded: the compositor loads the plugins after the
+            // first pass of the configuration and runs it again, so the first pass skips them.
+            match k.strip_prefix("plugin:").and_then(|p| p.split(':').next()) {
+                Some(plugin) => s += &format!("if hl.plugin.{plugin} then {line} end"),
+                None => s += &line,
+            }
             s.push('\n');
         }
         let env = |k: &str, v: &str| format!("hl.env({}, {})\n", lua_str(k), lua_str(v));
@@ -668,6 +726,20 @@ pub fn apply_shortcuts(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-A7-16: the login window follows the last account's layouts, known ones only.
+    #[test]
+    fn the_last_layout_file_lists_known_layouts_only() {
+        let p = |l: &[&str]| DesktopPrefs {
+            layouts: l.iter().map(|x| x.to_string()).collect(),
+            ..Default::default()
+        };
+        assert_eq!(last_layout_text(&p(&["br", "us(intl)"])), "br,us\n,intl\n");
+        assert_eq!(last_layout_text(&p(&["xx\nevil", "br"])), "br\n\n");
+        assert_eq!(last_layout_text(&p(&["not-a-layout"])), "us\n\n");
+        assert_eq!(last_layout_text(&p(&[])), "us\n\n");
+    }
+
     use crate::system::fake::FakeHost;
 
     fn kw(p: &DesktopPrefs, k: &str) -> String {
@@ -676,6 +748,35 @@ mod tests {
             .find(|(x, _)| x == k)
             .map(|(_, v)| v)
             .unwrap_or_else(|| panic!("{k}"))
+    }
+
+    /// Snap windows to screen edges: on by default (older desktop.json files without the key too),
+    /// one plugin keyword wrapped so the pass before the plugin loads skips it, sent live by
+    /// difference like every other keyword.
+    #[test]
+    fn snap_to_edges_is_a_guarded_plugin_keyword() {
+        let on = DesktopPrefs::default();
+        let off = DesktopPrefs {
+            snap: false,
+            ..Default::default()
+        };
+        assert!(on.snap && DesktopPrefs::parse(Some(r#"{"tiling":true}"#)).snap);
+        assert!(!DesktopPrefs::parse(Some(r#"{"snap":false}"#)).snap);
+        assert_eq!(kw(&on, SNAP_KEY), "true");
+        assert_eq!(kw(&off, SNAP_KEY), "false");
+        assert_eq!(SNAP_KEY, "plugin:wol:edge_snap");
+        assert!(on.include().contains(
+            "if hl.plugin.wol then hl.config({ [\"plugin.wol.edge_snap\"] = true }) end\n"
+        ));
+        assert!(off.include().contains("[\"plugin.wol.edge_snap\"] = false"));
+        assert_eq!(
+            off.live(&on),
+            vec![format!("keyword {SNAP_KEY} false")],
+            "only the changed keyword goes out"
+        );
+        assert!(on.live(&on).is_empty());
+        // Nothing else in the include is wrapped.
+        assert!(on.include().contains("\nhl.config({ [\"general.layout\"]"));
     }
 
     /// Tiling on/off -> the shipped float rule, the exceptions rule, layout and gaps.
@@ -742,6 +843,47 @@ mod tests {
             );
             assert!(inc.contains(&apps), "{inc}");
         }
+    }
+
+    /// Settings > Trackpad & Mouse > Scroll speed: lines per wheel notch (1 to 10, 3 as shipped),
+    /// sent to the compositor as `input:scroll_factor` (its multiplier on the wheel: 3 lines = 1.0,
+    /// so writing the default changes nothing).
+    #[test]
+    fn scroll_speed_is_lines_per_notch_as_the_compositor_scroll_factor() {
+        let d = DesktopPrefs::default();
+        assert_eq!(d.scroll_lines, 3);
+        assert_eq!(kw(&d, "input:scroll_factor"), "1.00");
+        let five = DesktopPrefs {
+            scroll_lines: 5,
+            ..d.clone()
+        };
+        assert_eq!(kw(&five, "input:scroll_factor"), "1.67");
+        assert_eq!(five.live(&d), ["keyword input:scroll_factor 1.67"]);
+        assert!(d.live(&five).len() == 1 && d.live(&d).is_empty());
+        // Only 1 to 10 reach the compositor, whatever a hand-edited file says.
+        let lo = DesktopPrefs {
+            scroll_lines: 0,
+            ..d.clone()
+        };
+        let hi = DesktopPrefs {
+            scroll_lines: 400,
+            ..d.clone()
+        };
+        assert_eq!(kw(&lo, "input:scroll_factor"), "0.33");
+        assert_eq!(kw(&hi, "input:scroll_factor"), "3.33");
+        // The Lua file the compositor loads carries it, as a number.
+        assert!(
+            five.include().contains("[\"input.scroll_factor\"] = 1.67"),
+            "{}",
+            five.include()
+        );
+        // A desktop.json from before the setting reads as the shipped 3.
+        assert_eq!(
+            DesktopPrefs::parse(Some(r#"{"tiling":true}"#)).scroll_lines,
+            3
+        );
+        let kept = DesktopPrefs::parse(Some(&five.to_json()));
+        assert_eq!(kept.scroll_lines, 5);
     }
 
     #[test]
@@ -829,6 +971,41 @@ mod tests {
         assert_eq!(
             DesktopPrefs::from_legacy_keyboard(None),
             DesktopPrefs::default()
+        );
+    }
+
+    /// QA-STAB-9: `hl.window_rule({ name, enabled })` with no `match` updates the rule of that name
+    /// (Hyprland 0.57.1 `hlWindowRule`: a known name keeps its match, an unknown one makes an empty
+    /// rule), so every rule the include only switches must be defined, with its match, by the system
+    /// file the user file loads first.
+    #[test]
+    fn a_rule_the_include_only_switches_is_defined_with_its_match_by_the_system_file() {
+        let system = include_str!("../../../desktop/overlay/usr/share/wolos/hypr/hyprland.lua");
+        let inc = DesktopPrefs::default().include();
+        let mut switched = 0;
+        for call in inc.lines().filter(|l| l.starts_with("hl.window_rule(")) {
+            if call.contains("match") {
+                continue;
+            }
+            switched += 1;
+            let name = call
+                .split("name = \"")
+                .nth(1)
+                .and_then(|r| r.split('"').next())
+                .expect("a named rule");
+            let defined = system.lines().any(|l| {
+                l.starts_with("hl.window_rule(")
+                    && l.contains(&format!("name = \"{name}\""))
+                    && l.contains("match = {")
+            });
+            assert!(
+                defined,
+                "{name} is switched by the include but not defined in hyprland.lua"
+            );
+        }
+        assert!(
+            switched > 0,
+            "the include switches no rule: the test reads nothing"
         );
     }
 

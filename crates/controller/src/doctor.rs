@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! `wol doctor [area]` and `wol doctor fix <id>` (docs/modules/doctor.md): every area of the
-//! computer (sound, games, updates, security, storage, network, power, display) as one list of
+//! computer (sound, games, updates, security, storage, network, power, display, hardware) as one list of
 //! [`Check`]s in plain words, each with the fix it can run. The facts and rules stay where they
 //! live (`audio_doctor`, `wol_core::games::doctor`, `wol_core::security`, `wol_core::storage`,
 //! `wol_core::netinfo`, `wol_core::power`, `wol_core::hardware`); this module only words them for
 //! a person and runs a fix through the path the owning verb uses (wol-admind for root changes).
 use crate::cli::Invocation;
-use crate::run::{Env, admin_send, emit_json, fail};
+use crate::run::{Env, admin_send_said, emit_json, fail};
 use shared::admin::{AdminAction, AdminRequest};
 use shared::errors::ErrorCode;
 use shared::hardware::{HardwareSnapshot, Kind};
@@ -16,10 +16,20 @@ use std::path::Path;
 use wol_core::games::doctor as games;
 
 pub mod groups;
+pub mod hw;
+pub mod tls;
 
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+];
+/// Areas run only when asked for by name (`wol doctor tls` connects to servers outside the
+/// computer, so neither plain `wol doctor` nor the Doctor app runs it).
+pub const ON_ASK: &[&str] = &[tls::AREA];
+/// What `wol doctor <area>` accepts: [`AREAS`], then [`ON_ASK`].
+pub const CHOICES: &[&str] = &[
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+    "tls",
 ];
 
 /// Last-check age that turns the update check into a warning: three days.
@@ -67,6 +77,10 @@ pub struct Check {
     pub detail: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fix: Option<Fix>,
+    /// The error text when the check itself could not run (it crashed): for the report, apart from
+    /// the words in `detail`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn check(area: &'static str, name: &str, title: &str, status: Status, detail: &str) -> Check {
@@ -77,6 +91,7 @@ fn check(area: &'static str, name: &str, title: &str, status: Status, detail: &s
         status,
         detail: detail.into(),
         fix: None,
+        error: None,
     }
 }
 
@@ -306,10 +321,11 @@ fn sound(env: &mut dyn Env) -> Vec<Check> {
     v.push(devices(
         &env.hardware(),
         "sound",
+        "devices",
         "Sound devices",
-        &[Kind::Audio, Kind::Webcam],
-        "Every sound device and camera has its driver.",
-        "No sound card or camera was found.",
+        &[Kind::Audio],
+        "Every sound device has its driver.",
+        "No sound card was found.",
     ));
     v
 }
@@ -452,7 +468,8 @@ fn updates(env: &mut dyn Env) -> Vec<Check> {
                 "updates",
                 "checked",
                 "Looking for updates",
-                Status::Warn,
+                // A fresh install before its first daily look: nothing is wrong yet (QA-100 H3-5).
+                Status::Skipped,
                 "WolOS looks for updates every day. The first look has not happened yet.",
             ),
             check(
@@ -659,6 +676,13 @@ fn security(env: &mut dyn Env) -> Vec<Check> {
         env.read_file(Path::new("/etc/passwd")),
     );
     v.push(groups::check(group.as_deref(), passwd.as_deref()));
+    // QA-FILES-25: the last administrator removed from wheel.
+    v.push(groups::administrators_check(
+        group.as_deref(),
+        passwd.as_deref(),
+    ));
+    // ADR 0055: the system TLS policy and the browser's TLS rows (files only, no network).
+    v.extend(tls::file_checks(env));
     v.extend(malware_checks(&malware));
     v
 }
@@ -876,6 +900,7 @@ fn network(env: &mut dyn Env) -> Vec<Check> {
     v.push(devices(
         &env.hardware(),
         "network",
+        "devices",
         "Network devices",
         &[Kind::Wifi, Kind::Ethernet, Kind::Bluetooth],
         "Every Wi-Fi, cable and Bluetooth device has its driver.",
@@ -930,6 +955,16 @@ fn power(env: &mut dyn Env) -> Vec<Check> {
             Status::Ok,
             "This computer can sleep and wake where you left off.",
         )
+    } else if f.battery.is_none() || in_vm(env) {
+        // A virtual machine or a desktop with no sleep state: that is how it is built, not
+        // something to fix, and nothing here could fix it (QA-100 H3-5).
+        check(
+            "power",
+            "sleep",
+            "Sleep",
+            Status::Skipped,
+            "This computer does not sleep, so it stays on when you step away. Desktops and virtual machines are often built this way.",
+        )
     } else {
         check(
             "power",
@@ -940,6 +975,16 @@ fn power(env: &mut dyn Env) -> Vec<Check> {
         )
     });
     v
+}
+
+/// The system runs in a virtual machine (`systemd-detect-virt --vm` names one; `none` or no
+/// answer is real hardware).
+fn in_vm(env: &mut dyn Env) -> bool {
+    // A failed run (not a systemd system) names no machine: real hardware, said out loud.
+    match env.capture(&["systemd-detect-virt", "--vm"]) {
+        Some(s) => !matches!(s.trim(), "" | "none"),
+        None => false,
+    }
 }
 
 // ---------------------------------------------------------------- display
@@ -973,23 +1018,41 @@ fn display(env: &mut dyn Env) -> Vec<Check> {
             )
         }
     }];
+    let snap = env.hardware();
     v.push(devices(
-        &env.hardware(),
+        &snap,
         "display",
+        "devices",
         "Graphics",
         &[Kind::Gpu, Kind::Backlight],
         "The graphics card and screen brightness have their drivers.",
         "No graphics card was found.",
+    ));
+    // Cameras are pictures, not sound (QA-100 H3-5): their own row next to the screens.
+    v.push(devices(
+        &snap,
+        "display",
+        "cameras",
+        "Cameras",
+        &[Kind::Webcam],
+        "Every camera has its driver.",
+        "No camera was found.",
     ));
     v
 }
 
 // ---------------------------------------------------------------- hardware
 
-/// Devices of `kinds` that are not ready, with `wol hw fix --yes`'s requests as the fix.
+/// Devices of `kinds` that are not ready, with `wol hw fix --yes`'s requests as the fix, at most
+/// [`MAX_DOCTOR_STEPS`] of them so the password sheet can ask (QA-100 H3-4): over the cap the
+/// module loads are left to the next start (`wol hw boot` loads them), then only the first
+/// packages are asked and the detail says the rest come after "Check again".
+///
+/// [`MAX_DOCTOR_STEPS`]: shared::shell::MAX_DOCTOR_STEPS
 fn devices(
     snap: &HardwareSnapshot,
     area: &'static str,
+    name: &str,
     title: &str,
     kinds: &[Kind],
     ok: &str,
@@ -1005,32 +1068,18 @@ fn devices(
         .filter(|d| d.state != shared::hardware::State::Ready)
         .collect();
     if mine.is_empty() {
-        return check(area, "devices", title, Status::Skipped, none);
+        return check(area, name, title, Status::Skipped, none);
     }
     if bad.is_empty() {
-        return check(area, "devices", title, Status::Ok, ok);
+        return check(area, name, title, Status::Ok, ok);
     }
     let names: Vec<&str> = bad.iter().map(|d| d.name.as_str()).collect();
-    let mut reqs: Vec<AdminRequest> = Vec::new();
-    for d in &bad {
-        for k in &d.missing_klds {
-            reqs.push(req(AdminAction::HwLoad, &[k]));
-        }
-    }
-    for d in &bad {
-        for p in &d.missing_packages {
-            let r = req(AdminAction::PkgInstall, &[p]);
-            if !reqs.contains(&r) {
-                reqs.push(r);
-            }
-        }
-    }
-    reqs.dedup();
+    let (reqs, later) = device_steps(&bad);
     if reqs.is_empty() {
         // Nothing in the catalogue drives it: the device runs on the generic path.
         return check(
             area,
-            "devices",
+            name,
             title,
             Status::Warn,
             &format!(
@@ -1042,26 +1091,81 @@ fn devices(
             ),
         );
     }
-    check(
-        area,
-        "devices",
-        title,
-        Status::Fail,
-        &format!(
-            "{} {} a driver: {}.",
-            bad.len(),
-            plural(bad.len(), "device needs", "devices need"),
-            names.join(", ")
-        ),
-    )
-    .with(Fix::admin("Install the drivers", reqs))
+    let mut detail = format!(
+        "{} {} a driver: {}.",
+        bad.len(),
+        plural(bad.len(), "device needs", "devices need"),
+        names.join(", ")
+    );
+    match later {
+        Later::Nothing => {}
+        Later::AtStart => detail.push_str(" Some of the drivers start the next time the computer starts."),
+        Later::More(n) => detail.push_str(&format!(
+            " The fix installs the first {MAX} drivers. Choose Check again afterwards for the other {n}. Some of the drivers start the next time the computer starts.",
+            MAX = shared::shell::MAX_DOCTOR_STEPS
+        )),
+    }
+    check(area, name, title, Status::Fail, &detail).with(Fix::admin("Install the drivers", reqs))
+}
+
+/// What a device fix leaves for later because one sheet asks at most
+/// [`shared::shell::MAX_DOCTOR_STEPS`] requests.
+#[derive(Debug, PartialEq, Eq)]
+enum Later {
+    Nothing,
+    /// The module loads, left to the next start (`wol hw boot`).
+    AtStart,
+    /// The module loads, and this many packages for a second fix.
+    More(usize),
+}
+
+/// The fix's wol-admind requests: module loads then package installs, each once; over the cap the
+/// packages only (a package's module loads at the next start), cut at the cap.
+fn device_steps(bad: &[&&shared::hardware::Device]) -> (Vec<AdminRequest>, Later) {
+    let max = shared::shell::MAX_DOCTOR_STEPS;
+    let mut klds: Vec<AdminRequest> = Vec::new();
+    let mut pkgs: Vec<AdminRequest> = Vec::new();
+    for d in bad {
+        for k in &d.missing_klds {
+            let r = req(AdminAction::HwLoad, &[k]);
+            if !klds.contains(&r) {
+                klds.push(r);
+            }
+        }
+        for p in &d.missing_packages {
+            let r = req(AdminAction::PkgInstall, &[p]);
+            if !pkgs.contains(&r) {
+                pkgs.push(r);
+            }
+        }
+    }
+    if klds.len() + pkgs.len() <= max {
+        klds.extend(pkgs);
+        return (klds, Later::Nothing);
+    }
+    if pkgs.is_empty() {
+        // Only module loads, too many for one sheet: the first ones now, the rest at the next start.
+        klds.truncate(max);
+        return (klds, Later::AtStart);
+    }
+    if pkgs.len() <= max {
+        return (pkgs, Later::AtStart);
+    }
+    let more = pkgs.len() - max;
+    pkgs.truncate(max);
+    (pkgs, Later::More(more))
 }
 
 // ---------------------------------------------------------------- run
 
-/// The checks of one area; unknown areas give none.
+/// The checks of one area; unknown areas give none. An area whose checks crash, or find nothing to
+/// look at, is one row that says so ([`guarded`]): the report is never empty and never lost.
 pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
-    match area {
+    // An on-ask area (the TLS probes, ADR 0055) runs only by name; an unknown one gives none.
+    let Some(area) = AREAS.iter().chain(ON_ASK).find(|a| **a == area).copied() else {
+        return Vec::new();
+    };
+    guarded(area, || match area {
         "sound" => sound(env),
         "games" => games(env),
         "updates" => updates(env),
@@ -1069,13 +1173,74 @@ pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
         "storage" => storage(env),
         "network" => network(env),
         "power" => power(env),
-        "display" => display(env),
-        _ => Vec::new(),
+        tls::AREA => tls::checks(env),
+        "hardware" => hw::checks(env),
+        _ => display(env),
+    })
+}
+
+/// What a person calls an area (the Doctor app's sidebar words).
+fn area_name(area: &str) -> &'static str {
+    match area {
+        "sound" => "Sound",
+        "games" => "Games",
+        "updates" => "Updates",
+        "security" => "Security",
+        "storage" => "Storage",
+        "network" => "Network",
+        "power" => "Power",
+        "hardware" => "Hardware",
+        tls::AREA => "Secure connections",
+        _ => "Displays",
     }
 }
 
-/// Every area in [`AREAS`] order, or the one asked for.
+/// Runs one area's checks so that a crash in one (a panic in a check or in what it reads) cannot
+/// take the whole report with it: the area becomes a failed `<area>.check` row with the error text
+/// and what to do, and the other areas still report. An area that returns nothing is a warning row
+/// for the same reason: a report with nothing in it looks like "everything is fine".
+fn guarded(area: &'static str, run: impl FnOnce() -> Vec<Check>) -> Vec<Check> {
+    let name = area_name(area);
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(run)) {
+        Ok(v) if !v.is_empty() => v,
+        Ok(_) => {
+            let mut c = check(
+                area,
+                "check",
+                &format!("{name} checks"),
+                Status::Warn,
+                &format!("Doctor found nothing to look at in {name}. Choose Check again."),
+            );
+            c.error = Some("the area returned no checks".into());
+            vec![c]
+        }
+        Err(payload) => {
+            let why = payload
+                .downcast_ref::<&str>()
+                .map(|s| (*s).to_string())
+                .or_else(|| payload.downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "it stopped without saying why".into());
+            let mut c = check(
+                area,
+                "check",
+                &format!("{name} checks"),
+                Status::Fail,
+                &format!(
+                    "Doctor could not finish looking at {name}. It stopped with: {}. Choose Check again. If it stops again, restart the computer.",
+                    why.trim().trim_end_matches('.')
+                ),
+            );
+            c.error = Some(why);
+            vec![c]
+        }
+    }
+}
+
+/// Every area in [`AREAS`] order, or the one asked for (an [`ON_ASK`] area only by name).
 pub fn checks(env: &mut dyn Env, area: Option<&str>) -> Vec<Check> {
+    if let Some(a) = area.filter(|a| ON_ASK.contains(a)) {
+        return area_checks(env, a);
+    }
     AREAS
         .iter()
         .filter(|a| area.is_none_or(|x| x == **a))
@@ -1154,10 +1319,22 @@ fn run(env: &mut dyn Env, area: Option<&str>, json: bool) -> i32 {
 /// The check `id` as it is now, when its area and id exist.
 fn find(env: &mut dyn Env, id: &str) -> Option<Check> {
     let area = id.split('.').next().unwrap_or_default();
-    if !AREAS.contains(&area) {
+    if !AREAS.contains(&area) && !ON_ASK.contains(&area) {
         return None;
     }
     area_checks(env, area).into_iter().find(|c| c.id == id)
+}
+
+/// Whether `id` names a check (its area exists and has it).
+pub fn exists(env: &mut dyn Env, id: &str) -> bool {
+    find(env, id).is_some()
+}
+
+/// A fix worked when its commands did and the check is fine now: a check that was worth a look
+/// and still is, or a fix that moved a failure to a warning, did not (QA-WEB-23: Doctor said
+/// "Fixed." for a warning that stayed).
+fn fixed(code: i32, after: Status) -> bool {
+    code == 0 && after == Status::Ok
 }
 
 /// The on-screen approval for `wol doctor fix <id>` asked by a helper or a system web app (ADR
@@ -1178,14 +1355,7 @@ pub fn approval(env: &mut dyn Env, id: &str) -> Result<Option<ApprovalRequest>, 
     let request = ApprovalRequest::DoctorFix {
         id: c.id,
         title: f.title,
-        steps: reqs
-            .iter()
-            .map(|r| {
-                std::iter::once(r.action.name().to_string())
-                    .chain(r.args.iter().cloned())
-                    .collect()
-            })
-            .collect(),
+        steps: steps_of(&reqs),
     };
     match request.doctor_steps() {
         Some(_) => Ok(Some(request)),
@@ -1193,22 +1363,125 @@ pub fn approval(env: &mut dyn Env, id: &str) -> Result<Option<ApprovalRequest>, 
     }
 }
 
+/// wol-admind requests as `[action, args..]` steps (the [`ApprovalRequest::DoctorFix`] shape).
+fn steps_of(reqs: &[AdminRequest]) -> Vec<Vec<String>> {
+    reqs.iter()
+        .map(|r| {
+            std::iter::once(r.action.name().to_string())
+                .chain(r.args.iter().cloned())
+                .collect()
+        })
+        .collect()
+}
+
+/// The steps check `c`'s fix would still send (none when it is fine or runs as the person).
+fn steps_left(c: &Check) -> Vec<Vec<String>> {
+    match c.fix.as_ref().filter(|_| c.status != Status::Ok) {
+        Some(Fix {
+            action: Action::Admin(reqs),
+            ..
+        }) => steps_of(reqs),
+        _ => Vec::new(),
+    }
+}
+
 /// `wol doctor fix --json`'s answer after the shell ran the fix (the same shape as [`fix`]'s).
 pub fn after(env: &mut dyn Env, id: &str) -> serde_json::Value {
     let after = find(env, id);
-    let ok = after.as_ref().is_some_and(|c| c.status != Status::Fail);
+    let ok = after.as_ref().is_some_and(|c| fixed(0, c.status));
     serde_json::json!({ "id": id, "ran": true, "ok": ok, "check": after })
+}
+
+/// What to do after a fix that did not work, for the person and for a web app: the same words.
+const FIX_NEXT: &str = "Choose Check again to see how it stands now. If it keeps failing, restart the computer and try again.";
+
+/// The answer of a fix that never started or did not work (`--json`; the same keys as a fix that
+/// ran, so a script reads `ok`, `message` and `error` either way): never only an exit status.
+fn fix_report(id: &str, ran: bool, exit: i32, error: &str, message: &str) -> serde_json::Value {
+    let mut v = serde_json::json!({
+        "id": id,
+        "ran": ran,
+        "ok": false,
+        "exit": exit,
+        "message": message,
+        "next": FIX_NEXT,
+    });
+    if !error.is_empty() {
+        v["error"] = error.into();
+    }
+    v
+}
+
+/// The last line a command printed: the sentence that says why it failed.
+fn last_line(text: &str) -> String {
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The answer after the shell ran a fix that stopped at a step that did not work (QA-100 H3-2):
+/// [`after`]'s shape with `ok: false`, the check as it is now (the row shows what the steps that
+/// worked changed), and which step stopped it. `asked` are the steps the sheet showed;
+/// a step that is no longer needed now counts as done, the first one still needed is the one that
+/// did not work. `why` is the shell's sentence.
+pub fn after_failed(
+    env: &mut dyn Env,
+    id: &str,
+    asked: &[Vec<String>],
+    why: &str,
+) -> serde_json::Value {
+    let after = find(env, id);
+    let left = after.as_ref().map(steps_left).unwrap_or_default();
+    let of = asked.len();
+    let done = asked.iter().filter(|s| !left.contains(s)).count();
+    let step = asked
+        .iter()
+        .position(|s| left.contains(s))
+        .map_or(done.min(of.saturating_sub(1)) + 1, |i| i + 1);
+    let why = why.trim().trim_end_matches('.');
+    let message = match (of, why.is_empty()) {
+        (0 | 1, true) => "The fix did not work.".to_string(),
+        (0 | 1, false) => format!("The fix did not work: {why}."),
+        (_, true) => format!("Step {step} of {of} did not work."),
+        (_, false) => format!("Step {step} of {of} did not work: {why}."),
+    };
+    // One shape with `fix_report` (the CLI's answer when a fix does not work): exit, error and
+    // next too, so an app reads the same keys from the sheet's path and from the CLI's.
+    let mut v = fix_report(id, true, ErrorCode::Failed.exit(), why, &message);
+    v["check"] = serde_json::json!(after);
+    v["step"] = step.into();
+    v["of"] = of.into();
+    v["done"] = done.into();
+    v
 }
 
 /// Run one check's fix, then check its area again. A helper or a web app (any actor but a person
 /// at `wol`) never sends a wol-admind request from here: theirs went through [`approval`].
+///
+/// A fix that cannot start or does not work is a report, not a status: `--json` carries `message`
+/// (what failed), `error` (the text the failing step gave), `next` (what to do), `exit` and the
+/// check as it is now; the text report prints the same on stderr.
 fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let area = id.split('.').next().unwrap_or_default();
-    if !AREAS.contains(&area) {
-        return fail(env, ErrorCode::NotFound, &format!("no check {id}"));
-    }
-    let Some(c) = area_checks(env, area).into_iter().find(|c| c.id == id) else {
-        return fail(env, ErrorCode::NotFound, &format!("no check {id}"));
+    let found = (AREAS.contains(&area) || ON_ASK.contains(&area))
+        .then(|| area_checks(env, area).into_iter().find(|c| c.id == id))
+        .flatten();
+    let Some(c) = found else {
+        let code = fail(env, ErrorCode::NotFound, &format!("no check {id}"));
+        if json {
+            let v = fix_report(
+                id,
+                false,
+                code,
+                &format!("no check {id}"),
+                &format!("WolOS has no check {id}."),
+            );
+            emit_json(env, &v);
+        }
+        return code;
     };
     let Some(f) = c.fix.clone().filter(|_| c.status != Status::Ok) else {
         if json {
@@ -1225,22 +1498,24 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
             ErrorCode::Unsupported.exit()
         };
     };
+    let mut said = String::new();
     let code = match &f.action {
         // The check changed between the sheet and now: ask again, never on a cached password.
         Action::Admin(_) if env.actor() != "cli" => {
-            return fail(
-                env,
-                ErrorCode::Denied,
-                &format!(
-                    "{} needs the administrator now; ask again to see the password sheet",
-                    c.title
-                ),
+            let why = format!(
+                "{} needs the administrator now; ask again to see the password sheet",
+                c.title
             );
+            let code = fail(env, ErrorCode::Denied, &why);
+            if json {
+                emit_json(env, &fix_report(id, false, code, &why, &format!("{why}.")));
+            }
+            return code;
         }
         Action::Admin(reqs) => {
             let mut code = 0;
             for r in reqs {
-                let c = admin_send(env, r);
+                let c = admin_send_said(env, r, &mut said);
                 if c != 0 {
                     code = c;
                     break;
@@ -1248,12 +1523,20 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
             }
             code
         }
-        // Captured, so `--json` stays one document.
+        // Captured, so `--json` stays one document; what it printed is the reason it failed.
         Action::User(argv) => match env.exec_output(argv) {
-            Ok((c, _)) => c,
+            Ok((c, out)) => {
+                if c != 0 {
+                    said = last_line(&out);
+                }
+                c
+            }
             Err(_) => match env.exec(argv) {
                 Ok(c) => c,
-                Err(_) => ErrorCode::Unavailable.exit(),
+                Err(_) => {
+                    said = "The command could not be started.".into();
+                    ErrorCode::Unavailable.exit()
+                }
             },
         },
     };
@@ -1261,32 +1544,53 @@ fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
         .into_iter()
         .find(|c| c.id == id)
         .unwrap_or(c);
-    let fixed = code == 0 && after.status != Status::Fail;
-    if json {
-        emit_json(
-            env,
-            &serde_json::json!({ "id": id, "ran": true, "ok": fixed, "check": after }),
-        );
-    } else if fixed {
-        env.out(&format!("{}: {}\n", after.title, after.detail));
-    } else {
-        env.err(&format!(
-            "wol: {} is not fixed: {}\n",
-            after.title, after.detail
-        ));
-    }
-    if fixed {
+    let fixed = fixed(code, after.status);
+    let exit = if fixed {
         0
     } else if code != 0 {
         code
     } else {
         ErrorCode::Failed.exit()
+    };
+    let message = match (said.trim().trim_end_matches('.'), code) {
+        ("", 0) => format!("{} ran, but it is still not fine.", f.title),
+        ("", _) => "The fix did not work.".to_string(),
+        (why, _) => format!("The fix did not work: {why}."),
+    };
+    if json {
+        let mut v = serde_json::json!({ "id": id, "ran": true, "ok": fixed, "check": after });
+        if !fixed {
+            v = {
+                let mut r = fix_report(id, true, exit, &said, &message);
+                r["check"] = serde_json::json!(after);
+                r
+            };
+        }
+        emit_json(env, &v);
+    } else if fixed {
+        env.out(&format!("{}: {}\n", after.title, after.detail));
+    } else {
+        env.err(&format!(
+            "wol: {} is not fixed: {}\nwol: {message} {FIX_NEXT}\n",
+            after.title, after.detail
+        ));
     }
+    exit
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-WEB-23: only a check that is fine after the fix was fixed.
+    #[test]
+    fn a_warning_that_stays_is_not_fixed() {
+        assert!(fixed(0, Status::Ok));
+        assert!(!fixed(0, Status::Warn), "still worth a look");
+        assert!(!fixed(0, Status::Fail));
+        assert!(!fixed(1, Status::Ok), "the commands failed");
+        assert!(!fixed(0, Status::Skipped), "not checked is not fixed");
+    }
 
     #[test]
     fn install_lines_become_one_admin_install_each() {
@@ -1366,6 +1670,63 @@ mod tests {
         assert!(n >= 5, "{n}");
     }
 
+    /// QA-DOC-2: a fix of three drivers whose second one did not work: the answer carries the
+    /// check as it is now, which step stopped, and a sentence that says so.
+    #[test]
+    fn a_fix_that_stopped_midway_says_which_step() {
+        use shared::hardware::{Device, HardwareSnapshot, Kind, State};
+        let dev = |p: &str| Device {
+            kind: Kind::Wifi,
+            name: format!("Card {p}"),
+            state: State::NeedsFirmware,
+            missing_packages: vec![p.to_string()],
+            ..Default::default()
+        };
+        // Now only b and c are still missing: a was installed before the second step stopped.
+        let mut env = crate::run::FakeEnv {
+            hw: vec![HardwareSnapshot {
+                devices: vec![dev("b-fw"), dev("c-fw")],
+            }],
+            ..Default::default()
+        };
+        let step = |p: &str| vec!["pkg-install".to_string(), p.to_string()];
+        let asked = vec![step("a-fw"), step("b-fw"), step("c-fw")];
+        let v = after_failed(
+            &mut env,
+            "network.devices",
+            &asked,
+            "The password was wrong. ",
+        );
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["ran"], true);
+        assert_eq!(
+            (v["step"].as_u64(), v["of"].as_u64(), v["done"].as_u64()),
+            (Some(2), Some(3), Some(1))
+        );
+        assert_eq!(
+            v["message"],
+            "Step 2 of 3 did not work: The password was wrong."
+        );
+        assert_eq!(
+            v["check"]["id"], "network.devices",
+            "the row as it is now: {v}"
+        );
+        // One shape with the CLI's answer (`fix_report`): an app reads exit, error and next from
+        // the sheet's path exactly as from `wol doctor fix --json`.
+        let cli = fix_report("network.devices", true, 1, "The password was wrong", "m");
+        for key in cli.as_object().unwrap().keys() {
+            assert!(v.get(key).is_some(), "after_failed lacks {key}: {v}");
+        }
+        assert_eq!(v["error"], "The password was wrong");
+        assert_eq!(v["next"], FIX_NEXT);
+        assert_eq!(v["exit"], ErrorCode::Failed.exit());
+        // One step only, or no reason given.
+        let v = after_failed(&mut env, "network.devices", &[step("b-fw")], "");
+        assert_eq!(v["message"], "The fix did not work.");
+        let v = after_failed(&mut env, "network.devices", &asked, "");
+        assert_eq!(v["message"], "Step 2 of 3 did not work.");
+    }
+
     #[test]
     fn report_points_at_doctor_fix() {
         let c = check("security", "firewall", "Firewall", Status::Fail, "off").with(Fix::admin(
@@ -1375,5 +1736,61 @@ mod tests {
         let t = report(&[c]);
         assert!(t.contains("fix: wol doctor fix security.firewall"), "{t}");
         assert!(t.ends_with("1 problem to fix.\n"), "{t}");
+    }
+
+    /// A helper or a web app never sends a wol-admind request from `wol doctor fix`; the refusal is
+    /// an answer with its words in `--json` too, not only a status.
+    #[test]
+    fn a_fix_asked_by_a_helper_is_refused_with_words_in_json() {
+        let mut env = crate::run::FakeEnv {
+            captures: vec![(
+                "systemctl show -p UnitFileState --value nftables.service".into(),
+                "disabled\n".into(),
+            )],
+            vars: vec![("WOL_HELPER".into(), "test-helper".into())],
+            ..Default::default()
+        };
+        let code = fix(&mut env, "security.firewall", true);
+        assert_eq!(code, ErrorCode::Denied.exit());
+        assert!(
+            env.requests.is_empty(),
+            "no wol-admind request from a helper"
+        );
+        let v: serde_json::Value = serde_json::from_str(&env.out).expect(&env.out);
+        assert_eq!(
+            (v["ran"].as_bool(), v["ok"].as_bool()),
+            (Some(false), Some(false)),
+            "{v}"
+        );
+        assert!(
+            v["error"].as_str().unwrap().contains("administrator"),
+            "{v}"
+        );
+        assert!(v["next"].is_string() && v["message"].is_string(), "{v}");
+    }
+
+    /// An area that returns nothing is a row that says so, never an empty report.
+    #[test]
+    fn an_area_with_no_checks_is_a_warning_row() {
+        let rows = guarded("games", Vec::new);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            (rows[0].id.as_str(), rows[0].status),
+            ("games.check", Status::Warn)
+        );
+        assert!(rows[0].detail.contains("Games"), "{}", rows[0].detail);
+        let rows = guarded("games", || panic!("{}", String::from("the list was cut")));
+        assert_eq!(
+            (rows[0].status, rows[0].error.as_deref()),
+            (Status::Fail, Some("the list was cut"))
+        );
+        let rows = guarded("power", || std::panic::panic_any(7u8));
+        assert!(
+            rows[0]
+                .error
+                .as_deref()
+                .unwrap()
+                .contains("without saying why")
+        );
     }
 }

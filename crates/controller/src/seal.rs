@@ -61,6 +61,13 @@ fn link_of(path: &Path) -> Option<String> {
         .map(|t| seal::link_field(t.as_os_str().as_bytes()))
 }
 
+/// (device, inode) of a regular file, never through a symlink: the identity fs-verity is kept on.
+fn inode_of(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(path).ok()?;
+    m.is_file().then(|| (m.dev(), m.ino()))
+}
+
 fn measure(env: &mut dyn Env, path: &Path) -> Option<String> {
     let argv = seal::measure_argv(&path.to_string_lossy());
     let a: Vec<&str> = argv.iter().map(String::as_str).collect();
@@ -135,34 +142,46 @@ pub fn apply(env: &mut dyn Env, inv: &Invocation) -> i32 {
     }
     let paths: Vec<PathBuf> = sealed.iter().map(|(_, f)| f.clone()).collect();
     let mut digests = measure_all(env, &paths);
+    // fs-verity belongs to the inode, not the path: hard links (perl's perlbug and perlthanks)
+    // are one file, enabled once; enabling it again fails with EEXIST (IMG013-SEAL-HARDLINK).
+    let mut first_link: std::collections::HashMap<(u64, u64), PathBuf> =
+        std::collections::HashMap::new();
     for (rel, f) in &sealed {
-        if digests.contains_key(f) {
+        // The first path seen of this inode; a later link takes its digest.
+        let first = inode_of(f).map_or_else(
+            || f.clone(),
+            |i| first_link.entry(i).or_insert_with(|| f.clone()).clone(),
+        );
+        if let Some(d) = digests.get(&first).cloned() {
+            digests.insert(f.clone(), d);
             continue;
         }
-        if env
+        let enabled = env
             .exec(&seal::enable_argv(&f.to_string_lossy()))
             .unwrap_or(1)
-            != 0
-        {
-            return fail(
-                env,
-                ErrorCode::Failed,
-                &format!("fs-verity could not be enabled on {rel}"),
-            );
-        }
+            == 0;
+        // A failed enable on an inode that has verity already (EEXIST: sealed since it was
+        // measured, through a link not told apart above) is sealed: its digest stands.
         let Some(d) = measure(env, f) else {
+            let why = if enabled {
+                format!("no fs-verity digest for {rel}")
+            } else {
+                format!("fs-verity could not be enabled on {rel}")
+            };
+            return fail(env, ErrorCode::Failed, &why);
+        };
+        digests.insert(f.clone(), d);
+    }
+    // Complete: every sealed path carries its digest, or nothing is sealed.
+    for (rel, f) in sealed {
+        let Some(d) = digests.get(&f) else {
             return fail(
                 env,
                 ErrorCode::Failed,
                 &format!("no fs-verity digest for {rel}"),
             );
         };
-        digests.insert(f.clone(), d);
-    }
-    for (rel, f) in sealed {
-        if let Some(d) = digests.remove(&f) {
-            man.0.insert(rel, d);
-        }
+        man.0.insert(rel, d.clone());
     }
     let mpath = root.join(seal::MANIFEST);
     if env.write_file(&mpath, &man.to_complete_text()).is_err()
@@ -198,6 +217,29 @@ pub(crate) const EPOCH_MARK: &str = "epoch-failed";
 /// `/var/lib/wolos/<kind>-<slot>`: that slot failed an early-boot check of that kind.
 pub(crate) fn failed_mark(kind: &str, slot: &str) -> PathBuf {
     PathBuf::from(format!("/var/lib/wolos/{kind}-{slot}"))
+}
+
+/// The safety notice (`seal::NOTICE`) goes once its cause is gone (QA-LIVE3-16: it outlived the
+/// failure for good). Two causes write it: a slot that failed an early-boot check (it carries a
+/// failed mark until it boots and passes) and `wol boot bless` finding the other slot's image
+/// damaged (no mark; the cause is that image, until it verifies again or is re-sealed). While
+/// either holds, the notice stays.
+pub(crate) fn clear_notice_if_healthy(env: &mut dyn Env) {
+    let marked = update::SLOTS.into_iter().any(|slot| {
+        [VERITY_MARK, EPOCH_MARK]
+            .iter()
+            .any(|k| env.read_file(&failed_mark(k, slot)).is_some())
+    });
+    if marked {
+        return;
+    }
+    // Only a notice that is there needs the (costly) image check.
+    if env.read_file(Path::new(seal::NOTICE)).is_some()
+        && update::SLOTS.into_iter().any(|s| image_damaged(env, s))
+    {
+        return;
+    }
+    let _ = env.remove_file(Path::new(seal::NOTICE));
 }
 
 /// The other slot's menu entry the early-boot checks (`wol seal check`, `wol boot check`) may
@@ -375,6 +417,7 @@ fn check_at(env: &mut dyn Env, slot: &str, expected: &str, root: &Path) -> i32 {
         // A slot that passes has not failed: an old mark (a check that could not see every file)
         // would keep the other slot from ever falling back to this one.
         let _ = env.remove_file(&failed_mark(VERITY_MARK, slot));
+        clear_notice_if_healthy(env);
         return 0;
     }
     // This slot failed before and is running again: the fallback did not take (the other one
@@ -573,6 +616,15 @@ fn pcrs(env: &mut dyn Env) -> &'static str {
 /// start is automatic again. Nothing typed (the chip opened it) or an install that never used the
 /// chip (no `tpm2-device` in `rd.luks.options`): nothing to do, exit 0.
 pub fn reseal(env: &mut dyn Env) -> i32 {
+    // Root's keyring and the disk are not a person's to touch: said, not a silent success
+    // (QA-LIVE3-32: a user got rc 0 and no output).
+    if !env.is_root() {
+        return fail(
+            env,
+            ErrorCode::Denied,
+            "only an administrator can bind the disk key",
+        );
+    }
     let Some(uuid) = luks_uuid(env) else {
         return 0;
     };

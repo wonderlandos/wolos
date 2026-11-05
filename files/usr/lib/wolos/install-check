@@ -50,8 +50,10 @@ echo "boot-off $(wol boot detect no)"
 [ -d "${WOLOS_EFIVARS:-/sys/firmware/efi/efivars}" ] || { echo "refuse bios"; rc=2; }
 # Anything on it still mounted, through a btrfs subvolume or an opened encrypted volume too (a USB
 # disk opened in Files): install-run unmounts those first.
-# A swap partition on it counts too (`swap <device>`).
-if [ -n "$(wol install mounts "$disk" || echo unknown)" ]; then
+# A swap partition on it counts too (`swap <device>`). A volume or loop opened over it with
+# nothing mounted (`close`, `detach`) does not: install-run lets those go before it partitions.
+held=$(wol install mounts "$disk") || held=unknown
+if printf '%s\n' "$held" | grep -qE '^(mount|swap) |^unknown$'; then
   echo "refuse in-use"; rc=2
 fi
 exit $rc

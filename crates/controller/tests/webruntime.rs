@@ -74,8 +74,8 @@ fn linker_follows_the_profile_and_leaves_your_files_alone() {
     fs::write(cfg.join("electron-flags.conf"), "--mine\n").unwrap();
     let elsewhere = cfg.join("my-browser-flags");
     fs::write(&elsewhere, "--also-mine\n").unwrap();
-    fs::remove_file(cfg.join("helium-flags.conf")).unwrap();
-    std::os::unix::fs::symlink(&elsewhere, cfg.join("helium-flags.conf")).unwrap();
+    fs::remove_file(cfg.join("atlas-flags.conf")).unwrap();
+    std::os::unix::fs::symlink(&elsewhere, cfg.join("atlas-flags.conf")).unwrap();
     // Unknown profile word and tier: Balanced, no GPU.
     fs::write(cfg.join(webruntime::PROFILE_FILE), "turbo\n").unwrap();
     link(&cfg, "maybe");
@@ -83,7 +83,7 @@ fn linker_follows_the_profile_and_leaves_your_files_alone() {
         fs::read_to_string(cfg.join("electron-flags.conf")).unwrap(),
         "--mine\n"
     );
-    assert_eq!(target(&cfg, "helium-flags.conf"), Some(elsewhere));
+    assert_eq!(target(&cfg, "atlas-flags.conf"), Some(elsewhere));
     assert_eq!(
         target(&cfg, "code-flags.conf"),
         Some(want(Profile::Balanced, Gpu::Soft, Role::Editor))

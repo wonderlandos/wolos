@@ -504,3 +504,43 @@ fn only_fed_pages_may_read_federate_names_but_any_page_may_frame_them() {
         "no referrer: not a fed page"
     );
 }
+
+/// QA-A9-WEB-ATLAS-16: a verified Federate page that names its own file in the http spelling sends
+/// no referrer (secure to insecure under the default policy); it is still the Federate page, by
+/// the view's document. A web document is not.
+#[test]
+fn a_fed_page_without_a_referrer_is_known_by_its_document() {
+    let (doc, res) = (scheme::LOAD_NAVIGATION, scheme::LOAD_RESOURCE);
+    let map = |u: &str| (u.starts_with("http://home.fed/")).then(|| "fed://home.fed".to_owned());
+    let asked = |r: Option<&str>, d: Option<&str>| scheme::requester_is_fed(r, d, map);
+    // Referer none, document fed://: allowed.
+    assert!(scheme::fed_request_allowed(
+        res,
+        asked(None, Some("fed://home.fed/"))
+    ));
+    assert!(scheme::fed_request_allowed(
+        res,
+        asked(None, Some("fed://other.pagina/a?b"))
+    ));
+    // The document served under the http spelling counts as well.
+    assert!(scheme::fed_request_allowed(
+        res,
+        asked(None, Some("http://home.fed/page"))
+    ));
+    // Nothing known, or a web or file document with no referrer: refused as before.
+    assert!(!scheme::fed_request_allowed(res, asked(None, None)));
+    assert!(!scheme::fed_request_allowed(
+        res,
+        asked(None, Some("https://evil.example/"))
+    ));
+    assert!(!scheme::fed_request_allowed(
+        res,
+        asked(None, Some("file:///home/a/app/index.html"))
+    ));
+    assert!(!scheme::fed_request_allowed(
+        res,
+        asked(Some("https://evil.example/"), Some("https://evil.example/"))
+    ));
+    // A frame was always allowed.
+    assert!(scheme::fed_request_allowed(doc, asked(None, None)));
+}

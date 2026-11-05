@@ -7,6 +7,11 @@ use std::io::Read;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
+/// How long a connect to a distributor may take.
+const CONNECT_WAIT: Duration = Duration::from_secs(15);
+/// How long a read may wait for the next bytes before the distributor is given up on.
+const READ_WAIT: Duration = Duration::from_secs(30);
+
 /// Largest root zone read (the reference client's cap is the same order).
 pub const MAX_ROOT: u64 = 8 << 20;
 /// Largest manifest read.
@@ -81,8 +86,8 @@ impl Https {
             )
             .https_only(true)
             .http_status_as_error(false)
-            .timeout_connect(Some(Duration::from_secs(15)))
-            .timeout_per_read(Some(Duration::from_secs(30)))
+            .timeout_connect(Some(CONNECT_WAIT))
+            .timeout_per_read(Some(READ_WAIT))
             .max_redirects(4)
             .user_agent(concat!("wolos-federate/", env!("CARGO_PKG_VERSION")))
             .build()

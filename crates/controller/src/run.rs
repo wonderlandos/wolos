@@ -15,6 +15,8 @@ pub const SHELL_SOCKET: &str = "wol-shell.sock";
 pub const RUN_BIN: &str = "wol-run";
 /// Owner of GPU selection (realtime crate): `wol-realtime gpu env|hyprconf`.
 pub const GPU_BIN: &str = "wol-realtime";
+/// The keyring command (crates/wolkeyring, ADR 0054): `wol keyring VERB ...` runs it.
+pub const KEYRING_BIN: &str = "wol-keyring";
 const PASSWORD_TRIES: usize = 3;
 
 /// Side effects `wol` needs.
@@ -46,12 +48,36 @@ pub trait Env {
     }
     fn stdin_line(&mut self) -> Option<String>;
     fn read_file(&self, p: &Path) -> Option<String>;
+    /// The account's "Give me more time" setting (`$XDG_CONFIG_HOME/wol/timeouts`). The real
+    /// environment opens the file without following a link or waiting on a pipe, so a FIFO put
+    /// there cannot hang `wol`; the fake reads it from its files.
+    fn patience(&self) -> shared::patience::Patience {
+        self.read_file(&self.config_home().join(shared::patience::FILE))
+            .map_or(shared::patience::Patience::Normal, |t| {
+                shared::patience::Patience::parse(&t)
+            })
+    }
+    /// Whether something is at `p` (a file that exists but cannot be read is not absent).
+    fn file_exists(&self, p: &Path) -> bool {
+        std::fs::symlink_metadata(p).is_ok()
+    }
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value>;
     fn now_secs(&self) -> u64;
+    /// One TLS handshake with `host:443` through WolOS's own Rust stack (`wol doctor tls`).
+    fn tls_probe(&mut self, host: &str) -> Result<wol_core::net::Negotiated, String> {
+        wol_core::net::probe(host, TLS_PROBE_WAIT)
+    }
     fn config_home(&self) -> PathBuf;
     /// Like `exec`, but the child gets no stdin and its stdout goes to our stderr (`wol mcp`:
     /// stdout carries the protocol).
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
+        self.exec(argv)
+    }
+    /// Starts argv and does not wait for what it opens: no stdin, stdout or stderr shared with
+    /// us, its own process group, and the launcher itself is waited for only briefly (`wol open`
+    /// returns once the app is asked for; QA-PLUG-23: it held the caller's pipes until the app
+    /// quit, which blocked `su -l bob -c 'wol open ...'` for minutes).
+    fn exec_detached(&mut self, argv: &[String]) -> io::Result<i32> {
         self.exec(argv)
     }
     /// Run argv with no stdin and stdout captured; (exit status, stdout). Unlike `capture`, a
@@ -88,11 +114,41 @@ pub trait Env {
     }
     /// One raw line from stdin; None at end of input (`wol mcp`).
     fn read_line(&mut self) -> Option<String> {
-        let mut l = String::new();
-        match io::stdin().read_line(&mut l) {
-            Ok(0) | Err(_) => None,
-            Ok(_) => Some(l),
+        // At most MAX_LINE bytes are kept (QA-PLUG-59): the rest of a longer line is read and
+        // dropped, and the caller gets the TOO_LONG marker instead of 3 MB of text.
+        use std::io::BufRead;
+        let stdin = io::stdin();
+        let mut stdin = stdin.lock();
+        let mut l: Vec<u8> = Vec::new();
+        let mut too_long = false;
+        loop {
+            let (used, done) = match stdin.fill_buf() {
+                Ok([]) | Err(_) => break,
+                Ok(buf) => {
+                    let (chunk, done) = match buf.iter().position(|b| *b == b'\n') {
+                        Some(i) => (&buf[..=i], true),
+                        None => (buf, false),
+                    };
+                    if l.len() + chunk.len() > crate::mcp::MAX_LINE {
+                        too_long = true;
+                    } else if !too_long {
+                        l.extend_from_slice(chunk);
+                    }
+                    (chunk.len(), done)
+                }
+            };
+            stdin.consume(used);
+            if done {
+                break;
+            }
         }
+        if too_long {
+            return Some(crate::mcp::TOO_LONG.to_owned());
+        }
+        if l.is_empty() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&l).into_owned())
     }
     /// Server latency probe in ms (`wol mirror rank`); shareable across threads.
     fn prober(&self) -> Prober {
@@ -170,9 +226,17 @@ pub trait Env {
         wol_core::theme::apps::data_home(|k| self.var(k))
             .unwrap_or_else(|| self.home().join(".local/share"))
     }
-    /// Who acts (journal, audit log): `cli`, `script:<WOL_HELPER>`, `mcp:<client>`.
-    fn actor(&self) -> String {
+    /// The helper name this process acts under, if any (QA-PLUG-6): `WOL_HELPER`, else
+    /// [`AGENT_HELPER`] when the environment says an assistant's shell started it
+    /// (`CLAUDECODE=1`, which Claude Code sets for its Bash tool). A person's own shell has
+    /// neither, and is `cli`.
+    fn helper_name(&self) -> Option<String> {
         self.var("WOL_HELPER")
+            .or_else(|| (self.var(AGENT_ENV).as_deref() == Some("1")).then(|| AGENT_HELPER.into()))
+    }
+    /// Who acts (journal, audit log): `cli`, `script:<helper name>`, `mcp:<client>`.
+    fn actor(&self) -> String {
+        self.helper_name()
             .map_or_else(|| "cli".into(), |h| format!("script:{h}"))
     }
 }
@@ -256,8 +320,16 @@ pub fn execute(inv: &Invocation, env: &mut dyn Env) -> i32 {
         return 0;
     }
     // A named script is a helper: policy + audit log (docs/modules/automation.md).
-    if let (Some(name), Some(rule)) = (env.var("WOL_HELPER"), crate::catalog::rule_of(inv)) {
-        return crate::verbs::as_script(inv, env, &name, rule);
+    // A verb that is not a helper verb is for people: under a helper name it is refused, not run
+    // (fail closed; `plugin allow-host`, `plugin enable` and the like are never a helper's).
+    if let Some(name) = env.helper_name() {
+        match crate::catalog::rule_of(inv) {
+            Some(rule) => return crate::verbs::as_script(inv, env, &name, rule),
+            None if !HELPER_OPEN.contains(&inv.action) => {
+                return crate::verbs::refuse_people_verb(inv, env, &name);
+            }
+            None => {}
+        }
     }
     dispatch(inv, env)
 }
@@ -272,7 +344,22 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
             } else {
                 inv.all("command").iter().map(|s| s.to_string()).collect()
             };
+            // Words that are no command are a question: the commands and manual sections that
+            // mean it (docs/modules/search.md), on the device.
+            if !path.is_empty() && !crate::helpfind::names_a_command(&path) {
+                let found = crate::helpfind::find(&path, wolsem::installed());
+                env.out(&crate::helpfind::text(&path, &found));
+                return if found.is_empty() {
+                    ErrorCode::NotFound.exit()
+                } else {
+                    0
+                };
+            }
             env.out(&help(&path));
+            0
+        }
+        "version" => {
+            env.out(&format!("wol {}\n", env!("CARGO_PKG_VERSION")));
             0
         }
         "about" => topic(env, "about", json),
@@ -309,6 +396,7 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "shell.call" | "shell.status" => shell_ask(env, inv, json),
         "update.check" => update_check(env, json),
         "update.status" => update_status(env, json),
+        "update.channel" => update_channel(env, json),
         "base.verify" => base_verify(env, json),
         "update.plan" | "update.apply" => update(env, inv),
         "update.chroot" => update_chroot(env, inv),
@@ -329,13 +417,14 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "seal.apply" => crate::seal::apply(env, inv),
         "seal.check" => crate::seal::check(env),
         "seal.off" => crate::pkg::seal_off(env),
+        "layers.list" => crate::pkg::list(env, inv),
         "layers.fold" => crate::pkg::fold(env, inv),
         "layers.clear" => crate::pkg::clear(env),
         "pkg" => crate::pkg::pkg_verb(env, inv),
         "hint" => crate::hint::run(env, inv),
         "install.info" | "install.probe" | "install.check" | "install.layout"
-        | "install.settings" | "install.account" | "install.facts" | "install.mounts"
-        | "install.hostname" => crate::install::verb(env, inv),
+        | "install.settings" | "install.locales" | "install.account" | "install.facts"
+        | "install.mounts" | "install.hostname" => crate::install::verb(env, inv),
         "encrypt.decide" => crate::seal::decide(env, inv),
         "encrypt.enroll" => crate::seal::enroll(env, inv),
         "encrypt.words" => crate::seal::words(env, inv),
@@ -344,11 +433,22 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "mirror.status" | "mirror.rank" | "mirror.gate" | "mirror.kernel" => {
             crate::mirror::run(env, inv.action, inv.flag("yes"), json)
         }
+        "keyring" => {
+            let mut argv = vec![KEYRING_BIN.to_string()];
+            argv.extend(inv.get("verb").map(String::from));
+            argv.extend(inv.all("args").iter().map(|s| s.to_string()));
+            if inv.flag("passphrase") {
+                argv.push("--passphrase".into());
+            }
+            exec(env, &argv)
+        }
         "gpu.env" => exec(env, &[GPU_BIN.into(), "gpu".into(), "env".into()]),
         "gpu.hyprconf" => exec(env, &[GPU_BIN.into(), "gpu".into(), "hyprconf".into()]),
         "hw.list" | "hw.status" | "hw.fix" | "hw.boot" | "hw.online" | "hw.compute"
         | "hw.report" => crate::hw::execute(inv, env),
-        "audio.doctor" | "audio.reset" | "audio.appmix" => crate::audio_doctor::execute(inv, env),
+        "audio.doctor" | "audio.reset" | "audio.appmix" | "audio.profile" => {
+            crate::audio_doctor::execute(inv, env)
+        }
         "doctor.check" | "doctor.fix" => crate::doctor::execute(inv, env),
         a if a.starts_with("games.") => crate::games::execute(inv, env),
         a if a.starts_with("modules.") => crate::modules::execute(inv, env),
@@ -365,6 +465,13 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         | "package.updates" => crate::packages::execute(inv, env),
         "widgets.list" | "widgets.add" | "widgets.remove" | "widgets.reload"
         | "widgets.validate" => crate::widgets::execute(inv, env),
+        "network.ip" => crate::netverbs::execute(inv, env),
+        a if ["vpn.", "proxy.", "dns.", "airplane."]
+            .iter()
+            .any(|p| a.starts_with(p)) =>
+        {
+            crate::netverbs::execute(inv, env)
+        }
         other => crate::verbs::execute(inv, env)
             .unwrap_or_else(|| fail(env, ErrorCode::Failed, &format!("no handler for {other}"))),
     }
@@ -507,6 +614,18 @@ fn admin(env: &mut dyn Env, inv: &Invocation) -> i32 {
 
 /// One wol-admind request; asks for the password on stdin while it answers `auth`/`denied`.
 pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
+    admin_send_said(env, req, &mut String::new())
+}
+
+/// [`admin_send`], and the sentence it printed for the person when the request did not go through
+/// is also put in `said_out` (the Doctor's report carries it: a fix that fails says why, never
+/// only an exit status).
+pub(crate) fn admin_send_said(env: &mut dyn Env, req: &AdminRequest, said_out: &mut String) -> i32 {
+    // The message goes to stderr as `wol: <msg>` and into `said_out`.
+    fn stop(env: &mut dyn Env, said_out: &mut String, code: ErrorCode, msg: &str) -> i32 {
+        *said_out = msg.to_string();
+        fail(env, code, msg)
+    }
     let sock = admin_socket(env);
     let mut password: Vec<u8> = Vec::new(); // empty = use cached authorization
     for attempt in 0..=PASSWORD_TRIES {
@@ -524,15 +643,17 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                     io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
                 ) =>
             {
-                return fail(
+                return stop(
                     env,
+                    said_out,
                     ErrorCode::Failed,
                     "wol-admind is still working on it; check again later",
                 );
             }
             Err(_) => {
-                return fail(
+                return stop(
                     env,
+                    said_out,
                     ErrorCode::Unavailable,
                     "administrator service unavailable (wol-admind)",
                 );
@@ -542,6 +663,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
             AdminReply::NeedsAuth | AdminReply::Denied => {
                 if reply == AdminReply::Denied {
                     env.err("wol admin: incorrect password\n");
+                    *said_out = "incorrect password".to_string();
                 }
                 // The last try does not ask for a password nobody will check (S4-18).
                 if attempt == PASSWORD_TRIES {
@@ -549,7 +671,7 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 }
                 match env.read_password() {
                     Some(p) if !p.is_empty() => password = p.into_bytes(),
-                    _ => return fail(env, ErrorCode::Denied, reply.message()),
+                    _ => return stop(env, said_out, ErrorCode::Denied, reply.message()),
                 }
             }
             AdminReply::Ok => return 0,
@@ -557,11 +679,17 @@ pub(crate) fn admin_send(env: &mut dyn Env, req: &AdminRequest) -> i32 {
                 // wol-admind's own sentence when it gave one (the program's last line, QA-100 LIVE3-19).
                 let why = said.as_deref().unwrap_or_else(|| r.message());
                 env.err(&format!("wol admin: {why}\n"));
+                *said_out = why.to_string();
                 return admin_exit(r);
             }
         }
     }
-    fail(env, ErrorCode::Denied, AdminReply::Denied.message())
+    stop(
+        env,
+        said_out,
+        ErrorCode::Denied,
+        AdminReply::Denied.message(),
+    )
 }
 
 fn bundle_plan(env: &mut dyn Env, bundle: &str, json: bool) -> i32 {
@@ -645,7 +773,8 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
         }
         "theme.list" => {
             let list = catalog.list();
-            if json {
+            // Piped, a list is JSON (QA-PWR-16: a script got the text table).
+            if json || !env.stdout_tty() {
                 let v: Vec<_> = list.iter().map(|t| serde_json::json!({"id": t.id, "name": t.name, "variant": t.variant.name()})).collect();
                 env.out(&format!("{}\n", serde_json::Value::from(v)));
             } else {
@@ -963,6 +1092,8 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
 
 /// How long `pacman -Qu` may take before `wol update check` stops waiting for it.
 const PACMAN_QU_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long one TLS handshake of `wol doctor tls` may take before the row says it did not answer.
+const TLS_PROBE_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Run `argv` with stdin closed: (exit status, stdout, stderr). `wol_core::system::KILLED` when a signal ended it;
 /// None when it cannot start or does not finish within `timeout` (it is killed): a hung
@@ -1114,6 +1245,10 @@ fn running_base(env: &mut dyn Env) -> (Option<String>, String, bool) {
     (base, kernel, wolos)
 }
 
+/// Findings `wol base verify` prints as text and in `--json`; the totals are always complete.
+const BASE_FINDINGS_TEXT: usize = 20;
+const BASE_FINDINGS_JSON: usize = 500;
+
 /// `wol base verify`: every file of the wolos-base manifest against its sha256. `WOL_ROOT`
 /// checks another root (an installed disk).
 fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
@@ -1131,16 +1266,40 @@ fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
     };
     let findings =
         wol_core::base::verify(&entries, &|p| wol_core::package::sha256_file(&at(p)).ok());
+    // QA-LIVE3-25: 28 000 findings were 1.25 MB on one line. The count of each kind is always
+    // there; the lines are the first few.
+    let total = findings.len();
+    let count = |state: &str| findings.iter().filter(|f| f.state == state).count();
     if json || !env.stdout_tty() {
         env.out(&format!(
             "{}\n",
-            serde_json::json!({"files": entries.len(), "findings": findings})
+            serde_json::json!({
+                "files": entries.len(),
+                "findings": findings.iter().take(BASE_FINDINGS_JSON).collect::<Vec<_>>(),
+                "findings_total": total,
+                "changed": count("changed"),
+                "missing": count("missing"),
+                "truncated": total > BASE_FINDINGS_JSON,
+            })
         ));
     } else if findings.is_empty() {
         env.out(&format!("{} base files intact\n", entries.len()));
     } else {
-        for f in &findings {
+        env.out(&format!(
+            "{} of {} base files differ: {} changed, {} missing\n",
+            total,
+            entries.len(),
+            count("changed"),
+            count("missing")
+        ));
+        for f in findings.iter().take(BASE_FINDINGS_TEXT) {
             env.out(&format!("{} {}\n", f.state, f.path));
+        }
+        if total > BASE_FINDINGS_TEXT {
+            env.out(&format!(
+                "... and {} more; `wol base verify --json` lists up to {BASE_FINDINGS_JSON}\n",
+                total - BASE_FINDINGS_TEXT
+            ));
         }
     }
     if findings.is_empty() {
@@ -1159,7 +1318,7 @@ fn update_interrupted(env: &mut dyn Env) -> Option<String> {
     up::interrupted(Some(&mark), env.lock_held(Path::new(up::LOCK))).map(str::to_owned)
 }
 
-/// `wol update status`: null / "not checked yet" before the first check.
+/// `wol update status`: `{"checked":null,..}` / "not checked yet" before the first check.
 fn update_status(env: &mut dyn Env, json: bool) -> i32 {
     let u = update_snapshot(env);
     let (base, kernel, wolos) = running_base(env);
@@ -1175,7 +1334,16 @@ fn update_status(env: &mut dyn Env, json: bool) -> i32 {
             v["kernel_is_wolos"] = wolos.into();
             v
         });
-        env.out(&format!("{}\n", v.unwrap_or_default()));
+        // No check yet is an object, not `null`: a script can read `checked` either way.
+        let none = serde_json::json!({
+            "checked": null,
+            "count": 0,
+            "interrupted": interrupted,
+            "base_version": base,
+            "kernel": kernel,
+            "kernel_is_wolos": wolos,
+        });
+        env.out(&format!("{}\n", v.unwrap_or(none)));
         return 0;
     }
     if interrupted.is_some() {
@@ -1289,6 +1457,35 @@ fn update_chroot(env: &mut dyn Env, inv: &Invocation) -> i32 {
     env.exec(&a).unwrap_or(127)
 }
 
+/// `wol update channel`: the channel this computer follows (`/etc/wolos/channel`, read as one
+/// this release offers: stable in 0.13; QA-STORE-9/68), and the ones it could follow.
+fn update_channel(env: &mut dyn Env, json: bool) -> i32 {
+    let text = env.read_file(Path::new(wol_core::admin::CHANNEL_FILE));
+    let ch = shared::packages::channel_of(text.as_deref());
+    if json {
+        emit_json(
+            env,
+            &serde_json::json!({ "channel": ch, "offered": shared::packages::OFFERED }),
+        );
+    } else {
+        env.out(&format!("{ch}\n"));
+    }
+    0
+}
+
+/// One step of `wol update plan` as it reads: an empty argument shows as `''` (QA-STORE-76:
+/// the plan ended in a bare `bootctl set-default `).
+fn plan_line(s: &wol_core::update::Step) -> String {
+    match s {
+        wol_core::update::Step::Run(a) => a
+            .iter()
+            .map(|x| if x.is_empty() { "''" } else { x.as_str() })
+            .collect::<Vec<_>>()
+            .join(" "),
+        w => w.to_string(),
+    }
+}
+
 /// The program a failed step ran, for the one line that says where it stopped.
 fn step_name(s: &wol_core::update::Step) -> String {
     match s {
@@ -1356,7 +1553,12 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
         );
     };
     if inv.action == "update.plan" {
-        env.out(&steps.iter().map(|s| format!("{s}\n")).collect::<String>());
+        env.out(
+            &steps
+                .iter()
+                .map(|s| format!("{}\n", plan_line(s)))
+                .collect::<String>(),
+        );
         return 0;
     }
     if !inv.flag("yes") {
@@ -1431,8 +1633,43 @@ fn update(env: &mut dyn Env, inv: &Invocation) -> i32 {
     0
 }
 
+/// Verbs a helper may run although they are not helper verbs: they only describe `wol` (`help`,
+/// `api`) or are the server an assistant starts (`mcp`, which gates each tool call itself).
+const HELPER_OPEN: [&str; 3] = ["help", "api", "mcp"];
+
+/// The variable Claude Code sets in the shell its Bash tool starts: such a `wol` is an assistant's.
+pub const AGENT_ENV: &str = "CLAUDECODE";
+/// The helper name an assistant's shell acts under (policy, sheet and audit log).
+pub const AGENT_HELPER: &str = "claude-code";
+
 /// Real side effects.
 pub struct RealEnv;
+
+/// How long `wol open` waits for the launcher to say it started the app, and how often it looks.
+const LAUNCH_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+const LAUNCH_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How often a wait on a socket looks whether the pinned client is still there.
+const CLIENT_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+/// Why a wait ended early: the program that started `wol mcp` is gone (QA-PLUG-62).
+pub const CLIENT_GONE: &str = "the program that asked is gone";
+/// The parent pid `wol mcp` was started by (0 = not pinned).
+static CLIENT_PARENT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// `wol mcp`: remember the program that started this process, so a wait for an on-screen answer
+/// ends once it is gone (its sheet then closes, and nothing runs for nobody).
+pub fn pin_client() {
+    CLIENT_PARENT.store(
+        std::os::unix::process::parent_id(),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// True when [`pin_client`] ran and this process has a different parent now (the client exited
+/// and the process was handed to init or a subreaper).
+pub fn client_gone() -> bool {
+    let p = CLIENT_PARENT.load(std::sync::atomic::Ordering::Relaxed);
+    p != 0 && std::os::unix::process::parent_id() != p
+}
 
 const KEYCTL_SEARCH: libc::c_long = 10;
 const KEYCTL_READ: libc::c_long = 11;
@@ -1489,12 +1726,40 @@ impl Env for RealEnv {
         } else {
             std::os::unix::net::UnixStream::connect(socket)?
         };
-        s.set_read_timeout(Some(std::time::Duration::from_secs(secs.into())))?;
         s.write_all(req)?;
         s.shutdown(std::net::Shutdown::Write)?;
-        let mut out = String::new();
-        s.read_to_string(&mut out)?;
-        Ok(out)
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs.into());
+        let mut out = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            // A short read timeout, so a pinned client that went away is noticed while waiting
+            // (QA-PLUG-62); dropping `s` then closes the request on the other side.
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Err(io::Error::from(io::ErrorKind::TimedOut));
+            }
+            s.set_read_timeout(Some(left.min(CLIENT_POLL)))?;
+            match s.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => out.extend_from_slice(&buf[..n]),
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    if client_gone() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::ConnectionAborted,
+                            CLIENT_GONE,
+                        ));
+                    }
+                }
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e),
+            }
+        }
+        String::from_utf8(out).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))
     }
     fn exec(&mut self, argv: &[String]) -> io::Result<i32> {
         let st = std::process::Command::new(&argv[0])
@@ -1544,6 +1809,28 @@ impl Env for RealEnv {
             unsafe { libc::syscall(libc::SYS_keyctl, KEYCTL_INVALIDATE, id) };
         }
     }
+    fn exec_detached(&mut self, argv: &[String]) -> io::Result<i32> {
+        use std::os::unix::process::CommandExt;
+        use std::process::Stdio;
+        let mut child = std::process::Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()?;
+        let until = std::time::Instant::now() + LAUNCH_WAIT;
+        loop {
+            if let Some(st) = child.try_wait()? {
+                return Ok(st.code().unwrap_or(1));
+            }
+            if std::time::Instant::now() >= until {
+                // Still running: the launcher is the app (xdg-open handing a file to its viewer).
+                return Ok(0);
+            }
+            std::thread::sleep(LAUNCH_POLL);
+        }
+    }
     fn exec_quiet(&mut self, argv: &[String]) -> io::Result<i32> {
         use std::os::fd::AsFd;
         let stderr = io::stderr().as_fd().try_clone_to_owned()?;
@@ -1584,6 +1871,17 @@ impl Env for RealEnv {
     }
     fn read_file(&self, p: &Path) -> Option<String> {
         std::fs::read_to_string(p).ok()
+    }
+    fn patience(&self) -> shared::patience::Patience {
+        use std::os::unix::fs::MetadataExt;
+        // The owner of /proc/self is the process's effective user: the file must be that account's.
+        let Ok(me) = std::fs::metadata("/proc/self") else {
+            return shared::patience::Patience::Normal;
+        };
+        shared::patience::Patience::read_owned(
+            &self.config_home().join(shared::patience::FILE),
+            me.uid(),
+        )
     }
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value> {
         wol_core::system::SystemApi::default_host().topic_json(topic)
@@ -1643,8 +1941,13 @@ pub struct FakeEnv {
     /// Per-command `capture_status` answers: (`argv joined by spaces`, exit status, stderr);
     /// stdout is the `captures` entry. Else `capture`'s answer with status 0.
     pub statuses: Vec<(String, i32, String)>,
+    /// `tls_probe` answers per host; a host not listed answers TLS 1.3 with X25519MLKEM768.
+    pub tls_probes: Vec<(String, Result<wol_core::net::Negotiated, String>)>,
     /// Lock files held through `try_lock` (share one between two fakes to interleave runs).
     pub locks: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
+    /// Commands (`argv joined by spaces`) whose `capture` panics: a check that crashes, to prove
+    /// the Doctor still reports (the other areas, and this one as a failed row).
+    pub crash: Vec<String>,
 }
 
 /// A [`FakeEnv`] lock: gone from the shared list when dropped.
@@ -1757,9 +2060,22 @@ impl Env for FakeEnv {
         self.captured_argvs
             .push(argv.iter().map(|a| (*a).to_owned()).collect());
         let line = argv.join(" ");
+        if self.crash.contains(&line) {
+            panic!("FakeEnv: {line} crashed");
+        }
         match self.captures.iter().find(|c| c.0 == line) {
             Some(c) => Some(c.1.clone()),
             None => self.captured.clone(),
+        }
+    }
+    fn tls_probe(&mut self, host: &str) -> Result<wol_core::net::Negotiated, String> {
+        match self.tls_probes.iter().find(|(h, _)| h == host) {
+            Some((_, r)) => r.clone(),
+            None => Ok(wol_core::net::Negotiated {
+                version: "TLSv1.3".into(),
+                group: wol_core::net::HYBRID.into(),
+                cipher: "TLS13_AES_256_GCM_SHA384".into(),
+            }),
         }
     }
     fn capture_status(&mut self, argv: &[&str]) -> Option<(i32, String, String)> {
@@ -1767,12 +2083,12 @@ impl Env for FakeEnv {
         let Some((_, code, err)) = self.statuses.iter().find(|s| s.0 == line).cloned() else {
             return self.capture(argv).map(|o| (0, o, String::new()));
         };
-        // The fake's scripted output for this line; none scripted is an empty one.
-        let out = match self.capture(argv) {
-            Some(o) => o,
-            None => String::new(),
-        };
-        Some((code, out, err))
+        // The fake's scripted output for this line; none scripted is an empty one (a fake has no
+        // failure to give a reason for).
+        match self.capture(argv) {
+            Some(out) => Some((code, out, err)),
+            None => Some((code, String::new(), err)),
+        }
     }
     fn stdin_line(&mut self) -> Option<String> {
         (!self.stdin.is_empty()).then(|| self.stdin.remove(0))
@@ -1792,6 +2108,12 @@ impl Env for FakeEnv {
         v.sort();
         v.dedup();
         v
+    }
+    fn file_exists(&self, p: &Path) -> bool {
+        self.files.iter().any(|f| f.0 == p)
+            || (!self.home.as_os_str().is_empty()
+                && p.starts_with(&self.home)
+                && std::fs::symlink_metadata(p).is_ok())
     }
     /// Fake files first, then real files under `home` (tests use a temp home).
     fn read_file(&self, p: &Path) -> Option<String> {

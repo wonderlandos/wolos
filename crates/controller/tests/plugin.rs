@@ -143,7 +143,8 @@ fn new_check_run_enable_pack_remove_round_trip() {
         run("plugin run nope menubar", &mut e),
         ErrorCode::NotFound.exit()
     );
-    assert!(e.err.contains("wol plugin new nope"), "{}", e.err);
+    // "nope" is no id (`new` would refuse it), so it is not told to start one (QA-PLUG-72).
+    assert!(e.err.contains("not a plugin folder"), "{}", e.err);
 
     // On, off, list.
     assert_eq!(run("plugin list --json", &mut e), 0);
@@ -187,11 +188,16 @@ fn new_check_run_enable_pack_remove_round_trip() {
         ErrorCode::NotFound.exit()
     );
 
-    // Pack: a tar next to the folder, then zstd.
+    // Pack: a tar in the working folder, then zstd. QA-PLUG-11: never into the hidden plugin
+    // folder (where it sat beside the plugins): the working folder, else the home folder.
+    let work = e.home.join("work");
+    std::fs::create_dir_all(&work).unwrap();
+    e.vars.push(("PWD".into(), work.to_string_lossy().into()));
     assert_eq!(run("plugin pack alice.demo --json", &mut e), 0, "{}", e.err);
     let r = json(&e);
     let file = PathBuf::from(r["file"].as_str().unwrap());
-    assert_eq!(file, plugin_dir(&e, "alice.demo-0.1.wolplug"));
+    assert_eq!(file, work.join("alice.demo-0.1.wolplug"));
+    assert!(!plugin_dir(&e, "alice.demo-0.1.wolplug").exists());
     assert_eq!(r["signed"], false);
     let zstd = e.execs.iter().find(|a| a[0] == "zstd").expect("zstd ran");
     let tar = PathBuf::from(&zstd[7]);
@@ -277,6 +283,14 @@ fn new_check_run_enable_pack_remove_round_trip() {
 
     // Remove: folder and state gone, nothing enabled.
     assert_eq!(run("plugin remove alice.demo", &mut e), 0, "{}", e.err);
+    // QA-PLUG-37: no TTY, so the answer is JSON.
+    assert_eq!(json(&e)["id"], "alice.demo", "{}", e.out);
+    assert!(
+        json(&e)["removed"]
+            .as_str()
+            .unwrap()
+            .ends_with("alice.demo")
+    );
     assert!(!dir.exists());
     assert!(!state.exists());
     assert_eq!(
@@ -307,15 +321,14 @@ fn new_refuses_bad_ids_and_kinds() {
 fn every_scaffold_entry_runs() {
     let mut e = env("kinds");
     assert_eq!(
-        run(
-            "plugin new alice.all menubar,widget,panel,search --json",
-            &mut e
-        ),
+        run("plugin new alice.all menubar,widget --json", &mut e),
         0,
         "{}",
         e.out
     );
-    for (kind, entry) in [("menubar", "bar"), ("widget", "card"), ("panel", "panel")] {
+    // `[[panel]]` and `[[search]]` are planned (QA-PLUG-4): not scaffolded (the Lua side of
+    // both stays covered by wol-lua's tests).
+    for (kind, entry) in [("menubar", "bar"), ("widget", "card")] {
         assert_eq!(
             run(&format!("plugin run alice.all {kind} {entry}"), &mut e),
             0,
@@ -324,21 +337,6 @@ fn every_scaffold_entry_runs() {
         );
         assert!(json(&e)["node"].is_object(), "{kind}");
     }
-    assert_eq!(
-        run("plugin run alice.all search search hello", &mut e),
-        0,
-        "{}",
-        e.out
-    );
-    let r = json(&e);
-    assert_eq!(r["hits"][0]["title"], "Echo: hello");
-    assert_eq!(
-        run("plugin run alice.all panel panel 1", &mut e),
-        0,
-        "{}",
-        e.out
-    );
-    assert_eq!(json(&e)["clicked"], 1);
     let _ = std::fs::remove_dir_all(&e.home);
 }
 
@@ -468,7 +466,7 @@ fn check_runs_nothing_and_writes_nothing() {
 #[test]
 fn new_refuses_planned_kinds() {
     let mut e = env("planned");
-    for k in ["look", "hypr"] {
+    for k in ["look", "hypr", "panel", "search"] {
         assert_eq!(
             run(&format!("plugin new alice.p {k}"), &mut e),
             ErrorCode::Usage.exit()
@@ -565,4 +563,480 @@ fn add_installs_and_webapps_follow_enable() {
     }
     let _ = std::fs::remove_dir_all(&e.home);
     let _ = std::fs::remove_dir_all(&maker.home);
+}
+
+/// QA-PLUG-2: `wol plugin run` of a render that waits on `wol.run` gets the command's own answer
+/// (here its timeout sentence after 3 s, more than the shell's 2 s service credit), not "took too long", and the run succeeds.
+#[test]
+fn run_waits_on_services_without_took_too_long() {
+    let mut e = env("slowrun");
+    assert_eq!(
+        run("plugin new alice.slow menubar --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    let dir = plugin_dir(&e, "alice.slow");
+    let toml = std::fs::read_to_string(dir.join("plugin.toml")).unwrap();
+    let toml = if toml.contains("permissions = []") {
+        toml.replace("permissions = []", "permissions = [\"run\"]")
+    } else {
+        toml.replacen("[[menubar]]", "permissions = [\"run\"]\n\n[[menubar]]", 1)
+    };
+    std::fs::write(dir.join("plugin.toml"), toml).unwrap();
+    std::fs::write(
+        dir.join("bar.lua"),
+        "return wol.menubar { render = function()\n  \
+         local ok, out = wol.run { 'sleep', '6', timeout = 3 }\n  \
+         local n = 0 for i = 1, 20000 do n = n + i end\n  \
+         return wol.label { tostring(ok) .. ' ' .. tostring(out) }\nend }\n",
+    )
+    .unwrap();
+    let code = run("plugin run alice.slow menubar bar", &mut e);
+    assert_eq!(code, 0, "{}{}", e.out, e.err);
+    let r = json(&e);
+    let text = r["node"].to_string();
+    assert!(text.contains("false"), "{text}");
+    assert!(!text.contains("too long"), "{text}");
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-63: `wol plugin list` names why a plugin the shell turned off is off, and turning it
+/// on again clears the reason.
+#[test]
+fn list_names_why_a_plugin_was_turned_off() {
+    let mut e = env("turnedoff");
+    assert_eq!(
+        run("plugin new alice.crash menubar --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    assert_eq!(
+        run("plugin enable alice.crash --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    let state = e.home.join("state");
+    let why = "alice.crash was turned off after 3 failures in a row: boom";
+    // What the shell does on the third failure: off, and the reason kept.
+    assert_eq!(
+        run("plugin disable alice.crash --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    wol_core::plugins::note_turned_off(&state, "alice.crash", why).unwrap();
+    assert_eq!(run("plugin list --json", &mut e), 0, "{}", e.err);
+    let r = json(&e);
+    let p = r["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "alice.crash")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        (p["enabled"].clone(), p["problem"].clone()),
+        (Value::Bool(false), Value::String(why.into())),
+        "{p}"
+    );
+    assert_eq!(
+        run("plugin enable alice.crash --json", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    assert_eq!(wol_core::plugins::turned_off(&state, "alice.crash"), None);
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-70: `enable` runs the check `wol plugin check` runs: a plugin whose script fails is
+/// not turned on (it used to be "on", then the shell failed it three times and turned it off).
+#[test]
+fn enable_runs_check() {
+    let mut e = env("enablecheck");
+    assert_eq!(
+        run("plugin new alice.crash menubar --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    let dir = plugin_dir(&e, "alice.crash");
+    std::fs::write(
+        dir.join("bar.lua"),
+        "return wol.menubar { render = function() error('boom') end }\n",
+    )
+    .unwrap();
+    assert_eq!(
+        run("plugin enable alice.crash", &mut e),
+        ErrorCode::Invalid.exit(),
+        "{}",
+        e.out
+    );
+    assert!(
+        e.err.contains("boom") && e.err.contains("not turned on"),
+        "{}",
+        e.err
+    );
+    assert!(!wol_core::plugins::load_enabled(&e.home).is_enabled("alice.crash"));
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-67: `enable` says what it grants, `run` by name, on a terminal and in JSON.
+#[test]
+fn enable_lists_grants() {
+    let mut e = env("grants");
+    assert_eq!(
+        run("plugin new alice.dk dock --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    // The Dock scaffold runs `foot`: it asks for `run`.
+    assert_eq!(run("plugin enable alice.dk --json", &mut e), 0, "{}", e.err);
+    assert_eq!(json(&e)["granted"], serde_json::json!(["run"]));
+    // On a terminal: the sentence.
+    e.tty = true;
+    assert_eq!(run("plugin enable alice.dk", &mut e), 0, "{}", e.err);
+    assert!(e.out.contains("Granted:"), "{}", e.out);
+    assert!(e.out.to_lowercase().contains("run"), "{}", e.out);
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-72: the not-found answer suggests `wol plugin new` only for an id; a path (MCP
+/// `plugin_check {path: "/etc"}`) is told it is not a plugin folder.
+#[test]
+fn not_found_sentence_only_for_id_shaped() {
+    let mut e = env("notfound");
+    for what in ["/etc", "../../../etc", "NotAnId"] {
+        assert_eq!(
+            run(&format!("plugin check {what}"), &mut e),
+            ErrorCode::NotFound.exit(),
+            "{what}"
+        );
+        assert!(!e.err.contains("wol plugin new"), "{what}: {}", e.err);
+    }
+    assert_eq!(
+        run("plugin check alice.nope", &mut e),
+        ErrorCode::NotFound.exit()
+    );
+    assert!(e.err.contains("wol plugin new alice.nope"), "{}", e.err);
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-19: `wol plugin add ./x.wolplug` installs (zstd ran in / and could not find the
+/// relative file, which read as "damaged"); a file that is not a package says so.
+#[test]
+fn add_reads_a_relative_file_and_names_junk() {
+    let mut e = env("addrel");
+    assert_eq!(
+        run("plugin new alice.rel menubar --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    let out = e.home.join("pkg");
+    std::fs::create_dir_all(&out).unwrap();
+    assert_eq!(
+        run(
+            &format!(
+                "plugin pack alice.rel {}/alice.rel.wolplug --json",
+                out.display()
+            ),
+            &mut e
+        ),
+        0,
+        "{}{}",
+        e.out,
+        e.err
+    );
+    // The fake env only records pack's zstd step: compress the tar it wrote here.
+    let tar = std::fs::read_dir(&out)
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let file = out.join("alice.rel.wolplug");
+    let st = std::process::Command::new("zstd")
+        .args(["-q", "-f", "-o"])
+        .arg(&file)
+        .arg(&tar)
+        .status()
+        .unwrap();
+    assert!(st.success());
+    std::fs::remove_dir_all(plugin_dir(&e, "alice.rel")).unwrap();
+    // The same file by a plain relative name in this test's working folder.
+    let rel = format!("wol-addrel-{}.wolplug", std::process::id());
+    std::fs::copy(&file, &rel).unwrap();
+    let code = run(&format!("plugin add {rel} --yes --json"), &mut e);
+    let _ = std::fs::remove_file(&rel);
+    assert_eq!(code, 0, "{}{}", e.out, e.err);
+    assert!(plugin_dir(&e, "alice.rel").join("plugin.toml").is_file());
+    let junk = e.home.join("junk.wolplug");
+    std::fs::write(&junk, vec![7u8; 4096]).unwrap();
+    assert_ne!(
+        run(&format!("plugin add {} --yes", junk.display()), &mut e),
+        0
+    );
+    assert!(e.err.contains("not a plugin package"), "{}", e.err);
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-22: a plugin that asks for a newer WolOS than this one says so in `check` and `list`.
+#[test]
+fn check_warns_when_min_wolos_is_newer() {
+    let mut e = env("minwolos");
+    e.files.push((
+        PathBuf::from("/usr/lib/wolos-release.json"),
+        r#"{"version":"0.12.1","snapshot":"2026/11/02"}"#.into(),
+    ));
+    assert_eq!(
+        run("plugin new alice.future menubar --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    let dir = plugin_dir(&e, "alice.future");
+    let toml = std::fs::read_to_string(dir.join("plugin.toml")).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        toml.replace("min_wolos = \"0.12\"", "min_wolos = \"9.0\""),
+    )
+    .unwrap();
+    assert_eq!(
+        run("plugin check alice.future --json", &mut e),
+        0,
+        "{}",
+        e.out
+    );
+    assert_eq!(json(&e)["needs_wolos"], "9.0");
+    e.tty = true;
+    assert_eq!(run("plugin check alice.future", &mut e), 0, "{}", e.out);
+    assert!(
+        e.out
+            .contains("Needs WolOS 9.0; this computer runs 0.12.1."),
+        "{}",
+        e.out
+    );
+    e.tty = false;
+    assert_eq!(run("plugin list --json", &mut e), 0);
+    let r = json(&e);
+    let p = r["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["id"] == "alice.future")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        p["problem"], "Needs WolOS 9.0; this computer runs 0.12.1.",
+        "{p}"
+    );
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-10: the first `wol.notify` of a fresh `wol plugin run` is allowed (0.12.1 answered
+/// "Too many notifications" on it), also next to an entry that loops forever.
+#[test]
+fn first_notify_of_a_fresh_run_is_allowed() {
+    let mut e = env("notify");
+    let dir = plugin_dir(&e, "bob.evil");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        "schema = 1\nid = \"bob.evil\"\nname = \"Evil\"\nversion = \"1\"\nlicense = \"MIT\"\n\
+         permissions = [\"notifications\"]\n[[widget]]\nid = \"loop\"\nscript = \"loop.lua\"\n\
+         [[widget]]\nid = \"n\"\nscript = \"n.lua\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("loop.lua"),
+        "return wol.widget { render = function() while true do end end }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("n.lua"),
+        "return wol.widget { render = function() local ok, m = wol.notify('a', 'b'); return wol.label { tostring(ok) .. tostring(m) } end }\n",
+    )
+    .unwrap();
+    for _ in 0..3 {
+        assert_eq!(
+            run("plugin run bob.evil widget n --json", &mut e),
+            0,
+            "{}{}",
+            e.out,
+            e.err
+        );
+        let r = json(&e);
+        assert!(r["node"].to_string().contains("truenil"), "{r}");
+    }
+    let _ = std::fs::remove_dir_all(&e.home);
+}
+
+/// QA-PLUG-36: the input of `plugin run` for a bar item or card is a part number; "abc" is
+/// refused with a sentence instead of being dropped without a word. QA-PLUG-46: a bad id gets
+/// the person's own account name as the example.
+#[test]
+fn run_input_must_be_a_number_and_a_bad_id_names_the_account() {
+    let mut e = env("input46");
+    assert_eq!(
+        run("plugin new alice.demo menubar,widget", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    let code = run("plugin run alice.demo widget card abc", &mut e);
+    assert_eq!(code, ErrorCode::Usage.exit(), "{}{}", e.out, e.err);
+    assert!(e.err.contains("\"abc\" is not a part number"), "{}", e.err);
+    assert_eq!(
+        run("plugin run alice.demo widget card 1", &mut e),
+        0,
+        "{}",
+        e.err
+    );
+    // A search script's input is the query text, any text.
+    // The account name is the example, lowercase, and the made-up tail follows the bad id.
+    e.vars.push(("USER".into(), "Bob".into()));
+    let code = run("plugin new BadId", &mut e);
+    assert_eq!(code, ErrorCode::Usage.exit());
+    assert!(e.err.contains("like \"bob.badid\""), "{}", e.err);
+    assert!(!e.err.contains("alice"), "{}", e.err);
+    e.vars.retain(|(k, _)| k != "USER");
+    run("plugin new Bad_Id", &mut e);
+    assert!(e.err.contains("like \"alice.bad-id\""), "{}", e.err);
+}
+
+/// QA-PLUG-40: `plugin list` says when plugins.json does not read (everything is off because of
+/// it), in text on stderr and in the JSON.
+#[test]
+fn list_names_an_unreadable_plugins_json() {
+    let mut e = env("badjson40");
+    assert_eq!(run("plugin new alice.demo menubar", &mut e), 0);
+    assert_eq!(run("plugin enable alice.demo", &mut e), 0, "{}", e.err);
+    let file = e.home.join("wolos/plugins.json");
+    std::fs::write(&file, "{ junk").unwrap();
+    assert_eq!(run("plugin list --json", &mut e), 0);
+    let j = json(&e);
+    assert!(
+        j["settings_problem"]
+            .as_str()
+            .unwrap()
+            .contains("plugins.json"),
+        "{j}"
+    );
+    assert_eq!(j["plugins"][0]["enabled"], false);
+    // Turning a plugin on again keeps the broken file beside the new one.
+    assert_eq!(run("plugin enable alice.demo", &mut e), 0, "{}", e.err);
+    assert_eq!(
+        std::fs::read_to_string(e.home.join("wolos/plugins.json.bad")).unwrap(),
+        "{ junk"
+    );
+    assert_eq!(run("plugin list --json", &mut e), 0);
+    assert!(json(&e)["settings_problem"].is_null());
+}
+
+/// QA-PLUG-12: the person allows a site for a turned-on plugin with `wol plugin allow-host`;
+/// `plugin run` then reads it (the refusal named the command), and a helper cannot.
+#[test]
+fn allow_host_lets_a_turned_on_plugin_read_one_site() {
+    let mut e = env("allowhost");
+    assert_eq!(run("plugin new alice.web menubar", &mut e), 0, "{}", e.err);
+    // Not on: nothing to allow.
+    let code = run("plugin allow-host alice.web api.example.invalid", &mut e);
+    assert_eq!(code, ErrorCode::NotFound.exit(), "{}", e.err);
+    assert!(e.err.contains("wol plugin enable alice.web"), "{}", e.err);
+    // On, but the manifest never asked for the web.
+    assert_eq!(run("plugin enable alice.web", &mut e), 0, "{}", e.err);
+    let code = run("plugin allow-host alice.web api.example.invalid", &mut e);
+    assert_eq!(code, ErrorCode::Invalid.exit(), "{}", e.err);
+    assert!(e.err.contains("web permission"), "{}", e.err);
+    // A plugin that asks for http.
+    let dir = plugin_dir(&e, "alice.web");
+    let toml = std::fs::read_to_string(dir.join("plugin.toml")).unwrap();
+    std::fs::write(
+        dir.join("plugin.toml"),
+        toml.replacen("min_wolos", "permissions = [\"http\"]\nmin_wolos", 1),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("bar.lua"),
+        "return wol.menubar { render = function()\n  \
+         local b, m = wol.http_get('https://api.example.invalid/x')\n  \
+         return wol.label { tostring(b) .. ' / ' .. tostring(m) }\nend }\n",
+    )
+    .unwrap();
+    assert_eq!(run("plugin enable alice.web", &mut e), 0, "{}", e.err);
+    // Nothing allowed yet: the run answers with the command that allows it.
+    assert_eq!(run("plugin run alice.web menubar", &mut e), 0, "{}", e.err);
+    let text = json(&e)["node"]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        text.contains("wol plugin allow-host alice.web api.example.invalid"),
+        "{text}"
+    );
+    assert_eq!(run("plugin allow-host alice.web --json", &mut e), 0);
+    assert_eq!(json(&e)["hosts"], serde_json::json!([]));
+    // Bad names are refused; a whole address is cut to its host.
+    for bad in ["a/b", "-x.com", "x@y.com", "a_b.com"] {
+        let code = run(&format!("plugin allow-host alice.web {bad}"), &mut e);
+        assert_eq!(code, ErrorCode::Usage.exit(), "{bad}: {}", e.err);
+    }
+    let code = run("plugin allow-host alice.web a..b", &mut e);
+    assert_eq!(code, ErrorCode::Usage.exit(), "{}", e.err);
+    assert_eq!(
+        run(
+            "plugin allow-host alice.web https://API.Example.invalid/path --json",
+            &mut e
+        ),
+        0,
+        "{}",
+        e.err
+    );
+    let j = json(&e);
+    assert_eq!(
+        j["hosts"],
+        serde_json::json!(["api.example.invalid"]),
+        "{j}"
+    );
+    assert_eq!(j["added"], "api.example.invalid");
+    // The run now gets past the grant (the web itself is not reached from a test: the sentence
+    // is no longer the grant's).
+    assert_eq!(run("plugin run alice.web menubar", &mut e), 0, "{}", e.err);
+    let text = json(&e)["node"]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(!text.contains("allow-host"), "{text}");
+    // It is a person's verb, not a helper's: under WOL_HELPER (a plugin's `wol.run`, a script, an
+    // assistant's shell) it is refused and logged, and nothing is written.
+    let before = std::fs::read_to_string(e.home.join("wolos/plugins.json")).unwrap();
+    for helper in [("WOL_HELPER", "alice.web"), ("CLAUDECODE", "1")] {
+        let mut h = env("allowhost-helper");
+        h.home = e.home.clone();
+        h.vars = e.vars.clone();
+        h.vars.push((helper.0.into(), helper.1.into()));
+        let code = run("plugin allow-host alice.web evil.example.invalid", &mut h);
+        assert_eq!(code, ErrorCode::Denied.exit(), "{helper:?}: {}", h.err);
+        assert!(h.err.contains("is for people"), "{}", h.err);
+        assert_eq!(
+            run("plugin enable alice.web", &mut h),
+            ErrorCode::Denied.exit()
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(e.home.join("wolos/plugins.json")).unwrap(),
+        before
+    );
+    assert!(controller::catalog::find_tool("plugin_allow_host").is_none());
+    assert!(
+        !controller::catalog::HELPER_VERBS
+            .iter()
+            .any(|v| v.path == ["plugin", "allow-host"])
+    );
+    let _ = std::fs::remove_dir_all(&e.home);
 }

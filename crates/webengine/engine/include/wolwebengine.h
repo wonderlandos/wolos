@@ -165,6 +165,12 @@ typedef intptr_t (*wwe_scheme_map_fn)(void *ctx, const uint8_t *url, size_t len,
  * 0 ok, -1 error (another scheme, no load). */
 int wwe_engine_set_scheme(wwe_engine *engine, const char *scheme, wwe_scheme_load_fn load,
                           wwe_scheme_map_fn map, void *ctx, char *err, size_t errlen);
+
+/* WWE_1.3: shows the frame the engine last painted into a window target (the rendering context's
+ * present). A wl_surface shows nothing until it is called. The host calls it after wwe_engine_spin
+ * whenever wwe_state.frames grew (crates/webengine/src/view.rs spin). Does nothing for a headless
+ * view. */
+void wwe_view_present(wwe_view *view);
 /* In a content process (argv: --content-process TOKEN): confines the process (it must still have a
  * single thread: call this first in main), then runs the content until the engine ends it; the host
  * then exits. A process that cannot be confined prints why on stderr and returns without running the content. */

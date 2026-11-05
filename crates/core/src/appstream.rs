@@ -76,6 +76,27 @@ pub fn by_id(xml: &str, id: &str) -> Option<Details> {
     component(xml, &format!("<id>{}</id>", escape(id)))
 }
 
+/// Ids of the apps Flathub verified (the developer proved they own the app id: a website or a
+/// forge account). Read from the catalogue's `flathub::verification::verified` custom value, in
+/// one pass over the text. `false` and missing both mean not verified.
+pub fn verified_ids(xml: &str) -> std::collections::HashSet<String> {
+    const KEY: &str = "key=\"flathub::verification::verified\">true<";
+    let mut out = std::collections::HashSet::new();
+    for (at, _) in xml.match_indices(KEY) {
+        // The component the value belongs to: the last one opened before it; its first <id>.
+        let Some(start) = xml[..at].rfind("<component") else {
+            continue;
+        };
+        let comp = &xml[start..at];
+        if let Some(i) = comp.find("<id>")
+            && let Some(j) = comp[i + 4..].find("</id>")
+        {
+            out.insert(unescape(&comp[i + 4..i + 4 + j]));
+        }
+    }
+    out
+}
+
 /// The component that `<pkgname>` names (Arch's catalogue).
 pub fn by_pkgname(xml: &str, pkg: &str) -> Option<Details> {
     component(xml, &format!("<pkgname>{}</pkgname>", escape(pkg)))

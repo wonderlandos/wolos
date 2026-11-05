@@ -103,6 +103,67 @@ pub trait Services {
     }
 }
 
+/// The host's [`Services`] as a script sees them: each call runs off the script's clock
+/// ([`Meter::off_clock`]), so a render that waits on `wol.run` or a state write is not stopped as
+/// "took too long" (QA-PLUG-2). Every load wraps the host's services in this before the sandbox
+/// exists, so no `wol.*` call can reach the host around it; `off_clock_wraps_every_service`
+/// checks that each [`Services`] method is forwarded here.
+pub(crate) struct OffClock {
+    inner: Rc<dyn Services>,
+    meter: Arc<Meter>,
+}
+
+impl OffClock {
+    pub(crate) fn wrap(inner: Rc<dyn Services>, meter: &Arc<Meter>) -> Rc<dyn Services> {
+        Rc::new(OffClock {
+            inner,
+            meter: meter.clone(),
+        })
+    }
+}
+
+impl Services for OffClock {
+    fn now(&self) -> Stamp {
+        self.meter.off_clock(|| self.inner.now())
+    }
+    fn system(&self) -> wol::system::Info {
+        self.meter.off_clock(|| self.inner.system())
+    }
+    fn notify(&self, title: &str, body: &str) -> Result<(), String> {
+        self.meter.off_clock(|| self.inner.notify(title, body))
+    }
+    fn run(&self, plugin: &str, argv: &[String], timeout_secs: u32) -> Result<String, String> {
+        self.meter
+            .off_clock(|| self.inner.run(plugin, argv, timeout_secs))
+    }
+    fn http_get(&self, plugin: &str, url: &str) -> Result<String, String> {
+        self.meter.off_clock(|| self.inner.http_get(plugin, url))
+    }
+    fn open(&self, plugin: &str, target: &str) -> Result<(), String> {
+        self.meter.off_clock(|| self.inner.open(plugin, target))
+    }
+    fn toggle_get(&self, plugin: &str, toggle: &str) -> bool {
+        self.meter
+            .off_clock(|| self.inner.toggle_get(plugin, toggle))
+    }
+    fn toggle_set(&self, plugin: &str, toggle: &str, on: bool) -> Result<(), String> {
+        self.meter
+            .off_clock(|| self.inner.toggle_set(plugin, toggle, on))
+    }
+    fn clipboard_text(&self, plugin: &str) -> Result<String, String> {
+        self.meter.off_clock(|| self.inner.clipboard_text(plugin))
+    }
+    fn show(&self, plugin: &str, panel: &str) -> Result<(), String> {
+        self.meter.off_clock(|| self.inner.show(plugin, panel))
+    }
+    fn state_load(&self, plugin: &str) -> Option<String> {
+        self.meter.off_clock(|| self.inner.state_load(plugin))
+    }
+    fn state_save(&self, plugin: &str, json: &str) -> Result<(), String> {
+        self.meter.off_clock(|| self.inner.state_save(plugin, json))
+    }
+}
+
 /// This machine: local time, libwol system facts, wold for notifications and the clipboard, the
 /// shell socket for panels. Commands, state and toggles need a host with `wol_core`.
 pub struct Live;
@@ -449,7 +510,15 @@ wol.search = marker("search")
 "#;
 
 /// Globals the base library brings that a widget must not have.
-const REMOVED: [&str; 5] = ["load", "loadfile", "dofile", "collectgarbage", "print"];
+/// `warn` too: it wrote to the host's journal with no cap (QA-PLUG-13).
+const REMOVED: [&str; 6] = [
+    "load",
+    "loadfile",
+    "dofile",
+    "collectgarbage",
+    "print",
+    "warn",
+];
 
 /// Handlers of the last render, by part id (buttons: `on_click`; fields, toggles, sliders:
 /// `on_change`). Ids are given in tree order, so the host's events name a part of this tree.
@@ -652,14 +721,23 @@ pub struct Deadlines {
     pub render: Duration,
     /// Input: `on_click`, `on_change`, `on_activate`, and a search `query`.
     pub event: Duration,
+    /// The most time spent inside host [`Services`] (a `wol.run`, a state write, a D-Bus call)
+    /// that one entry point gets back on its deadline (QA-PLUG-2): the deadline bounds the
+    /// script's own work, and this bounds a loop of slow service calls.
+    pub services: Duration,
 }
 
+/// Service time one entry point gets back on its deadline ([`Deadlines::services`]).
+pub const SERVICE_CREDIT: Duration = Duration::from_secs(2);
+
 impl Deadlines {
-    /// 200 ms to load, 50 ms per render, 200 ms per click, change or query.
+    /// 200 ms to load, 50 ms per render, 200 ms per click, change or query; up to 2 s of
+    /// service time given back per entry point.
     pub const DEFAULT: Deadlines = Deadlines {
         load: Duration::from_millis(200),
         render: Duration::from_millis(50),
         event: Duration::from_millis(200),
+        services: SERVICE_CREDIT,
     };
 }
 
@@ -678,6 +756,8 @@ pub(crate) struct Meter {
     until: AtomicU64,
     /// Ran out once: every later entry point answers [`TOO_LONG`] without running.
     stopped: AtomicBool,
+    /// Service time (ns) this entry point may still get back on its deadline ([`OffClock`]).
+    credit: AtomicU64,
 }
 
 impl Meter {
@@ -687,7 +767,19 @@ impl Meter {
             origin: Instant::now(),
             until: AtomicU64::new(0),
             stopped: AtomicBool::new(false),
+            credit: AtomicU64::new(0),
         })
+    }
+
+    /// Runs one host call and moves the deadline on by the time it took, up to the credit left.
+    fn off_clock<T>(&self, f: impl FnOnce() -> T) -> T {
+        let t0 = self.now();
+        let r = f();
+        let took = self.now().saturating_sub(t0);
+        let back = took.min(self.credit.load(Ordering::Relaxed));
+        self.credit.fetch_sub(back, Ordering::Relaxed);
+        self.until.fetch_add(back, Ordering::Relaxed);
+        r
     }
 
     fn now(&self) -> u64 {
@@ -733,9 +825,19 @@ fn spent(lua: &Lua) -> bool {
     lua.app_data_ref::<Budget>().is_some_and(|b| b.0.spent())
 }
 
-/// Starts an entry point: a fresh instruction budget and a deadline `limit` from now.
-pub(crate) fn arm(lua: &Lua, meter: &Arc<Meter>, limit: Duration) -> mlua::Result<()> {
+/// Starts an entry point: a fresh instruction budget, a deadline `limit` from now and the
+/// service credit of `d` ([`Deadlines::services`]).
+pub(crate) fn arm(
+    lua: &Lua,
+    meter: &Arc<Meter>,
+    limit: Duration,
+    d: Deadlines,
+) -> mlua::Result<()> {
     meter.left.store(INSTRUCTION_BUDGET, Ordering::Relaxed);
+    meter.credit.store(
+        u64::try_from(d.services.as_nanos()).unwrap_or(u64::MAX),
+        Ordering::Relaxed,
+    );
     let until = meter
         .now()
         .saturating_add(u64::try_from(limit.as_nanos()).unwrap_or(u64::MAX));
@@ -812,12 +914,15 @@ impl Widget {
         services: Rc<dyn Services>,
         deadlines: Deadlines,
     ) -> Result<Self, String> {
-        let lua = sandbox(&services).map_err(err)?;
         let meter = Meter::new();
-        arm(&lua, &meter, deadlines.load).map_err(err)?;
+        let services = OffClock::wrap(services, &meter);
+        let lua = sandbox(&services).map_err(err)?;
+        arm(&lua, &meter, deadlines.load, deadlines).map_err(err)?;
         let v: Value = meter.settle(
             lua.load(src)
                 .set_name(format!("={name}"))
+                // Text only: a precompiled chunk is refused by Lua itself, not by luck of UTF-8.
+                .set_mode(mlua::chunk::ChunkMode::Text)
                 .eval()
                 .map_err(err),
         )?;
@@ -880,7 +985,13 @@ impl Widget {
     /// The tree to draw now. Interactive parts are numbered in tree order.
     pub fn render(&mut self) -> Result<Node, String> {
         self.meter.alive()?;
-        arm(&self.lua, &self.meter, self.deadlines.render).map_err(err)?;
+        arm(
+            &self.lua,
+            &self.meter,
+            self.deadlines.render,
+            self.deadlines,
+        )
+        .map_err(err)?;
         let r = self.render.call(()).map_err(err).and_then(|v: Value| {
             let mut handlers = Handlers::default();
             let node = to_node(&v, &mut handlers, 1, None)?;
@@ -896,7 +1007,7 @@ impl Widget {
     pub fn click(&mut self, id: u32) -> Result<(), String> {
         self.meter.alive()?;
         let f = self.handlers.get(id)?;
-        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        arm(&self.lua, &self.meter, self.deadlines.event, self.deadlines).map_err(err)?;
         self.meter.settle(f.call::<()>(()).map_err(err))
     }
 
@@ -904,7 +1015,7 @@ impl Widget {
     pub fn change(&mut self, id: u32, value: Input) -> Result<(), String> {
         self.meter.alive()?;
         let f = self.handlers.get(id)?;
-        arm(&self.lua, &self.meter, self.deadlines.event).map_err(err)?;
+        arm(&self.lua, &self.meter, self.deadlines.event, self.deadlines).map_err(err)?;
         let r = match value {
             Input::Text(s) => f.call::<()>(s),
             Input::On(b) => f.call::<()>(b),
@@ -924,6 +1035,28 @@ pub enum Input {
 }
 
 /// A Lua part table to a node. `dir`: plugin folder, so `wol.image { "icon.png" }` resolves inside it.
+/// What a plugin hears for an image outside its folder.
+pub(crate) const IMAGE_INSIDE: &str =
+    "An image file is inside the plugin folder, like \"icon.png\".";
+
+/// A plugin's image or icon (QA-PLUG-18): an icon name as it is; anything that looks like a file
+/// (a `/`, an image extension) only inside the plugin folder `dir`, never an absolute path or
+/// `..`, so a card cannot show a picture of the person's own files. `refused` is the sentence.
+pub(crate) fn plugin_image(dir: &Path, source: &str, refused: &str) -> Result<String, String> {
+    let file = source.contains('/')
+        || [".png", ".svg", ".jpg", ".jpeg"]
+            .iter()
+            .any(|e| source.to_ascii_lowercase().ends_with(e));
+    if !file {
+        return Ok(source.to_owned());
+    }
+    if shared::plugins::is_plugin_path(source) {
+        Ok(dir.join(source).to_string_lossy().into_owned())
+    } else {
+        Err(refused.into())
+    }
+}
+
 pub(crate) fn to_node(
     v: &Value,
     handlers: &mut Handlers,
@@ -1022,19 +1155,9 @@ pub(crate) fn to_node(
                 .ok()
                 .filter(|s| IMAGE_SIZES.contains(s))
                 .ok_or_else(|| format!("Image size is one of {IMAGE_SIZES:?}."))?;
-            let is_file = [".png", ".svg", ".jpg", ".jpeg"]
-                .iter()
-                .any(|e| source.to_ascii_lowercase().ends_with(e));
-            let source = match (dir, is_file && !source.starts_with('/')) {
-                (Some(d), true) if shared::plugins::is_plugin_path(&source) => {
-                    d.join(&source).to_string_lossy().into_owned()
-                }
-                (Some(_), true) => {
-                    return Err(
-                        "An image file is inside the plugin folder, like \"icon.png\".".into(),
-                    );
-                }
-                _ => source,
+            let source = match dir {
+                Some(d) => plugin_image(d, &source, IMAGE_INSIDE)?,
+                None => source,
             };
             Node::Image { source, size }
         }
@@ -1190,6 +1313,54 @@ mod tests {
             ("/x/a b.lua", None),
         ] {
             assert_eq!(id_of(Path::new(p)).as_deref(), want, "{p}");
+        }
+    }
+
+    /// Method names in the block that starts with `head` (one level of braces).
+    fn methods(src: &str, head: &str) -> Vec<String> {
+        let at = src.find(head).expect(head);
+        let body = &src[at..];
+        let mut depth = 0i32;
+        let mut end = body.len();
+        for (i, c) in body.char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut names: Vec<String> = body[..end]
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("fn "))
+            .map(|l| l.split('(').next().unwrap_or_default().to_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    /// QA-PLUG-2 standard: every host service a script can reach runs off its clock, so a new
+    /// [`Services`] method (whose default would otherwise slip past the wrapper) must be forwarded
+    /// by [`OffClock`], and both loaders wrap the host's services before building the sandbox.
+    #[test]
+    fn off_clock_wraps_every_service() {
+        let lib = include_str!("lib.rs");
+        let want = methods(lib, "pub trait Services {");
+        assert!(want.len() >= 12, "{want:?}");
+        assert_eq!(methods(lib, "impl Services for OffClock {"), want);
+        let plugin = include_str!("plugin.rs");
+        for (file, src) in [("lib.rs", lib), ("plugin.rs", plugin)] {
+            let sandboxes = src.matches("= sandbox(&services)").count();
+            let wraps = src.matches("OffClock::wrap(services, &meter);").count();
+            assert!(
+                sandboxes >= 1 && wraps == sandboxes,
+                "{file}: {sandboxes} sandboxes, {wraps} wraps"
+            );
         }
     }
 }

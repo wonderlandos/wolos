@@ -1,7 +1,9 @@
 # wolcrypt: every cryptographic operation in one crate (ADR 0046, lead decision 2026-11-04 "WOLCRYPT")
 
+Decision record: ADR 0046 (lead decision 2026-11-04 "WOLCRYPT"). Code: `crates/wolcrypt` (BSD-2-Clause), the one crate every other crate calls for cryptography.
+
 **Concept.** WolOS signs, verifies, seals, opens, hashes, derives keys and names things by hash in
-one place: `crates/wolcrypt` (BSD-2-Clause, like libwol). The trust formats (`crates/woltrust`), the
+one place: `crates/wolcrypt` (BSD-2-Clause, like libwol). The trust formats (the `woltrust` crate of the trust-core repository), the
 system, the hub Worker (wasm), the browser and C programs all call it.
 
 **Why.** Before, `woltrust` called five crypto crates directly and ring for ChaCha20-Poly1305 and
@@ -32,9 +34,9 @@ Key derivation from the one 32-byte seed keeps the labels the first keys were ma
 `derive(seed, what) = SHA-512("woltrust/" || what || 0x00 || seed)` for `ed25519`, `ml-dsa-65`,
 `slh-dsa-sha2-128s`, `x25519`, `ml-kem-768`; ML-DSA-65 signs with 32 bytes of
 `SHA-512("woltrust/rnd" 0x00 || seed || msg)`, SLH-DSA unhedged. So every key and every vector made
-before the move derives and signs to the same bytes (`crates/woltrust/vectors/` unchanged;
+before the move derives and signs to the same bytes (woltrust's `vectors/` unchanged;
 `vectors/wolkey/ring-made.wolkey`, written with ring, opens and re-locks byte for byte:
-`crates/woltrust/tests/wolkey_compat.rs`).
+woltrust's `tests/wolkey_compat.rs`).
 
 Secret types wipe themselves: `SigningKey` (seed and Ed25519 key; the post-quantum secret is derived
 per signature and wiped), `EncSecret` (X25519 scalar and ML-KEM decapsulation key), every
@@ -56,7 +58,7 @@ keys only, never private material: an id must be checkable by everyone.
 
 ## The C ABI (libwolcrypt.so.1)
 
-`crates/wolcrypt-ffi` (BSD-2-Clause) is the pointer boundary: `include/wolcrypt.h`, symbol versions
+`wolcrypt-ffi` (BSD-2-Clause, a crate of the trust-core repository) is the pointer boundary: `include/wolcrypt.h`, symbol versions
 in `abi/wolcrypt.map` (node `WOLCRYPT_1.0`, frozen once shipped; new symbols go in a new node),
 `abi/wolcrypt-1.0.symbols`, `link.sh` (from the staticlib, as libwolkit). Thirteen functions:
 `wolcrypt_version`, `_sha512`, `_sha512_256`, `_id`, `_public`, `_sign`, `_verify`, `_kem_public`,
@@ -71,12 +73,12 @@ that crate only (`unsafe_ratchet`: wolcrypt 0, wolcrypt-ffi 74).
 `cargo build -p wolcrypt --target wasm32-unknown-unknown` builds (checked on the CTO box, rust
 1.99.1). `wolcrypt verify-detached FILE FILE.wsig WITNESS.wolcert ROOT_A.wolcert ROOT_B.wolcert`
 prints the witness line and exits 0 when the signature verifies (the same line `woltrust witness
-verify` prints: `crates/woltrust/tests/witness.rs`). `wolcrypt sha512 FILE` prints the hash.
+verify` prints: woltrust's `tests/witness.rs`). `wolcrypt sha512 FILE` prints the hash.
 
 ## Vectors
 
 Per operation, in the unit tests: FIPS 180-4 `abc` for SHA-512, SHA-512/256 and SHA-256; RFC 8439
 section 2.8.2 for ChaCha20-Poly1305; PBKDF2-HMAC-SHA512 known answers for 1 and 2 rounds; RFC 7748
 section 6.1 for X25519; signatures deterministic per scheme with each half's failure named; ids in
-key order; KEM seal/open with every byte bound. The format vectors in `crates/woltrust/vectors/`
+key order; KEM seal/open with every byte bound. The format vectors in woltrust's `vectors/`
 exercise all of it end to end.

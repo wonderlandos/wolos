@@ -1,0 +1,32 @@
+[package]
+name = "wolkit-render"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "libWolkit render targets behind one trait: the CPU reference, the Vulkan renderer and wgpu (Vulkan natively, WebGPU in wasm32)"
+
+[features]
+# `native`: the existing Vulkan renderer (wolkit::gpu, ash) as a second GPU implementation of the
+# trait. Off for wasm32.
+default = ["native"]
+native = ["wolkit/native"]
+
+[dependencies]
+wolkit = { path = "../wolkit", default-features = false }
+shared.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "vulkan"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
+
+[dev-dependencies]
+# The shared golden scenes and their font set name harfrust types (already wolkit's dependency).
+harfrust = "0.15.0"
+# The shared PNG helper of the goldens (wolkit's dev-dependency, same version).
+miniz_oxide = "0.9.1"
+# Decoding the shell's GTK goldens (wolkit's own PNG decoder, same version).
+png = "0.18"

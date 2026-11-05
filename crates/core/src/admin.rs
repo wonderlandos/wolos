@@ -59,7 +59,13 @@ impl WriteContent {
                 app,
                 capability,
                 allow,
-            } => crate::consent::set(current, app, capability, *allow),
+            } => crate::consent::set_over(
+                current,
+                &crate::consent::defaults_in(std::path::Path::new(crate::consent::DEFAULTS_DIR)),
+                app,
+                capability,
+                *allow,
+            ),
         }
     }
 }
@@ -214,7 +220,8 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         AdminAction::AutoUpdate => {
             ok((n == 1 && on_off(a[0])) || (n == 2 && a[0] == "metered" && on_off(a[1])))
         }
-        AdminAction::Reports => ok(n == 1 && on_off(a[0])),
+        AdminAction::Reports | AdminAction::CoolingHelper => ok(n == 1 && on_off(a[0])),
+        AdminAction::MirrorGate => ok(n == 0),
         AdminAction::PrinterAdd => {
             ok(n == 2 && printers::is_valid_name(a[0]) && printers::is_valid_uri(a[1]))
         }
@@ -247,7 +254,11 @@ pub fn validate(r: &AdminRequest) -> Option<String> {
         }
         AdminAction::PkgInstallFile => ok(n == 2 && is_staged_package(a[0]) && is_sha256_hex(a[1])),
         AdminAction::SystemRollback => ok(n == 0),
-        AdminAction::SystemChannel => ok(n == 1 && shared::packages::CHANNELS.contains(&a[0])),
+        // Only a channel this release offers (stable, QA-STORE-68).
+        AdminAction::SystemChannel => ok(n == 1 && shared::packages::OFFERED.contains(&a[0])),
+        // NET-3: every value is checked here again (it is written into a shell file).
+        AdminAction::Proxy => ok(crate::netconf::proxy_from_args(&a).is_some()),
+        AdminAction::DnsOverTls => ok(crate::netconf::dot_from_args(&a).is_some()),
         _ => invalid(),
     }
 }
@@ -393,6 +404,9 @@ pub fn plan_with(
                 argv: users::password_argv(&a[0]).unwrap_or_default(),
                 input: format!("{}:{}\n", a[0], a[3]),
             },
+            // QA-LIVE-17: the homes' subvolume keeps its cap (85 % of the pool) so no account can
+            // fill the system's share; an image made before the cap gets it with the next account.
+            AdminStep::Run(vec![users::HOME_QUOTA.into()]),
         ],
         // QA-DATA-8: never under a signed-in person (their session would lose its files and
         // processes), and the home folder stays unless deleting it was asked for.
@@ -518,6 +532,9 @@ pub fn plan_with(
             steps.extend(service_steps(REPORTS_TIMER, on));
             steps
         }
+        // `wol doctor hardware`: the repo gate as root, and Intel's thermal helper with its unit.
+        AdminAction::MirrorGate => vec![argv(&["wol", "mirror", "gate", "--yes"])],
+        AdminAction::CoolingHelper => service_steps("thermald.service", a[0] == "on"),
         AdminAction::Lid => {
             let l = if a[0] == "sleep" {
                 power::Lid::Sleep
@@ -618,6 +635,35 @@ pub fn plan_with(
         AdminAction::SystemRollback => vec![argv(&["wol", "update", "rollback"])],
         AdminAction::SystemChannel => {
             vec![write(CHANNEL_FILE, 0o644, format!("{}\n", a[0]))]
+        }
+        AdminAction::Proxy => {
+            let a: Vec<&str> = a.iter().map(String::as_str).collect();
+            let c = crate::netconf::proxy_from_args(&a).ok_or("proxy: bad arguments")?;
+            vec![
+                write(
+                    crate::netconf::PROXY_CONF,
+                    0o644,
+                    crate::netconf::render_proxy_conf(&c),
+                ),
+                write(
+                    crate::netconf::PROXY_PROFILE,
+                    0o644,
+                    crate::netconf::render_proxy_profile(&c),
+                ),
+            ]
+        }
+        AdminAction::DnsOverTls => {
+            let a: Vec<&str> = a.iter().map(String::as_str).collect();
+            let c = crate::netconf::dot_from_args(&a).ok_or("dns-over-tls: bad arguments")?;
+            vec![
+                argv(&["mkdir", "-p", "-m", "0755", "/etc/systemd/resolved.conf.d"]),
+                write(
+                    crate::netconf::DOT_DROPIN,
+                    0o644,
+                    crate::netconf::render_dot(&c),
+                ),
+                argv(&crate::netconf::RESOLVED_RESTART_ARGV),
+            ]
         }
     })
 }
@@ -817,6 +863,13 @@ pub const FRESH_PASSWORD: &[(AdminAction, Fresh)] = {
         (A::SystemRollback, Always),
         (A::SystemChannel, Always),
         (A::Reports, Cached),
+        // NET-3: where every connection or name lookup of this computer goes (a proxy or a DNS
+        // server of someone else's choosing sees it all).
+        (A::Proxy, Always),
+        (A::DnsOverTls, Always),
+        // Package repositories change under every later update: the password, every time.
+        (A::MirrorGate, Always),
+        (A::CoolingHelper, Cached),
     ]
 };
 
@@ -951,6 +1004,34 @@ pub fn is_admin(user: &str, gid: u32, group_file: &str) -> bool {
             let f: Vec<&str> = l.trim().split(':').collect();
             f.len() >= 4 && f[0] == ADMIN_GROUP && f[3].split(',').any(|m| m.trim() == user)
         })
+}
+
+/// Whether the account `user` (else the one whose uid is `uid` in `passwd`) is an administrator
+/// by `group_file` ([`is_admin`]). A process the compositor started has no `$USER`, so the name
+/// follows the uid; neither: not an administrator (QA-A7-17).
+pub fn account_is_admin(user: Option<&str>, uid: u32, passwd: &str, group_file: &str) -> bool {
+    let from_passwd = || {
+        passwd.lines().find_map(|l| {
+            let f: Vec<&str> = l.split(':').collect();
+            (f.get(2)?.parse::<u32>().ok()? == uid).then(|| f[0])
+        })
+    };
+    user.filter(|u| !u.is_empty())
+        .or_else(from_passwd)
+        .is_some_and(|name| is_admin(name, u32::MAX, group_file))
+}
+
+/// [`account_is_admin`] for the signed-in account: `user` is its `$USER` (the caller reads the
+/// environment), the uid is this process's, and the files are the system's `/etc/passwd` and
+/// `/etc/group`.
+pub fn this_account_is_admin(user: Option<&str>) -> bool {
+    let read = |p: &str| std::fs::read_to_string(p).unwrap_or_default();
+    account_is_admin(
+        user,
+        shared::sys::euid(),
+        &read("/etc/passwd"),
+        &read("/etc/group"),
+    )
 }
 
 /// Root needs no password; unknown peers (uid None) and non-admins refused.

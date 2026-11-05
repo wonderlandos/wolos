@@ -37,7 +37,7 @@ pub const CAPABILITIES: [(&str, &str); 14] = [
 /// reopened session) are asked every time, even though their capability (`apps`) also covers
 /// `open`, which may be Always Allowed. MCP tool names (`webapp_add`); `wol webapp add` paths
 /// (space-joined, as scripts send them) match too.
-pub const ONCE_ONLY: [&str; 6] = [
+pub const ONCE_ONLY: [&str; 7] = [
     "webapp_add",
     "webapp_remove",
     "modules_enable",
@@ -45,6 +45,8 @@ pub const ONCE_ONLY: [&str; 6] = [
     "sessions_restore",
     // A Doctor fix that runs as the person (one that needs the administrator asks every time anyway).
     "doctor_fix",
+    // A reminder fires later, with nothing of the helper in sight, and shows the helper's text.
+    "remind",
 ];
 
 /// The approval sheet's line for a [`ONCE_ONLY`] change: there is no Always Allow.
@@ -289,5 +291,22 @@ mod tests {
         assert_eq!(q.always["Claude"], ["apps"]);
         p.forget("Claude");
         assert!(!once_only("open") && !once_only("webapp_list"));
+    }
+
+    /// A reminder leaves something behind that fires later and shows its text on screen, with
+    /// nothing of the helper in sight: the manual says it asks every time, so an Always Allow
+    /// given for `notify` (a plain notification) never covers `remind`.
+    #[test]
+    fn a_reminder_asks_every_time() {
+        assert!(once_only("remind"));
+        let p = Policy::parse(Some(r#"{"enabled":true,"always":{"Claude":["notify"]}}"#));
+        assert!(p.always_allows_tool("Claude", "notify", "notify"));
+        assert!(!p.always_allows_tool("Claude", "notify", "remind"));
+        let mut q = Policy::default();
+        assert_eq!(
+            q.allow_always_tool("Claude", "notify", "remind"),
+            Err(Refusal::OnceOnly)
+        );
+        assert!(q.always.is_empty());
     }
 }

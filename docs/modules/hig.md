@@ -8,10 +8,10 @@ Every app window is `AppWindow` (`crates/shell/src/kit`). No app builds its own 
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│ [‹ ›]                             [actions] [search] │  Toolbar (36px, glass, draggable), under the 28px compositor strip
+│ [‹ ›]                             [actions] [search] │  Toolbar (40px, glass, draggable), under the 28px compositor strip
 ├────────────┬─────────────────────────────────────────┤
 │ Sidebar    │ Content                                 │
-│ 220px      │ (List / Grid / Detail / Editor)         │
+│ 240px      │ (List / Grid / Detail / Editor)         │
 │ glass      │                                         │
 │ Sections   │                                         │
 ├────────────┴─────────────────────────────────────────┤
@@ -22,13 +22,50 @@ Every app window is `AppWindow` (`crates/shell/src/kit`). No app builds its own 
 | Part | Rule |
 |---|---|
 | Toolbar | Title left after nav buttons; primary actions right; SearchField rightmost. Max 5 actions; rest in a `…` Menu. Icon-only buttons need a Tooltip. |
-| Sidebar | Only for navigation (places, pages, libraries). `SourceSection` headers in small caps dim text; `SourceItem` rows 28px with 16px symbolic icon. Selection = accent tint pill. Collapsible (Super+Alt+S). |
+| Sidebar | Only for navigation (places, pages, libraries). `SourceSection` headers in small caps dim text; `SourceItem` rows 24px high with a 4px gap (a pitch of 28) and a 16px symbolic icon. Selection = accent tint pill. Collapsible (Super+Alt+S). |
 | Content | One primary view. Empty → `EmptyState` (icon, title, one-line hint, one action). Loading > 150 ms → `Spinner` centred; never a blank pane. |
 | Status bar | Counts and quiet facts only ("12 items, 40 GB available"). No actions. |
 | Sheets | Modal questions (save changes, conflicts, authenticate) slide from the toolbar as a Sheet. Never a floating dialog for app-modal questions. |
 | Settings-style apps | Sidebar of pages + content of grouped `Section`/`List`/`ListRow` cards; controls right-aligned in rows. |
 
 Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`: toolbar only, no sidebar, fixed size.
+
+### 1.1 The numbers (one table)
+
+The sizes of the scaffold, in px at scale 1 (every length is a whole number of 4 px fen). Each row names the constant that holds it; `crates/shared/tests/hig_numbers.rs` reads this table and fails when it, `shared::theme::scaffold`, the design repo's `brand-screens.md` and `brand-ui.md` or `kit.css` disagree. Change a number here and in the constant together.
+
+| Part | px | Held by |
+|---|---|---|
+| Toolbar | 40 | `KIT_TOOLBAR_HEIGHT` (the Kit toolbar, under the strip) |
+| Compositor strip | 28 | `titlebar::HEIGHT` in `crates/realtime`, above the toolbar: the compositor's surface, not the Kit's |
+| Sidebar width | 240 | `SIDEBAR_WIDTH` |
+| Sidebar row (`SourceItem`) | 24 | `SOURCE_ROW`; 4 px gap, so the pitch is 28 |
+| Status bar | 24 | `label.status-bar` in `kit.css`; dim text, no actions |
+| List row | 40 | `LIST_ROW` (the contract; the Kit draws 52 until the design system fixes it) |
+| Control (button, entry, dropdown, menu item) | 24 | `CONTROL_HEIGHT` |
+| Switch | 36 x 24 | thumb 20, padding 2 (3:2); in a Control Center detail header 24 x 16, thumb 12 |
+| Third-party app header bar | 52 | `TOOLBAR_HEIGHT`: the header bar the generated GTK 3/4 themes give apps we do not own; not a Kit surface |
+
+The switch is the design number. GtkSwitch is two thumbs wide, so the Kit draws it 44 wide (and 28 high today); ADR 0058 (proposed) freezes that gap as a known deviation until a libWolkit-drawn switch replaces it. The brand documents (`brand-screens.md` section 1.1, `brand-ui.md` section 2) say 36 x 24 too.
+
+### 1.2 Density (proposed, ADR 0058)
+
+Density is the one setting that changes heights and gaps; type, icons (16), colour and radius never change with it. A component never picks its own density: the window carries the class (`density-compact`, none for standard, `density-comfortable`) and Settings > Appearance chooses it. Standard is what ships today and is the table in 1.1. Compact and comfortable are proposals until the lead approves them; nothing draws them yet.
+
+| Metric | Compact | Standard | Comfortable |
+|---|---|---|---|
+| List row | 32 | 40 | 48 |
+| Control height | 20 | 24 | 32 |
+| Sidebar row pitch | 24 | 28 | 32 |
+| Toolbar | 32 | 40 | 48 |
+
+Compact never makes a pointer target under 20 px and is never the default on touch. Larger text wins over density: a row is never shorter than its text line plus padding.
+
+Density applies to the shell and to apps built on the Kit. Stock GTK and Qt apps follow the theme's colours and shapes through the generated app themes, not density, and libadwaita widgets in them ignore it.
+
+### 1.3 The spec
+
+Each component has a spec file in the design repo (its components folder, one TOML file per component, validated by `components.py`) with its anatomy, sizes per density, states, keyboard, accessibility and rules. The spec is the reference; the wolos.org/design pages and the Kit widget tests are generated from it. This document keeps the rules that apply to every surface; a number that belongs to one component lives in its spec.
 
 ## 2. Tokens, never literals
 
@@ -41,7 +78,7 @@ Single-purpose utilities (Calculator, Clock, Screenshot) use `AppWindow compact`
 
 ## 3. Behaviour
 
-- Shortcuts (Super = ⌘): N new, O open, S save, Shift+S save as, W close window, Q quit, F find, Z/Shift+Z undo/redo, C/X/V/A, comma settings, Backspace delete/trash, I info, Space Quick Look (file lists). Same key, same meaning in every app.
+- Shortcuts (Super = ⌘): N new, O open, S save, Shift+S save as, W close window, Q quit, F find, Z/Shift+Z undo/redo, C/X/V/A, comma settings, Shift+E share (File > Share…: the selection goes to the share sheet, `wol-share`; an app with nothing to share greys the row), Backspace delete/trash, I info, Space Quick Look (file lists). Same key, same meaning in every app.
 - Selection: click selects, double-click/Enter opens, Shift/Super extend. Right-click → context `Menu` with the same verbs as the toolbar.
 - Destructive actions: confirm in a Sheet with the destructive button on the right in `destructive` style; prefer undo over confirm.
 - Long work (> 1 s): progress in place (row ProgressBar or toolbar Spinner), cancellable, off the UI thread. Never freeze.
@@ -142,6 +179,8 @@ fade.retarget(0.0, Motion::leave(Duration::Fast));     // close, from wherever i
 - **`settled`** (`connect_settled`) runs once each time the value reaches its target, after the last `apply`: hide the window there, not on a timer.
 - **Nothing stuck.** When the window unmaps, its clock finishes every animation (values at their targets, `settled` runs).
 - **Reduce motion.** With Accessibility > Reduce motion on (`kit::motion::reduced()`, which also turns off GTK's CSS animations), every `retarget` jumps to its target at once and stagger delays are ignored; layout and state end the same, only the frames between go.
+- **Larger text.** Accessibility > Larger text sets the desktop's text scale, gsettings `org.gnome.desktop.interface text-scaling-factor` 1.25 (off = 1), which GTK and Qt apps follow. The kit draws its type in px, which no toolkit scale reaches, so `kit::style` multiplies every `font-size` and `line-height` in px of the style sheet by the scale and restyles at once when the key changes, whoever changes it (QA-ACC-5). Scales below 1 are ignored; above 3 are cut to 3.
+- **Give me more time.** Accessibility > Give me more time (`$XDG_CONFIG_HOME/wol/timeouts`: `2`, `5` or `never`, no file = normal; `shared::patience`) stretches every wait the shell puts on a person, read through `kit::patience::current()` when a timer starts: the approval sheet (50 s), banners (5 s, never = until dismissed), toasts, the screenshot thumbnail, the copied-code clipboard clearing (60 s, at most ten minutes) and the Keep countdown of a changed display mode (15 s, at most two minutes: a picture nobody can read is put back). The waits behind a sheet stretch with it: `wol` (`controller::approve`) and wold (`api::portal::patience_of`, which reads the account's own small regular file only) wait for the sheet's stretched time plus ten seconds, never past `shared::patience::NEVER_SECS` (an hour). A web app's call (`WEBAPP_CALL_DEADLINE_SECS`) keeps its own deadline (QA-ACC-6).
 - **Tests and goldens** use `Clock::manual()` and drive time with `clock.step(now_ns)`; `clock.set_reduced(Some(true))` checks the reduced path.
 
 **CSS.** Transitions and keyframes in kit.css use the tokens above and move `transform` and `opacity` only, never margins or padding (a margin per frame is a relayout of the whole window). The Dock bounce and the lock-screen shake are `translateY`/`translateX` keyframes.

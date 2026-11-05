@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The WolOS TLS policy for GnuTLS (ADR 0055): /usr/lib/wolos/tls-policy writes the one line below
+# as `default-priority-string` in the [overrides] of /etc/gnutls/config. TLS 1.3 and 1.2, the hybrid
+# post-quantum group first and X25519 after it, ECDHE with AEAD ciphers only for TLS 1.2.
+# Checked by crates/controller/tests/image_tls.rs.
+NORMAL:-VERS-ALL:+VERS-TLS1.3:+VERS-TLS1.2:-GROUP-ALL:+GROUP-X25519-MLKEM768:+GROUP-X25519:+GROUP-SECP256R1:+GROUP-SECP384R1:-KX-ALL:+ECDHE-ECDSA:+ECDHE-RSA:-CIPHER-ALL:+AES-256-GCM:+CHACHA20-POLY1305:+AES-128-GCM:-MAC-ALL:+AEAD:%SAFE_RENEGOTIATION

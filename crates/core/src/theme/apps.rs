@@ -72,7 +72,7 @@ pub const ADW_ACCENTS: [(&str, &str); 9] = [
 ];
 
 /// Preset nearest the theme accent by hue; greys map to slate. The settings portal carries it to
-/// libadwaita and to Chromium's colour mixer (Helium); gtk.css still sets the exact colour.
+/// libadwaita and to the engine's colour mixer (Atlas); gtk.css still sets the exact colour.
 pub fn adw_accent(t: &ResolvedTheme) -> &'static str {
     let (h, s) = hue_sat(token_color(t, "accent"));
     if s < 0.2 {
@@ -119,9 +119,9 @@ pub const FOOT_TITLE: &str = "Terminal";
 /// Window buttons as Kit AppWindow / hyprbars draw them (kit goldens, pixel edges): 12 px
 /// circles, 22 px apart, close centred 23 px in from the window's right edge. Every toolkit matches.
 pub use shared::theme::scaffold::{LIGHT_FIRST_CENTRE, LIGHT_PITCH, LIGHT_SIZE};
-/// adw-gtk3 6.5 `headerbar { padding: 0 6px }`; Chromium's GTK frame reads the same padding.
+/// adw-gtk3 6.5 `headerbar { padding: 0 6px }`; the engine's GTK frame reads the same padding.
 const GTK3_HEADER_PADDING: i32 = 6;
-/// GtkHeaderBar's default child spacing; Chromium hard-codes it (`kHeaderSpacing = 6`).
+/// GtkHeaderBar's default child spacing; the engine hard-codes it (`kHeaderSpacing = 6`).
 const GTK3_BUTTON_SPACING: i32 = 6;
 
 /// User toolkit dir: `$XDG_CONFIG_HOME/wolos/toolkits`.
@@ -404,11 +404,11 @@ fn titlebutton(suffix: &str) -> String {
         .join(", ")
 }
 
-/// GTK 3 window controls: the circle is the 12 px button (GTK 3 centres titlebuttons). Chromium's
+/// GTK 3 window controls: the circle is the 12 px button (GTK 3 centres titlebuttons). The engine's
 /// GTK mode renders only the button background under GTK 3, so the glyph is a hover background:
-/// that way GTK 3 apps and Helium (default browser) show the same one. Chromium styles each button
+/// that way GTK 3 apps and Atlas (default browser) show the same one. The engine styles each button
 /// on its own, so unlike GTK 4 only the hovered control shows its glyph (on the accent). The real
-/// icon stays hidden. GTK 3 and Chromium place buttons at header padding + margins, 6 px apart;
+/// icon stays hidden. GTK 3 and the engine place buttons at header padding + margins, 6 px apart;
 /// close is the last of [`BUTTON_LAYOUT`], so its extra right margin is the right-edge inset.
 fn gtk3_window_controls(t: &ResolvedTheme) -> String {
     let side = (LIGHT_PITCH - LIGHT_SIZE - GTK3_BUTTON_SPACING) / 2;
@@ -459,6 +459,7 @@ fn gtk3_css(t: &ResolvedTheme) -> String {
     s += &super::scaffold::gtk3_defines(t);
     s += &super::scaffold::gtk3(t);
     s += &gtk3_window_controls(t);
+    s += &super::gtk_atlas::css(t);
     s
 }
 
@@ -685,7 +686,16 @@ pub fn strip_argv(t: &ResolvedTheme) -> Vec<Vec<String>> {
 /// Session/shell entry: resolve `id`, install the user toolkit files, push gsettings (blocking;
 /// call off the UI thread). gsettings failures are ignored (not every host has it).
 pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
-    let data = data_home(|k| std::env::var(k).ok());
+    let t = write_files(id, config_home)?;
+    push(&t, config_home);
+    Ok(())
+}
+
+/// The file half of [`apply`]: resolve `id` and write the toolkit files and links. Quick text
+/// writes, so a caller that must tell the person about a failure (a full disk: QA-LIVE-19) runs
+/// it before it says "changed", and [`push`] afterwards.
+pub fn write_files(id: &str, config_home: &Path) -> Result<ResolvedTheme, String> {
+    let data = data_home(env_var);
     let t = super::ThemeCatalog::installed(config_home, data.as_deref())
         .resolve(id)
         .map_err(|e| format!("{e:?}"))?;
@@ -693,20 +703,50 @@ pub fn apply(id: &str, config_home: &Path) -> Result<(), String> {
     if let Some(data) = data {
         link_data(&t, &user_dir(config_home), &data).map_err(|e| e.to_string())?;
     }
+    Ok(t)
+}
+
+/// The process environment, for the readers in this file that take their variables as a function.
+fn env_var(k: &str) -> Option<String> {
+    std::env::var(k).ok()
+}
+
+/// The slow half of [`apply`]: gsettings, the strip and foot (each failure ignored).
+pub fn push(t: &ResolvedTheme, config_home: &Path) {
     let foot = foot_is_ours(&user_dir(config_home), config_home)
-        .then(|| terminal_argv(&t, shared::sys::euid()));
-    for a in gsettings_argv(&t)
+        .then(|| terminal_argv(t, shared::sys::euid()));
+    let bus = session_bus(env_var, |p| p.exists());
+    for a in gsettings_argv(t)
         .into_iter()
-        .chain(strip_argv(&t))
+        .chain(strip_argv(t))
         .chain(foot)
     {
-        let _ = std::process::Command::new(&a[0])
+        let mut c = std::process::Command::new(&a[0]);
+        if let Some(bus) = &bus {
+            c.env("DBUS_SESSION_BUS_ADDRESS", bus);
+        }
+        let _ = c
             .args(&a[1..])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
     }
-    Ok(())
+}
+
+/// The session bus address for `gsettings` when the environment names none: the compositor's
+/// exec-once runs `wol theme set` without DBUS_SESSION_BUS_ADDRESS, and every write failed with
+/// "Cannot autolaunch D-Bus without X11 $DISPLAY" (QA-VIS1-2: color-scheme stayed 'default', the
+/// GTK apps light under a Dark pick, the window button layout never reached Files). The user
+/// bus is `$XDG_RUNTIME_DIR/bus` under systemd. None when one is set or there is no such socket.
+pub fn session_bus(
+    var: impl Fn(&str) -> Option<String>,
+    exists: impl Fn(&Path) -> bool,
+) -> Option<String> {
+    if var("DBUS_SESSION_BUS_ADDRESS").is_some_and(|v| !v.is_empty()) {
+        return None;
+    }
+    let bus = Path::new(&var("XDG_RUNTIME_DIR").filter(|v| !v.is_empty())?).join("bus");
+    exists(&bus).then(|| format!("unix:path={}", bus.display()))
 }
 
 /// `$XDG_DATA_HOME`, else `$HOME/.local/share`; None without either.
@@ -841,6 +881,31 @@ fn replace_link(target: &Path, link: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-VIS1-2: `wol theme set` from the compositor's exec-once has no session bus in its
+    /// environment; gsettings gets the systemd user bus, and an address already set is kept.
+    #[test]
+    fn gsettings_reaches_the_user_bus_from_the_compositor() {
+        let env = |bus: Option<&'static str>| {
+            move |k: &str| match k {
+                "XDG_RUNTIME_DIR" => Some("/run/user/1000".to_string()),
+                "DBUS_SESSION_BUS_ADDRESS" => bus.map(String::from),
+                _ => None,
+            }
+        };
+        let there = |p: &Path| p == Path::new("/run/user/1000/bus");
+        assert_eq!(
+            session_bus(env(None), there).as_deref(),
+            Some("unix:path=/run/user/1000/bus")
+        );
+        assert_eq!(
+            session_bus(env(Some("")), there).as_deref(),
+            Some("unix:path=/run/user/1000/bus")
+        );
+        assert_eq!(session_bus(env(Some("unix:path=/tmp/b")), there), None);
+        assert_eq!(session_bus(env(None), |_| false), None);
+        assert_eq!(session_bus(|_| None, there), None);
+    }
     use crate::theme::ThemeCatalog;
     use std::path::Path;
 
@@ -891,7 +956,7 @@ mod tests {
                 "{class}: no colour of its own"
             );
         }
-        // GTK 3: the circle is the button itself. Chromium's GTK mode (Helium) renders only the
+        // GTK 3: the circle is the button itself. The engine's GTK mode (Atlas) renders only the
         // titlebutton background under GTK 3, never the image's (ui/gtk/nav_button_provider_gtk.cc).
         let gtk3 = file(&f, GTK3_THEME_CSS);
         assert!(gtk3.contains(&format!("background-color: {idle}; box-shadow: none; }}")));
@@ -920,7 +985,7 @@ mod tests {
             !gtk3.contains("titlebutton.close image"),
             "no circle on the image"
         );
-        // Chromium paints the background only, so that is where the hover glyph has to be.
+        // The engine paints the background only, so that is where the hover glyph has to be.
         for (class, glyph) in [
             ("close", "window-close-symbolic"),
             ("minimize", "window-minimize-symbolic"),
@@ -980,7 +1045,7 @@ mod tests {
     fn window_buttons_match_the_kit_geometry() {
         assert_eq!((LIGHT_SIZE, LIGHT_PITCH, LIGHT_FIRST_CENTRE), (12, 22, 23));
         let f = render(&theme("wol-light"), Path::new("/x"));
-        // GTK 3 and Chromium's GTK frame (Helium): header padding + margins + 6 px button spacing.
+        // GTK 3 and the engine's GTK frame (Atlas): header padding + margins + 6 px button spacing.
         // adw-gtk3 sizes titlebuttons with these exact selectors (gtk-3.0/gtk.css, 6.5); a weaker
         // selector loses the cascade and the buttons render 24 px, 34 px apart (measured).
         let g3 = file(&f, GTK3_THEME_CSS);
@@ -1218,7 +1283,7 @@ mod tests {
 
     /// GTK 3 reads the user gtk.css once; a theme is reloaded whenever its name changes. Colours
     /// live in a GTK 3 theme named after the WolOS theme, so every switch restyles running GTK 3
-    /// apps (and Helium's GTK mode) live; the user gtk.css carries no colours to shadow it.
+    /// apps (and Atlas's GTK mode) live; the user gtk.css carries no colours to shadow it.
     #[test]
     fn gtk3_colours_are_a_theme_that_switches_live() {
         for (id, adw) in [("wol-light", "adw-gtk3"), ("nord", "adw-gtk3-dark")] {
@@ -1265,8 +1330,8 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// The settings portal carries `accent-color` to libadwaita and to Chromium's colour mixer
-    /// (Helium): send the preset nearest the theme's accent, not a fixed one.
+    /// The settings portal carries `accent-color` to libadwaita and to the engine's colour mixer
+    /// (Atlas): send the preset nearest the theme's accent, not a fixed one.
     #[test]
     fn portal_accent_is_the_nearest_preset() {
         for (id, want) in [
@@ -1757,5 +1822,24 @@ mod tests {
                 f.rel
             );
         }
+    }
+
+    /// QA-LIVE-19: the toolkit files are written before the caller says "changed": a config
+    /// home that cannot take them is an Err, not a log line on a worker thread.
+    #[test]
+    fn write_files_fails_loudly_when_the_files_cannot_be_written() {
+        let root = std::env::temp_dir().join(format!("wol-wf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // A file where the config folder should be: every create_dir_all under it fails.
+        let blocked = root.join("cfg");
+        std::fs::write(&blocked, "x").unwrap();
+        let e = write_files("wol-dark", &blocked).unwrap_err();
+        assert!(!e.is_empty(), "{e}");
+        let ok = root.join("ok");
+        let t = write_files("wol-dark", &ok).expect("a writable home");
+        assert_eq!(t.id, "wol-dark");
+        assert!(user_dir(&ok).join("gtk-3.0/settings.ini").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -28,8 +28,13 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 pub const MAX_IN_FLIGHT: usize = 8;
 /// Most of wold's reply the host reads.
 pub const MAX_REPLY: u64 = 1 << 20;
-/// How long the host waits for wold's reply: wold's own deadline plus the sheet's wait.
-pub const WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+/// How long the host waits for wold's reply to `method`: wold's longest deadline for it plus a
+/// margin, from the one table wold runs by (`wol_core::sysapp::host_wait_secs`). A flat 300 s gave
+/// up while wold still ran an Update Now or a Doctor fix, so the page said WolOS was not
+/// answering and the change finished unseen (QA-WEB-3).
+pub fn wait_for(method: &str) -> std::time::Duration {
+    std::time::Duration::from_secs(wol_core::sysapp::host_wait_secs(method))
+}
 
 /// Page messages in, replies out.
 pub struct Host {
@@ -133,7 +138,18 @@ impl Host {
             .spawn({
                 let call = call.clone();
                 move || {
-                    let r = wold.call(&app, &call.method, &call.params);
+                    // A panic in the call is an answer, not silence: the page's promise settles
+                    // (QA-WEB-33). The slot is released either way (its Drop).
+                    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        wold.call(&app, &call.method, &call.params)
+                    }))
+                    .unwrap_or_else(|_| {
+                        Err(Fault::new(
+                            ErrorCode::Failed,
+                            "WolOS could not do that.",
+                            "the call stopped unexpectedly",
+                        ))
+                    });
                     // Before the reply is queued: whoever sees the reply may call again at once.
                     drop(slot);
                     let _ = out.send(reply_text(call.id, r));
@@ -202,7 +218,10 @@ fn fault_of(a: &Answer) -> Fault {
         .filter(|m| !m.trim().is_empty())
         .unwrap_or_else(|| "WolOS could not do that.".into());
     let (code, hint) = match a.code {
-        Some(Code::PermissionDenied) => (ErrorCode::Denied, "Turn it on in Settings > Privacy"),
+        // No hint of the host's own: Privacy helps only for an app of others, and wold's message for
+        // that case already says so; "only an app's own host may ask" is not something to switch
+        // on (QA-WEB-7).
+        Some(Code::PermissionDenied) => (ErrorCode::Denied, ""),
         Some(Code::InvalidArgument) => (ErrorCode::Invalid, "wold refused the request"),
         Some(Code::Unavailable) => (ErrorCode::Unavailable, ""),
         _ => (ErrorCode::Failed, ""),
@@ -260,7 +279,7 @@ impl Wold for WoldClient {
             )
         };
         let mut s = shared::jobs::connect(&self.socket).map_err(|e| unavailable(e.to_string()))?;
-        s.set_read_timeout(Some(WAIT))
+        s.set_read_timeout(Some(wait_for(method)))
             .map_err(|e| unavailable(e.to_string()))?;
         let line = format!(
             "webapp-call {method} {}\n",
@@ -269,12 +288,41 @@ impl Wold for WoldClient {
         s.write_all(line.as_bytes())
             .map_err(|e| unavailable(e.to_string()))?;
         let _ = s.shutdown(std::net::Shutdown::Write);
-        let mut out = String::new();
-        s.take(MAX_REPLY)
-            .read_to_string(&mut out)
-            .map_err(|e| unavailable(e.to_string()))?;
+        let out = read_capped(s, MAX_REPLY).map_err(|e| match e {
+            Capped::Io(why) => unavailable(why),
+            Capped::TooLarge => too_large(),
+        })?;
         read_answer(out.trim())
     }
+}
+
+/// Why [`read_capped`] stopped.
+#[derive(Debug, PartialEq)]
+enum Capped {
+    Io(String),
+    TooLarge,
+}
+
+/// All of `r` as text, at most `cap` bytes: one byte more is a reply cut short, which would only
+/// fail to parse and be reported as an unreadable reply (QA-WEB-36).
+fn read_capped(r: impl Read, cap: u64) -> Result<String, Capped> {
+    let mut out = String::new();
+    r.take(cap + 1)
+        .read_to_string(&mut out)
+        .map_err(|e| Capped::Io(e.to_string()))?;
+    if out.len() as u64 > cap {
+        return Err(Capped::TooLarge);
+    }
+    Ok(out)
+}
+
+/// The sentence for an answer over the host's cap, the page's own cap's sentence ([`reply_text`]).
+fn too_large() -> Fault {
+    Fault::new(
+        ErrorCode::Failed,
+        "The answer was too large for this app.",
+        "reply over the host's cap",
+    )
 }
 
 /// The locale for `wolos.app.locale`: `LC_ALL`, `LC_MESSAGES` or `LANG` (`pt_BR.UTF-8` -> `pt-BR`),
@@ -323,6 +371,28 @@ mod tests {
     use crate::bridge::{Manifest, Theme};
     use std::time::Duration;
 
+    /// QA-WEB-3: the host waits longer than wold may take on every method, so wold always
+    /// answers first (with its own sentence), and past the old flat 5 minutes on the
+    /// administrator ones (an Update Now, a Doctor fix of several long steps).
+    #[test]
+    fn the_host_outwaits_wold_on_every_method() {
+        use wol_core::sysapp::{PERMISSIONS, call_deadline_secs};
+        let most = shared::shell::MAX_DOCTOR_STEPS;
+        for p in PERMISSIONS {
+            for m in p.methods {
+                let wold = Duration::from_secs(call_deadline_secs(m, most));
+                assert!(
+                    wait_for(m) > wold,
+                    "{m}: host {:?} <= wold {wold:?}",
+                    wait_for(m)
+                );
+                if p.admin {
+                    assert!(wait_for(m) > Duration::from_secs(300), "{m}");
+                }
+            }
+        }
+    }
+
     /// Answers once the test lets it (one release per call), so nothing here depends on timing.
     struct Gated(std::sync::Mutex<std::sync::mpsc::Receiver<()>>);
     impl Wold for Gated {
@@ -352,6 +422,45 @@ mod tests {
         };
         let g: Vec<String> = granted.iter().map(|s| s.to_string()).collect();
         Host::new(Bridge::new(m, app, &g), Arc::new(wold))
+    }
+
+    /// QA-WEB-36: a reply cut at the host's cap is "too large", not "unreadable".
+    #[test]
+    fn a_reply_over_the_hosts_cap_is_too_large_not_unreadable() {
+        let big = "x".repeat(2000);
+        assert_eq!(
+            read_capped(big.as_bytes(), 2000).as_deref(),
+            Ok(big.as_str())
+        );
+        assert_eq!(read_capped(big.as_bytes(), 1999), Err(Capped::TooLarge));
+        assert_eq!(
+            read_capped(&b"\xff"[..], 10).map_err(|e| matches!(e, Capped::Io(_))),
+            Err(true)
+        );
+        assert_eq!(
+            too_large().message,
+            "The answer was too large for this app."
+        );
+    }
+
+    /// QA-WEB-33: a panic in the call is answered (the page's promise settles) and gives its slot
+    /// back; before, the reply was never sent.
+    #[test]
+    fn a_call_that_panics_is_answered_and_its_slot_comes_back() {
+        struct Boom;
+        impl Wold for Boom {
+            fn call(&self, _: &str, _: &str, _: &Map<String, Value>) -> Result<Value, Fault> {
+                panic!("wold stand-in panics");
+            }
+        }
+        let mut h = host(Boom, &["audio.read"]);
+        for i in 0..MAX_IN_FLIGHT + 4 {
+            h.on_page_message(&format!(r#"{{"id":{i},"call":"audio.doctor"}}"#));
+            let r = h.wait_ready(Duration::from_secs(5)).expect("an answer");
+            let v: Value = serde_json::from_str(&r).unwrap();
+            assert_eq!(v["id"], i, "{r}");
+            assert_eq!(v["err"]["code"], "failed", "{r}");
+        }
     }
 
     #[test]
@@ -468,9 +577,13 @@ mod tests {
         assert!(h.take_ready().is_empty(), "not subscribed");
         h.on_page_message(r#"{"sub":"permissions"}"#);
         h.set_granted(&["games.read".into()]);
+        // The subscribe gets the record as it is, then each change (QA-WEB-2).
         assert_eq!(
             h.take_ready(),
-            [r#"{"data":["games.read"],"topic":"permissions"}"#]
+            [
+                r#"{"data":["audio.read"],"topic":"permissions"}"#,
+                r#"{"data":["games.read"],"topic":"permissions"}"#
+            ]
         );
     }
 
@@ -487,10 +600,21 @@ mod tests {
         let denied = r#"{"ok":false,"code":"permission-denied","message":"This app is not allowed to do that."}"#;
         let f = read_answer(denied).unwrap_err();
         assert_eq!(f.code, "denied");
-        assert!(
-            f.hint.starts_with("Turn it on"),
-            "a capital hint is for the person"
+        assert_eq!(
+            f.hint, "",
+            "the host adds no Settings hint of its own (QA-WEB-7)"
         );
+        // wold's own words for the case Privacy fixes reach the page whole.
+        let others = r#"{"ok":false,"code":"permission-denied","message":"This app is not allowed to do that. Turn it on in Settings > Privacy."}"#;
+        assert!(
+            read_answer(others)
+                .unwrap_err()
+                .message
+                .ends_with("Settings > Privacy.")
+        );
+        let host = r#"{"ok":false,"code":"permission-denied","message":"Only an app's own host may ask for this."}"#;
+        let f = read_answer(host).unwrap_err();
+        assert!(!f.message.contains("Privacy") && f.hint.is_empty(), "{f:?}");
         assert_eq!(read_answer("garbage").unwrap_err().code, "failed");
         assert_eq!(read_answer(r#"{"ok":true}"#).unwrap_err().code, "failed");
         let weird = r#"{"ok":true,"data":{"err":{"code":"made-up"}}}"#;

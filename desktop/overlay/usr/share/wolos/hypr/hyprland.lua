@@ -46,7 +46,9 @@ once("gnome-keyring-daemon --start --components=secrets") -- finishes the login 
 -- Input method (wolos-module-ime): nothing in this session runs /etc/xdg/autostart, so start it here;
 -- XMODIFIERS/QT_IM_MODULE come from /etc/profile.d/wolos-ime.sh.
 once([[sh -c '[ -x /usr/bin/fcitx5 ] && exec fcitx5 -d']])
-once([[sh -c 'exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
+-- First sign-in (shell::first_login): while wol-session leaves wol-first-login in the runtime folder, this
+-- account's own Setup runs before the shell; the shell starts when it ends, however it ends.
+once([[sh -c '[ -e "$XDG_RUNTIME_DIR/wol-first-login" ] && wol-setup --first-login; exec wol-shell --supervised 2>>"$XDG_RUNTIME_DIR/wol-shell.log"']])
 once([[wol theme apply]]) -- GTK/Qt/foot files + gsettings from the theme in use; saves nothing (QA-SET-63)
 -- Live: the account gets Flathub (QA-FDAY-11). /var/lib/flatpak is not there, so flatpak in a terminal
 -- saw no remote; the file ships the key, nothing is downloaded (the Store adds the same remote).
@@ -261,9 +263,15 @@ bind("CTRL + " .. mod .. " + A", "wol shell toggle notifications")
 -- no binds. The wol-hypr plugin forwards Esc (`hide transient`) and the Super release (`hide
 -- switcher`) to the shell socket only while a shell layer is on screen, without a process; the app
 -- still gets its keys (audit3 R2A-10: a `wol` process per Esc in every app, games included).
--- Overview: ⌃↑, ⌘↑ too.
+-- Overview: ⌃↑ (and the three-finger swipe up). ⌘↑ is Snap, below.
 bind("CTRL + Up", "wol shell toggle overview")
-bind(mod .. " + Up", "wol shell toggle overview")
+-- Snap (wol-hypr, realtime snap.rs): ⌘← and ⌘→ a half of the screen,
+-- ⌘↑ zoom (from a half: its top quarter), ⌘↓ back to the old size, then minimise. Tiled windows
+-- move through the tiling with ⌘←/⌘→ instead. The plugin keeps the window in its own zone.
+bind(mod .. " + Left", "hyprctl wolsnap left")
+bind(mod .. " + Right", "hyprctl wolsnap right")
+bind(mod .. " + Up", "hyprctl wolsnap up")
+bind(mod .. " + Down", "hyprctl wolsnap down")
 -- App switcher: hold Super, tap Tab (Shift reverses); releasing Super focuses the selection (wol-hypr).
 bind(mod .. " + Tab", "wol shell show switcher")
 bind(mod .. " + SHIFT + Tab", "wol shell show switcher-prev")
@@ -294,6 +302,9 @@ bind("CTRL + " .. mod .. " + Space", "wol-app emoji")
 bind(mod .. " + SHIFT + V", "wol shell toggle clipboard")
 -- Theme picker (ADR 0031 themes v2): every theme as a preview card.
 bind("CTRL + " .. mod .. " + T", "wol shell toggle themes")
+-- Colour picker (ADR 0059 S16): click a pixel, its hex value goes to the clipboard and a notification
+-- names it (hyprpicker --autocopy --notify; hypr/permissions.lua lets it copy the screen).
+bind("CTRL + " .. mod .. " + P", "hyprpicker --autocopy --notify")
 
 -- Windows (Cmd semantics)
 -- App actions shared with the menu bar app/Window menus (wol-app).

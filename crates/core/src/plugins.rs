@@ -125,6 +125,14 @@ pub fn check(dir: &Path, system: bool) -> Report {
         id: id.clone(),
         ..Report::default()
     };
+    // QA-PLUG-41: the folder is plain too; a link to a folder elsewhere would put files under
+    // the plugin that the check never sees change.
+    if dir.is_symlink() {
+        r.problems.push(format!(
+            "{id} is a symlink; a plugin has no symlinks. Copy the folder here instead."
+        ));
+        return r;
+    }
     let text = match std::fs::read_to_string(dir.join(MANIFEST_FILE)) {
         Ok(t) => t,
         Err(_) => {
@@ -379,7 +387,37 @@ pub fn load_enabled(config_home: &Path) -> Enabled {
     )
 }
 
+/// The most of `plugins.json` that is read.
+const MAX_ENABLED_FILE: u64 = 1 << 20;
+
+/// Why every plugin is off although some were turned on (QA-PLUG-40): `plugins.json` is there and
+/// is not the format. None when it is fine or absent.
+pub fn enabled_problem(config_home: &Path) -> Option<String> {
+    let p = enabled_path(config_home);
+    let bytes = shared::bounded::read_file(&p, MAX_ENABLED_FILE)?;
+    serde_json::from_slice::<Enabled>(&bytes).err()?;
+    Some(format!(
+        "{} could not be read, so every plugin is off. Fix it, or delete it and turn the plugins on again; the next change keeps this file as {}.",
+        p.display(),
+        bad_copy(&p).display()
+    ))
+}
+
+/// Where a file that could not be read is kept before it is written over.
+fn bad_copy(p: &Path) -> PathBuf {
+    let mut n = p.as_os_str().to_owned();
+    n.push(".bad");
+    PathBuf::from(n)
+}
+
 pub fn save_enabled(config_home: &Path, e: &Enabled) -> Result<(), String> {
+    // A file that does not parse is not lost by the first change after it (QA-PLUG-40).
+    if enabled_problem(config_home).is_some() {
+        let p = enabled_path(config_home);
+        if let Some(bytes) = shared::bounded::read_file(&p, MAX_ENABLED_FILE) {
+            let _ = shared::atomic::atomic_write(&bad_copy(&p), 0o600, &bytes);
+        }
+    }
     write_atomic(&enabled_path(config_home), &e.to_json())
 }
 
@@ -397,6 +435,36 @@ fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
 /// `$XDG_STATE_HOME/wolos/plugins/<id>/state.json`, the only place a plugin writes.
 pub fn state_path(state_home: &Path, id: &str) -> PathBuf {
     state_home.join(STATE_DIR).join(id).join("state.json")
+}
+
+/// Why the shell turned `id` off (three failures in a row, QA-PLUG-63): one sentence beside the
+/// plugin's state, shown by `wol plugin list` until the plugin is turned on again.
+pub fn turned_off_path(state_home: &Path, id: &str) -> PathBuf {
+    state_home.join(STATE_DIR).join(id).join("turned-off")
+}
+
+/// Keeps the sentence the person was told when `id` was turned off.
+pub fn note_turned_off(state_home: &Path, id: &str, why: &str) -> Result<(), String> {
+    if !is_plugin_id(id) {
+        return Err("Not a plugin id.".into());
+    }
+    let one: String = why.chars().filter(|c| !c.is_control()).take(400).collect();
+    write_atomic(&turned_off_path(state_home, id), &format!("{one}\n"))
+}
+
+/// The sentence kept by [`note_turned_off`], if any.
+pub fn turned_off(state_home: &Path, id: &str) -> Option<String> {
+    let t = shared::bounded::read_text(&turned_off_path(state_home, id), 4096)?;
+    let t = t.trim();
+    (!t.is_empty()).then(|| t.to_owned())
+}
+
+/// Forgets why `id` was turned off (it is on again): the sentence is emptied, which reads as none.
+pub fn clear_turned_off(state_home: &Path, id: &str) {
+    let p = turned_off_path(state_home, id);
+    if is_plugin_id(id) && p.is_file() {
+        let _ = write_atomic(&p, "");
+    }
 }
 
 /// The saved JSON object as text; None when nothing was saved or the file is not an object.
@@ -656,7 +724,7 @@ return wol.widget {
   render = function()
     n = n or wol.state.get("count") or 0
     return wol.stack { spacing = 8,
-      wol.label { "Count: " .. n, role = "display" },
+      wol.label { "Count: " .. n, role = "title" },
       wol.row { spacing = 8,
         wol.button { label = "+1", on_click = function() n = n + 1; wol.state.set("count", n) end },
         wol.button { label = "Reset", on_click = function() n = 0; wol.state.set("count", nil) end },
@@ -720,6 +788,10 @@ const THEME_JSON: &str = r##"{
 }
 "##;
 
+/// The `description` a new plugin starts with; Plugin Maker will not share one that still has it
+/// (QA-PLUG-75).
+pub const SCAFFOLD_SUMMARY: &str = "What it does, in one line.";
+
 /// Files for a new plugin: `plugin.toml` with one entry per kind in `kinds`, and the scripts and
 /// files they name. The result passes `wol plugin check` as is.
 pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, String)>, String> {
@@ -746,7 +818,8 @@ pub fn scaffold(id: &str, name: &str, kinds: &[Kind]) -> Result<Vec<(String, Str
             .replace("__ENTRY__", entry)
     };
     let mut toml = format!(
-        "schema = 1\nid = \"{id}\"\nname = \"{name}\"\nversion = \"0.1\"\nauthor = \"\"\nlicense = \"MIT\"\ndescription = \"What it does, in one line.\"\nmin_wolos = \"0.12\"\n"
+        "schema = 1\nid = \"{id}\"\nname = \"{name}\"\nversion = \"0.1\"\nauthor = \"\"\n\
+         license = \"MIT\"\ndescription = \"{SCAFFOLD_SUMMARY}\"\nmin_wolos = \"0.12\"\n"
     );
     let mut perms: Vec<&str> = Vec::new();
     if kinds.contains(&Kind::Dock) {
@@ -859,6 +932,62 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, text).unwrap();
         }
+    }
+
+    /// QA-PLUG-33: the scaffold's card fits the default small size: its label is a title, not the
+    /// widget figure (`display`), which "Count: 12" overflows.
+    #[test]
+    fn the_scaffold_card_label_fits_the_small_card() {
+        let files = scaffold("alice.card", "Card", &[Kind::Widget]).unwrap();
+        let lua = files.iter().find(|f| f.0.ends_with(".lua")).unwrap();
+        assert!(lua.1.contains("Count: "), "the widget script");
+        assert!(
+            !lua.1.contains("role = \"display\"") && !lua.1.contains("role = \"large\""),
+            "{}",
+            lua.1
+        );
+    }
+
+    /// QA-PLUG-41: a plugin folder that is itself a symlink does not load (its files would be
+    /// whatever the link points at today).
+    #[test]
+    fn a_symlinked_plugin_folder_is_refused() {
+        let root = tmp("symlinked");
+        let real = root.join("elsewhere/alice.link");
+        std::fs::create_dir_all(&real).unwrap();
+        write_all(
+            &real,
+            &scaffold("alice.link", "Link", &[Kind::Menubar]).unwrap(),
+        );
+        assert!(check(&real, false).problems.is_empty());
+        let user = root.join("plugins");
+        std::fs::create_dir_all(&user).unwrap();
+        std::os::unix::fs::symlink(&real, user.join("alice.link")).unwrap();
+        let r = check(&user.join("alice.link"), false);
+        assert!(r.problems[0].contains("symlink"), "{:?}", r.problems);
+        let all = load_all(&[(user, false)]);
+        assert_eq!(all.len(), 1);
+        assert!(all[0].manifest.as_ref().unwrap_err().contains("symlink"));
+    }
+
+    /// QA-PLUG-40: a plugins.json that does not parse is named, and the next change keeps it.
+    #[test]
+    fn a_malformed_plugins_json_is_named_and_kept() {
+        let cfg = tmp("badjson");
+        assert!(enabled_problem(&cfg).is_none(), "absent is fine");
+        let file = enabled_path(&cfg);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "{ junk").unwrap();
+        assert!(load_enabled(&cfg).enabled.is_empty());
+        let why = enabled_problem(&cfg).unwrap();
+        assert!(
+            why.contains("every plugin is off") && why.contains("plugins.json"),
+            "{why}"
+        );
+        save_enabled(&cfg, &Enabled::default()).unwrap();
+        let kept = file.with_file_name("plugins.json.bad");
+        assert_eq!(std::fs::read_to_string(kept).unwrap(), "{ junk");
+        assert!(enabled_problem(&cfg).is_none(), "the new file reads");
     }
 
     /// Every scaffold (each kind alone and all together) passes check: the agent's first run is green.

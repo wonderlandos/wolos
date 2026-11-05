@@ -120,6 +120,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "wolkit_text"
+path = "fuzz_targets/wolkit_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "wolkit_wolcss"
 path = "fuzz_targets/wolkit_wolcss.rs"
 test = false
@@ -136,6 +143,13 @@ bench = false
 [[bin]]
 name = "webpolicy"
 path = "fuzz_targets/webpolicy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "atlas_wire"
+path = "fuzz_targets/atlas_wire.rs"
 test = false
 doc = false
 bench = false

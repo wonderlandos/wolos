@@ -12,8 +12,9 @@ One door for people, scripts and AI helpers: the `wol` command tree. Helpers nev
 | script with `WOL_HELPER=<name>` | `script:<name>` | yes |
 | script started with `wol script run <file>` or `wol script on <host> <file>` (sh, bash or Ruby, docs/modules/scripting.md) | `script:<file name>` (set by the runner) | yes; plus one `script run` / `script on` record per run |
 | a person running `wol` | `cli` | no (admin verbs ask for the password on stdin) |
+| an assistant's own shell (Claude Code's Bash tool running `wol ...`) | `script:claude-code` (`CLAUDECODE=1`, set by Claude Code), or `script:<name>` when `WOL_HELPER=<name>` is set | yes (advisory: a process can unset its own environment) |
 
-Helper verbs: `catalog::HELPER_VERBS` (`wol api --json` lists access and capability). Anything else stays for people.
+Helper verbs: `catalog::HELPER_VERBS` (`wol api --json` lists access and capability). Anything else stays for people: under a helper name (`WOL_HELPER`, or an assistant's shell) it is refused and logged, except `help`, `api` and `mcp`.
 
 ## Gate (`controller::approve::decide`, same for MCP and scripts)
 
@@ -48,6 +49,10 @@ Shell -> one line `{"answer": ...}`, then close:
 - Admin: password field, Deny, Allow; a wrong password asks again.
 - Esc or closing = Deny. Queue: one on screen, 4 waiting, more get `busy`.
 
+## `wol mcp` server limits
+
+One server per client process, stdio, one JSON-RPC message per line. A client starts with `initialize` (its `clientInfo.name` is fixed for the session; a second `initialize` is refused, and listing or calling a tool before it answers -32002). A JSON array is a batch and gets one array of answers. A line over 1 MiB is dropped unread and answered as too large; a tool answers at most 256 KiB of text. The server ends when its client has gone, and a sheet it was waiting on is dropped, not approved. It does not serve root: run as your own account. Always Allow is bound to the client's name and its program, with release numbers in the program's path read as `*` (`.../claude/versions/2.1.3` is `.../claude/versions/*`), so a self-update keeps the grant.
+
 ## Errors and JSON, today (audit8 standards #11)
 
 `wol` has no shared JSON error envelope yet; this table is what each surface does now, so a script
@@ -59,6 +64,7 @@ or an assistant knows which key to read. A change to one row changes this table 
 | `wol plugin run` | `crates/controller/src/plugin.rs` | the object so far plus `"error": "<sentence>"` on stdout, exit 65 | `plugin`, `kind`, `entry`, `refresh`, then `node`/`popover` or `hits` |
 | `wol plugin check` | same | `"valid": false` and `"problems": [..]` (one sentence each) | `"valid": true` |
 | `wol audio ...`, `wol sessions restore`, `wol modules remove` | `audio_doctor.rs`, `sessions.rs`, `modules.rs` | a `"failed"` key (count or list) inside the normal object | the same object with `"failed"` empty or 0 |
+| `wol restore list --json` (MCP `restore_list`) | `crates/controller/src/verbs.rs` (`restore_list`), `wol_core::update::be::BootEnv` | exit 69 and one line on stderr (no slots, or one copy of WolOS) | an array of `name`, `active`, `next_boot`, `mountpoint`, `release` (release date; `current` = built on that day's repositories), `tries_left` (number; null once the slot booted fine), `rollback`; `space` and `created` are 0.13-only aliases of `tries_left` (as text) and `release` (QA-LIVE3-12) |
 | MCP tool call (`wol mcp`) | `crates/controller/src/mcp.rs` | `{"content":[{"type":"text","text":..}],"isError":true}`; a protocol error is JSON-RPC `{"error":{"code","message"}}` | `isError: false`, the verb's JSON in `structuredContent` (an array as `{"items":[..]}`), or `{"status":"done","request":..}` after an approval |
 | wold control socket | `shared::jobs::Reply` (`crates/shared/src/jobs.rs`), `crates/api/src/control.rs` | `{"ok":false,"error":"<sentence>"}` | `{"ok":true,"error":null}` |
 | libwol service answers | `shared::portal::Answer` (`crates/shared/src/portal.rs`) | `{"ok":false,"code":<Code>,"message":..}` | `{"ok":true,"id"?,..}` |
@@ -67,6 +73,8 @@ or an assistant knows which key to read. A change to one row changes this table 
 The keys `kind` (widget and plugin entries), `status` (the MCP approval result) and `error` (plugin
 run, control socket) name different things; do not read one as the other. The plan is one envelope
 `{"ok", "code", "message"}` for the `--json` output of `wol`, with the exit status kept.
+
+**One rule for lists and status (QA-PWR-16).** A verb that lists or reports prints JSON when `--json` is given **or when stdout is not a terminal**; at a terminal it prints the table or sentence. `wol theme list`, `wol sessions list` and `wol update status` follow it like `wol hw`, `wol doctor`, `wol modules` and the rest (`env.stdout_tty()` in the controller). `wol update status --json` before the first check is an object with `"checked": null`, `"count": 0` and the running base and kernel, never `null`. Tests: `crates/controller/tests/doctor.rs` (`theme_list_is_json_when_piped_and_a_table_at_a_terminal`), `sessions.rs` (`a_piped_list_is_json`), `tests/update_status.rs`.
 
 ## Desktop toggles (`wol toggle <word> [on|off]`, `wol_core::toggles`)
 

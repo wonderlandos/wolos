@@ -1,0 +1,16 @@
+# Lines that are not requests are answered and the connection stays open.
+file report.pdf
+wold file.trash {"ok":true,"data":{"name":"report.pdf"}}
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"hello","version":1}
+> not json
+< {"reply":"error","id":0,"code":"invalid-request","text":"Atlas sent a request WolOS does not understand."}
+> {"op":"print","id":7,"path":"@DIR/report.pdf"}
+< {"reply":"error","id":7,"code":"invalid-request","text":"Atlas sent a request WolOS does not understand."}
+> {"op":"share","id":8,"path":"report.pdf"}
+< {"reply":"error","id":8,"code":"invalid-request","text":"Atlas sent a request WolOS does not understand."}
+> {"op":"hello","version":1,"pid":@PID}
+< {"reply":"error","id":0,"code":"invalid-request","text":"Atlas sent a request WolOS does not understand."}
+> {"op":"trash","id":9,"path":"@DIR/report.pdf"}
+< {"reply":"ok","id":9,"outcome":"trashed"}
+asked {"call":"file.trash","path":"@DIR/report.pdf"}

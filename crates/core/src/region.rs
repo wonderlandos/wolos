@@ -64,20 +64,18 @@ pub fn zone_label(zone: &str) -> String {
     }
 }
 
-/// (locale, label) shipped choices, label in its own language.
-pub const LANGUAGES: [(&str, &str); 12] = [
-    ("en_US.UTF-8", "English (US)"),
-    ("en_GB.UTF-8", "English (UK)"),
+/// (locale, label) the languages a person can pick, label in its own language, in the order the
+/// installer, Setup and Settings list them: the lead's priority (L10N-2), English first. Every one
+/// has its translator's rules (`docs/l10n/RULES-<tag>.md`, `rules_set_equals_languages`) and a
+/// complete translation of the installer, Setup and the shell's copy tables.
+pub const LANGUAGES: [(&str, &str); 7] = [
+    ("en_US.UTF-8", "English"),
     ("pt_BR.UTF-8", "Português (Brasil)"),
-    ("pt_PT.UTF-8", "Português (Portugal)"),
-    ("es_ES.UTF-8", "Español"),
-    ("fr_FR.UTF-8", "Français"),
-    ("de_DE.UTF-8", "Deutsch"),
-    ("it_IT.UTF-8", "Italiano"),
-    ("nl_NL.UTF-8", "Nederlands"),
-    ("pl_PL.UTF-8", "Polski"),
     ("ja_JP.UTF-8", "日本語"),
-    ("zh_CN.UTF-8", "中文 (简体)"),
+    ("fr_FR.UTF-8", "Français"),
+    ("ru_RU.UTF-8", "Русский"),
+    ("it_IT.UTF-8", "Italiano"),
+    ("de_DE.UTF-8", "Deutsch"),
 ];
 
 /// The new system's `/etc/locale.gen`: every locale of [`LANGUAGES`], then `chosen` when it is not
@@ -100,6 +98,24 @@ pub fn language_of(locale: &str) -> &str {
         return "";
     }
     locale.split('_').next().unwrap_or_default()
+}
+
+/// Languages planned next: their translators' rules are written, they are not offered yet.
+pub const LATER: [(&str, &str); 5] = [
+    ("ko_KR.UTF-8", "한국어"),
+    ("id_ID.UTF-8", "Bahasa Indonesia"),
+    ("tl_PH.UTF-8", "Tagalog"),
+    ("nl_NL.UTF-8", "Nederlands"),
+    ("pl_PL.UTF-8", "Polski"),
+];
+
+/// The code a translation table and its rules page use (`pt-BR.tsv`, `RULES-pt-BR.md`): the
+/// language of `locale`, with Brazilian Portuguese named apart from other Portuguese.
+pub fn translation_tag(locale: &str) -> &str {
+    match locale.split('.').next().unwrap_or_default() {
+        "pt_BR" => "pt-BR",
+        _ => language_of(locale),
+    }
 }
 
 /// `ll_CC.UTF-8` (2-3 lowercase letters, 2 uppercase).
@@ -198,7 +214,14 @@ mod tests {
         ] {
             assert_eq!(is_valid_locale(l), ok, "{l}");
         }
-        assert!(LANGUAGES.iter().all(|(l, _)| is_valid_locale(l)));
+        assert!(
+            LANGUAGES
+                .iter()
+                .chain(LATER.iter())
+                .all(|(l, _)| is_valid_locale(l))
+        );
+        // A later language is not offered yet.
+        assert!(LATER.iter().all(|l| !LANGUAGES.iter().any(|o| o.0 == l.0)));
     }
 
     #[test]
@@ -207,12 +230,42 @@ mod tests {
         assert_eq!(language_of("pt_PT.UTF-8"), "pt");
         assert_eq!(language_of("en_GB.UTF-8"), "en");
         assert_eq!(language_of("pt"), "");
-        let langs: std::collections::BTreeSet<_> =
-            LANGUAGES.iter().map(|l| language_of(l.0)).collect();
+        // One row per language: no two rows a translation could not tell apart.
+        let tags: std::collections::BTreeSet<_> =
+            LANGUAGES.iter().map(|l| translation_tag(l.0)).collect();
+        assert_eq!(tags.len(), LANGUAGES.len());
+        assert_eq!(translation_tag("pt_BR.UTF-8"), "pt-BR");
+        assert_eq!(translation_tag("pt_PT.UTF-8"), "pt");
+        assert_eq!(translation_tag("ja_JP.UTF-8"), "ja");
+    }
+
+    /// QA-ACC-16 / QA-L10N-8: the translators' rule pages (`docs/l10n/RULES-<tag>.md`) are exactly
+    /// the languages people can pick ([`LANGUAGES`]) plus the ones planned next ([`LATER`]): no
+    /// rules for a language no one can choose, no language offered without rules.
+    #[test]
+    fn rules_set_equals_languages() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/l10n");
+        let rules: std::collections::BTreeSet<String> = std::fs::read_dir(&dir)
+            .expect("docs/l10n")
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter_map(|n| Some(n.strip_prefix("RULES-")?.strip_suffix(".md")?.to_owned()))
+            .collect();
+        let listed: std::collections::BTreeSet<String> = LANGUAGES
+            .iter()
+            .chain(LATER.iter())
+            .map(|l| translation_tag(l.0).to_owned())
+            .collect();
+        assert_eq!(rules, listed, "RULES-*.md vs LANGUAGES + LATER");
+        // The translators' guide lists the same pages.
+        let guide = std::fs::read_to_string(dir.join("README.md")).expect("README.md");
+        let linked: std::collections::BTreeSet<String> = guide
+            .split("](RULES-")
+            .skip(1)
+            .filter_map(|t| Some(t.split_once(".md)")?.0.to_owned()))
+            .collect();
         assert_eq!(
-            langs.len(),
-            LANGUAGES.len() - 2,
-            "en x2 and pt x2 share a language"
+            linked, listed,
+            "docs/l10n/README.md links vs LANGUAGES + LATER"
         );
     }
 

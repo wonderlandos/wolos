@@ -433,23 +433,30 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     steps.extend(swap_steps(slot));
     steps.push(v(&["mv", "-f", &digest_new, &digest]));
     // After the seal: the signed image carries the slot's root digest.
-    steps.push(v(&[
-        "env",
-        &format!("WOLOS_ROOT={root}"),
-        &format!("WOLOS_SLOT={slot}"),
-        &format!("WOLOS_RELEASE={}", b.release),
-        &format!(
-            "WOLOS_CMDLINE={}",
-            crate::encrypt::slot_options(b.cmdline, slot)
-        ),
-        ESP_SYNC,
-        "--new",
-    ]));
+    steps.push(esp_sync_step(&root, slot, b));
     // The new slot boots next from here on: no longer an interrupted update (review 5).
     steps.push(v(&["rm", "-f", BUILDING]));
     // A rollback the person chose earlier stops being the default: newest good entry boots.
     steps.push(v(&["bootctl", "set-default", ""]));
     Some(steps)
+}
+
+/// esp-sync for the new slot, after the seal. The boot entry's version names the release date;
+/// without one (the same release, a package change) esp-sync takes the slot's base.version:
+/// never the word "current" in the boot menu (QA-STORE-77: "WolOS 0.12.1 (2-current)").
+fn esp_sync_step(root: &str, slot: &str, b: &Build) -> Step {
+    let release = format!("WOLOS_RELEASE={}", b.release);
+    let cmdline = format!(
+        "WOLOS_CMDLINE={}",
+        crate::encrypt::slot_options(b.cmdline, slot)
+    );
+    let (root_var, slot_var) = (format!("WOLOS_ROOT={root}"), format!("WOLOS_SLOT={slot}"));
+    let mut a = vec!["env", &root_var, &slot_var];
+    if is_snapshot_date(b.release) {
+        a.push(&release);
+    }
+    a.extend([cmdline.as_str(), ESP_SYNC, "--new"]);
+    Step::Run(a.into_iter().map(str::to_owned).collect())
 }
 
 /// `unshare --mount --propagation private wol update chroot WORK -- CMD...`: CMD in the copy at
@@ -668,7 +675,11 @@ pub mod be {
     /// Slots kept: the running one and the previous one.
     pub const KEEP: usize = 2;
 
-    #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+    /// `wol restore list --json` keys (QA-LIVE3-12): `tries_left` (a number; null once the slot
+    /// booted fine) and `release` (the slot's release date, "current" for a slot built on the
+    /// repositories of the day). `space` and `created` held those two under names that said
+    /// otherwise; they stay for one release (0.13) as aliases with their old text, then go.
+    #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
     pub struct BootEnv {
         pub name: String,
         /// Running now.
@@ -680,6 +691,30 @@ pub mod be {
         pub space: String,
         /// Release snapshot date of the slot (entry `version`).
         pub created: String,
+    }
+
+    impl BootEnv {
+        /// Boot tries left while the slot waits for its first good boot; None once it booted.
+        pub fn tries_left(&self) -> Option<u64> {
+            self.space.split(' ').next()?.parse().ok()
+        }
+    }
+
+    impl Serialize for BootEnv {
+        fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+            use serde::ser::SerializeStruct;
+            let mut m = s.serialize_struct("BootEnv", 8)?;
+            m.serialize_field("name", &self.name)?;
+            m.serialize_field("active", &self.active)?;
+            m.serialize_field("next_boot", &self.next_boot)?;
+            m.serialize_field("mountpoint", &self.mountpoint)?;
+            m.serialize_field("release", &self.created)?;
+            m.serialize_field("tries_left", &self.tries_left())?;
+            // Aliases for one release (0.13), then removed.
+            m.serialize_field("space", &self.space)?;
+            m.serialize_field("created", &self.created)?;
+            m.end()
+        }
     }
 
     /// WolOS slots from `bootctl list --json=short`.
@@ -783,6 +818,42 @@ pub mod be {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-77: the boot entry of a slot built without a release date (same release, a
+    /// package change) never carries the word "current": esp-sync takes the slot's base.version.
+    /// A dated release still names its date.
+    #[test]
+    fn entry_title_never_current() {
+        let env_step = |date: Option<&str>| {
+            plan("wolos-b", true, date)
+                .unwrap()
+                .iter()
+                .map(ToString::to_string)
+                .find(|s| s.starts_with("env WOLOS_ROOT="))
+                .unwrap()
+        };
+        let same = env_step(None);
+        assert!(
+            !same.contains("current") && !same.contains("WOLOS_RELEASE"),
+            "{same}"
+        );
+        assert!(same.ends_with(" --new"), "{same}");
+        let dated = env_step(Some("2026/11/02"));
+        assert!(dated.contains(" WOLOS_RELEASE=2026/11/02 "), "{dated}");
+        let pkg = pkg::plan(
+            "wolos-b",
+            Base::Pending,
+            &["-S".into(), "git".into()],
+            "current",
+            None,
+        )
+        .unwrap()
+        .iter()
+        .map(ToString::to_string)
+        .find(|s| s.starts_with("env WOLOS_ROOT="))
+        .unwrap();
+        assert!(!pkg.contains("current"), "{pkg}");
+    }
 
     #[test]
     fn one_copy_updates_in_place_with_no_snapshot_and_no_seal() {
@@ -1127,6 +1198,18 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             ),
             ("wolos-b", true, "2 tries left", "2026/11/02")
         );
+        // QA-LIVE3-12: the JSON keys say what they hold; the old names stay as aliases.
+        assert_eq!((b[1].tries_left(), b[0].tries_left()), (Some(2), None));
+        let j = serde_json::to_value(&b[1]).unwrap();
+        assert_eq!(
+            (j["tries_left"].as_u64(), j["release"].as_str()),
+            (Some(2), Some("2026/11/02"))
+        );
+        assert_eq!(
+            (j["space"].as_str(), j["created"].as_str()),
+            (Some("2 tries left"), Some("2026/11/02"))
+        );
+        assert!(serde_json::to_value(&b[0]).unwrap()["tries_left"].is_null());
         assert!(be::parse("not json").is_empty());
         // Update applied, not rebooted yet: rollback = keep booting the running slot.
         assert_eq!(be::rollback_target(&b).unwrap().name, "wolos-a");

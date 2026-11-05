@@ -51,27 +51,44 @@ pub(crate) fn env_dir(var: &str) -> Option<PathBuf> {
         .filter(|p| p.is_absolute())
 }
 
+/// The administrator's cache, state and data when no `XDG_*` variable names them: root's home is
+/// in the sealed, read-only slot (QA-STORE-62: `wopkg pin` crashed on `/root/.local`).
+pub const ROOT_CACHE: &str = "/var/cache/wopkg";
+pub const ROOT_STATE: &str = "/var/lib/wolos/wopkg/state";
+pub const ROOT_DATA: &str = "/var/lib/wolos/wopkg/data";
+
+/// (home, cache, state, data) from the config's own folders, else `var` (the environment), else
+/// the home's XDG defaults; for root ([`ROOT_CACHE`] ...) under `/var`, and `/root` when root has
+/// no `HOME` (guest-exec, cron, wol-admind's children).
+fn folders(
+    c: &Config,
+    root: bool,
+    var: &dyn Fn(&str) -> Option<PathBuf>,
+) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+    let home = c
+        .home
+        .clone()
+        .or_else(|| var("HOME"))
+        .or_else(|| root.then(|| PathBuf::from("/root")))
+        .ok_or_else(|| Error::invalid("wopkg needs a home folder."))?;
+    let pick = |own: &Option<PathBuf>, xdg: &str, rel: &str, admin: &str| {
+        own.clone().unwrap_or_else(|| match var(xdg) {
+            Some(d) => d.join("wopkg"),
+            None if root => PathBuf::from(admin),
+            None => home.join(rel).join("wopkg"),
+        })
+    };
+    let cache = pick(&c.cache_dir, "XDG_CACHE_HOME", ".cache", ROOT_CACHE);
+    let state = pick(&c.state_dir, "XDG_STATE_HOME", ".local/state", ROOT_STATE);
+    let data = pick(&c.data_dir, "XDG_DATA_HOME", ".local/share", ROOT_DATA);
+    Ok((home, cache, state, data))
+}
+
 impl Context {
     pub fn new(c: Config) -> Result<Context> {
-        let home = c
-            .home
-            .or_else(|| env_dir("HOME"))
-            .ok_or_else(|| Error::invalid("wopkg needs a home folder."))?;
-        let cache = c.cache_dir.unwrap_or_else(|| {
-            env_dir("XDG_CACHE_HOME")
-                .unwrap_or(home.join(".cache"))
-                .join("wopkg")
-        });
-        let state = c.state_dir.unwrap_or_else(|| {
-            env_dir("XDG_STATE_HOME")
-                .unwrap_or(home.join(".local/state"))
-                .join("wopkg")
-        });
-        let data = c.data_dir.unwrap_or_else(|| {
-            env_dir("XDG_DATA_HOME")
-                .unwrap_or(home.join(".local/share"))
-                .join("wopkg")
-        });
+        // SAFETY: geteuid has no preconditions and cannot fail.
+        let root = unsafe { libc::geteuid() } == 0;
+        let (home, cache, state, data) = folders(&c, root, &env_dir)?;
         Ok(Context {
             apps: c.apps_dir.unwrap_or(home.join("Applications")),
             pacman_local: c.pacman_local.unwrap_or_else(default_pacman_local),
@@ -178,6 +195,52 @@ impl Installed {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// QA-STORE-62: the image makes root's folders at boot (tmpfiles.d), state root's alone.
+    #[test]
+    fn tmpfiles_makes_the_root_folders() {
+        let conf = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../files/usr/lib/tmpfiles.d/wolos.conf"
+        ))
+        .unwrap();
+        let mode = |p: &str| {
+            conf.lines()
+                .map(|l| l.split_whitespace().collect::<Vec<_>>())
+                .find(|w| w.first() == Some(&"d") && w.get(1) == Some(&p))
+                .and_then(|w| w.get(2).map(|m| m.to_string()))
+                .unwrap_or_else(|| panic!("tmpfiles makes {p}"))
+        };
+        assert_eq!(mode(ROOT_CACHE), "0755");
+        assert_eq!(mode("/var/cache/wolos/packages"), "0755");
+        for p in ["/var/lib/wolos/wopkg", ROOT_STATE, ROOT_DATA] {
+            assert_eq!(mode(p), "0700", "{p}");
+        }
+    }
+
+    /// QA-STORE-62: root's cache, state and data are under /var (its home is on the sealed
+    /// slot), also without HOME; an XDG variable or the config still wins; a person keeps
+    /// their home's folders, and without HOME is refused with a sentence.
+    #[test]
+    fn root_state_under_var() {
+        let none = |_: &str| None;
+        let (h, c, s, d) = folders(&Config::default(), true, &none).unwrap();
+        assert_eq!(h, Path::new("/root"));
+        assert_eq!(c, Path::new(ROOT_CACHE));
+        assert_eq!(s, Path::new(ROOT_STATE));
+        assert_eq!(d, Path::new(ROOT_DATA));
+        for p in [&c, &s, &d] {
+            assert!(p.starts_with("/var"), "{p:?}");
+        }
+        let xdg = |k: &str| (k == "XDG_STATE_HOME").then(|| PathBuf::from("/x"));
+        let (_, _, s, _) = folders(&Config::default(), true, &xdg).unwrap();
+        assert_eq!(s, Path::new("/x/wopkg"));
+        let home = |k: &str| (k == "HOME").then(|| PathBuf::from("/home/ana"));
+        let (_, c, s, _) = folders(&Config::default(), false, &home).unwrap();
+        assert_eq!(c, Path::new("/home/ana/.cache/wopkg"));
+        assert_eq!(s, Path::new("/home/ana/.local/state/wopkg"));
+        assert!(folders(&Config::default(), false, &none).is_err());
+    }
 
     #[test]
     fn pacman_entry_names() {

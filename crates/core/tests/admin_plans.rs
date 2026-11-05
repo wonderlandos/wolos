@@ -6,9 +6,11 @@
 use shared::admin::{AdminAction, AdminRequest};
 
 /// Programs of the installed image that `core::admin` may name in an `argv(&[..])` plan.
-const IMAGE_PROGRAMS: [&str; 8] = [
+const IMAGE_PROGRAMS: [&str; 9] = [
     "flatpak",
     "hostnamectl",
+    // coreutils (base): the resolved.conf.d drop-in directory of DNS over TLS (NET-3).
+    "mkdir",
     "modprobe",
     "nmcli",
     "pacman",

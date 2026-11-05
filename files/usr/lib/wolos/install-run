@@ -33,7 +33,7 @@
 # Without a plan (autoinstall) the same choices come from the environment: WOLOS_HOSTNAME (checked
 # by `wol install hostname`, default wolos), WOLOS_AUTOLOGIN=yes|no, WOLOS_SWAP=none|zram|swapfile:<GiB> (default zram).
 # Env (tests): WOLOS_INSTALL_PATH, WOLOS_INSTALL_ROOT (/mnt/wolos), WOLOS_SOURCE_SFS, WOLOS_NO_INHIBIT,
-# WOLOS_RESULT_DIR, WOLOS_INSTALL_LOG.
+# WOLOS_RESULT_DIR, WOLOS_INSTALL_LOG, WOLOS_PROC (/proc: who holds the disk open).
 set -u
 PATH=${WOLOS_INSTALL_PATH:-/usr/bin:/usr/sbin}; export PATH
 # Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
@@ -155,6 +155,42 @@ wol install mounts "$disk" | while read -r what m; do
     swap:*) swapoff "$m" ;;
   esac
 done
+# Right before the partition table changes, everything still holding the disk lets go: the
+# target's mounts, loops over it, its mounts and swap, the volumes opened over its partitions
+# (a try cut short by a power loss or a stop leaves any of them; IMG013-INSTALL-AFTER-CUT), then
+# udev finishes probing what changed. Only after every check: a refused disk keeps them.
+release() {
+  ! mountpoint -q "$T" 2>/dev/null || umount -R "$T" || :
+  wol install mounts "$disk" | while read -r what m; do
+    case $what:$m in
+      mount:/ | mount:/run/archiso*) ;;
+      detach:*) losetup -d "$m" || : ;;
+      mount:*) umount "$m" || : ;;
+      swap:*) swapoff "$m" || : ;;
+      close:*) cryptsetup close "$m" 2>/dev/null || dmsetup remove --retry "$m" || : ;;
+    esac
+  done
+  udevadm settle || :
+}
+# What still holds the disk, for the fail line: `wol install mounts`, then the processes that
+# have one of its devices open: the disk or a partition named as part() names them
+# (/dev/nvme0n1p2, /dev/sda2; never /dev/nvme0n10, another disk).
+held() {
+  h=$(wol install mounts "$disk" | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+  case $disk in *[0-9]) pp=${disk}p ;; *) pp=$disk ;; esac
+  for f in "${WOLOS_PROC:-/proc}"/[0-9]*/fd/*; do
+    t=$(readlink "$f" 2>/dev/null) || continue
+    if [ "$t" != "$disk" ]; then
+      case $t in "$pp"[0-9]*) ;; *) continue ;; esac
+      case ${t#"$pp"} in *[!0-9]*) continue ;; esac
+    fi
+    p=${f#"${WOLOS_PROC:-/proc}"/}; p=${p%%/*}
+    # A process names itself: one line, no pipes, as why() keeps the fail line.
+    c=$(tr -d '|\n\r' < "${WOLOS_PROC:-/proc}/$p/comm" 2>/dev/null) && [ -n "$c" ] || c='?'
+    case ", $h," in *", process $p ($c),"*) ;; *) h="${h:+$h, }process $p ($c)" ;; esac
+  done
+  echo "${h:-nothing it can name}"
+}
 # Every check before the first write: a refused disk is left exactly as it was.
 facts=$(sh "$here/install-check" "$disk") || refuse "not a disk the installer may erase: $disk"
 others=$(printf '%s\n' "$facts" | grep -c '^os ')
@@ -171,6 +207,25 @@ done
 # The same check refuses what would otherwise fail after the erase (settings, account name, password).
 if [ -n "$plan" ]; then
   verdict=$(wol install check "$plan") || refuse "the disk is not what the plan was made for${verdict:+ ($verdict)}"
+fi
+# The processor against the image (docs/modules/x86-64-v3.md): WOLOS_MIN_CPU_LEVEL, else the file
+# /usr/share/wolos/min-cpu-level (absent or 1: every 64-bit PC), is the lowest x86-64 level this
+# image runs on; below it nothing is written. Below v3 (no AVX2) the install goes on with the
+# standard builds, which is all `wol mirror gate` leaves on there, and the log says so.
+cpu_level=$(wol mirror status --json 2>/dev/null | sed -n 's/.*"level":\([0-9]*\).*/\1/p')
+cpu_need=${WOLOS_MIN_CPU_LEVEL:-$(cat "${WOLOS_MIN_CPU_FILE:-/usr/share/wolos/min-cpu-level}" 2>/dev/null)}
+case ${cpu_level:-} in '' | *[!0-9]*) cpu_level=0 ;; esac
+case ${cpu_need:-} in '' | *[!0-9]*) cpu_need=1 ;; esac
+case $cpu_need in 2) cpu_words=SSE4.2 ;; 3) cpu_words=AVX2 ;; *) cpu_words=AVX-512 ;; esac
+if [ "$cpu_level" -lt 1 ]; then
+  # Unknown is not old: at the baseline the install goes on, above it nothing is written.
+  echo "install-run: the processor level could not be read" >&2
+  [ "$cpu_need" -le 1 ] || refuse "the processor could not be identified, and this WolOS needs $cpu_words"
+elif [ "$cpu_level" -lt "$cpu_need" ]; then
+  refuse "this processor is too old for this WolOS (it needs $cpu_words)"
+fi
+if [ "$cpu_level" -ge 1 ] && [ "$cpu_level" -lt 3 ]; then
+  echo "install-run: this processor has no AVX2: the standard builds are installed, everything works" >&2
 fi
 cleanup() {
   sync; umount -R "$T" 2>/dev/null || :
@@ -189,16 +244,37 @@ KEYDIR=${WOLOS_KEYDIR:-/run/wolos/install-keys}
 if [ "$unlock" != off ]; then
   (umask 077 && mkdir -p "$KEYDIR" && head -c 64 /dev/urandom > "$KEYDIR/key") || fail "could not make the disk key"
 fi
-if [ "$wipe" = 1 ]; then
-  say disk 5 "Erasing $disk"
-  # systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
+# systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
+# The live system may still hold the old partitions (udev probing what a cut install left): repart's
+# first add then fails 'Device or resource busy' (QA-DOC-28). release() (above) lets go of what
+# holds the disk; forget() has the kernel forget the old partitions and drops the old table first.
+forget() {
+  udevadm settle
+  partx -d "$disk" >/dev/null 2>&1 || :
+  wipefs -a -q "$disk" >/dev/null 2>&1 || :
+  udevadm settle
+}
+repart() {
   if [ "$unlock" = off ]; then
-    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >&2 ||
-      fail "could not partition $disk"
+    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >&2
   else
     systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d-crypt" \
-      --key-file="$KEYDIR/key" "$disk" >&2 || fail "could not partition $disk"
+      --key-file="$KEYDIR/key" "$disk" >&2
   fi
+}
+release
+if [ "$wipe" = 1 ]; then
+  say disk 5 "Erasing $disk"
+  # Busy (something opened a partition after the release, udev still probing): let go once more,
+  # forget the old table again and try once more; still busy, the fail line says what holds it.
+  forget
+  repart || {
+    echo "install-run: $disk was busy; letting it go again and trying once more" >&2
+    sleep 1
+    release
+    forget
+    repart
+  } || fail "could not partition $disk (held by: $(held))"
   udevadm settle
   esp=$(part 1); root=$(part 2); fsdev=$root
   # Erased: whatever install-check saw on the disk is gone, so no menu waits for it.
@@ -240,6 +316,9 @@ else
   mkdir -p "$T/home" "$T/var" "$T/efi"
 fi
 [ -z "$var_dev" ] || mount "$var_dev" "$T/var" || fail "could not mount the new system"
+# The homes' subvolume is capped at 85 % of the pool before any account exists, so no account can
+# fill the share of the system (QA-LIVE-17, ADR 0023). Best effort: it never stops an install.
+[ -n "$home_dev" ] || /usr/lib/wolos/home-quota "$T/home" >&2 || true
 mount "$esp" "$T/efi" || fail "could not mount the new system"
 # A startup partition another WolOS used. The WolOS this plan replaces gives its startup files up
 # (`wol install layout` says esp_wolos=1 only when no WolOS system stays, audit3 R2B-5): they go
@@ -348,6 +427,10 @@ fi
 if [ -n "$plan" ]; then
   say settings 68 "Setting the language and keyboard"
   wol install settings "$plan" "$T" || fail "could not set the language and time zone"
+else
+  # No plan (autoinstall): the languages Settings offers are still generated here, the root is sealed
+  # later and the first boot cannot (QA-FDAY-2).
+  wol install locales "$T" || fail "could not generate the languages"
 fi
 say initramfs 70 "Building the startup image"
 # `wol mirror gate` turns the optimized x86-64-v3 repo sections on only where the CPU runs them (ADR

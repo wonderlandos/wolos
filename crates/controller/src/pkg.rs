@@ -45,8 +45,65 @@ const UNCHANGED: &str = "Nothing was changed. Try again, or run `wol update` fir
 const PENDING_LOST: &str = "Nothing was changed, and the change that waited for a restart was \
                             removed with it. Run it again, or run `wol update` first.";
 
+/// A download-only run on a sealed system: pacman cannot take its lock in the database on the
+/// read-only slot (QA-STORE-72: "could not lock database: Read-only file system"), so it works
+/// against a temporary copy (`local` linked, `sync` copied), as `update-download` does. The
+/// packages land in the cache as always; the live database is not touched.
+fn download(env: &mut dyn Env, args: &[String]) -> i32 {
+    let tmp = capture(
+        env,
+        &[
+            "mktemp".into(),
+            "-d".into(),
+            "/var/tmp/wolos-download-db.XXXXXX".into(),
+        ],
+    )
+    .map(|t| t.trim().to_owned())
+    .filter(|t| t.starts_with('/'));
+    let Some(tmp) = tmp else {
+        env.err(
+            "wol pkg: a temporary package database could not be made. Nothing was downloaded.\n",
+        );
+        return 1;
+    };
+    let db = live_db(env);
+    let s = |a: &[&str]| a.iter().map(|x| (*x).to_owned()).collect::<Vec<String>>();
+    // pacman's download user must be able to look in; the folder holds a link and public lists.
+    let ready = env.exec(&s(&["chmod", "755", &tmp])).unwrap_or(127) == 0
+        && env
+            .exec(&s(&[
+                "ln",
+                "-s",
+                &format!("{db}/local"),
+                &format!("{tmp}/local"),
+            ]))
+            .unwrap_or(127)
+            == 0;
+    let code = if ready {
+        // No sync folder yet: `-y` makes it.
+        let _ = env.exec(&s(&["cp", "-a", &format!("{db}/sync"), &format!("{tmp}/")]));
+        let mut a = vec!["--dbpath".to_owned(), tmp.clone()];
+        a.extend(args.iter().cloned());
+        real(env, &a)
+    } else {
+        env.err(
+            "wol pkg: a temporary package database could not be set up. Nothing was downloaded.\n",
+        );
+        1
+    };
+    let _ = env.exec(&s(&["rm", "-rf", &tmp]));
+    code
+}
+
 pub fn run(env: &mut dyn Env, args: &[String]) -> i32 {
     let pkg::Kind::Change(c) = pkg::classify(args) else {
+        if pkg::needs_scratch_db(args) && env.is_root() {
+            let cmdline = env.read_file(Path::new("/proc/cmdline"));
+            let ro = env.capture(&pkg::RO_ARGV);
+            if pkg::is_sealed(cmdline.as_deref(), ro.as_deref()) {
+                return download(env, args);
+            }
+        }
         return real(env, args);
     };
     let cmdline = env.read_file(Path::new("/proc/cmdline"));
@@ -130,7 +187,8 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
     // R2C-1: a number is never handed out twice, even after `wol layers clear` removed it.
     let n = layers::next_index(&ls, &counter, &folded);
     let before = capture(env, &[up::PACMAN.to_owned(), "-Q".into()]).unwrap_or_default();
-    for (i, s) in layers::begin(n, args).iter().enumerate() {
+    let db = live_db(env);
+    for (i, s) in layers::begin(n, args, &db).iter().enumerate() {
         // The first step creates /var/lib/wolos/layers; record the number right after it.
         let ok = run_step(env, s)
             && (i != 0
@@ -150,11 +208,28 @@ fn in_layer(env: &mut dyn Env, args: &[String]) -> Outcome {
             return Outcome::Unchanged;
         }
     }
-    // Still mounted: the chroot shows the layer's database even under /usr (CORE-2).
-    let after_argv = layers::after_query(&live_db(env));
-    let after = capture(env, &after_argv).unwrap_or_default();
+    // Queried in the chroot's namespace: it shows the layer's database even under /usr (CORE-2).
+    let after = env.read_file(Path::new(&layers::after_path(n)));
+    // A query that failed in the namespace leaves nothing to compare: an empty answer read as
+    // "everything was removed" wrote a record that emptied the next slot's database (QA-A7-4).
+    if !layers::readable(&before, after.as_deref()) {
+        env.err("wol pkg: the new layer could not be read back, so it was thrown away.\n");
+        for a in layers::abort(n) {
+            let _ = env.exec(&a);
+        }
+        return Outcome::Unchanged;
+    }
+    let rec = layers::delta(&before, after.as_deref().unwrap_or_default());
+    // A change that changed nothing (`-S --needed` of a present package) leaves no layer: an
+    // empty one was merged as one more overlay until the next update (QA-STORE-71).
+    if rec.installed.is_empty() && rec.removed.is_empty() {
+        for a in layers::abort(n) {
+            let _ = env.exec(&a);
+        }
+        return Outcome::Done;
+    }
     // pacman has committed: from here on the layer is the change and is never removed (CORE-5).
-    for s in layers::finish(n, &layers::delta(&before, &after)) {
+    for s in layers::finish(n, &rec) {
         if !run_step(env, &s) {
             env.err(&format!(
                 "wol pkg: {s} did not finish; the layer merges at the next boot\n"
@@ -321,6 +396,56 @@ fn other_folded(env: &dyn Env) -> Option<String> {
     let etc = env.read_file(&root.join(layers::ETC_FOLDED));
     (usr.is_some() || etc.is_some())
         .then(|| layers::folded_list(usr.as_deref(), etc.as_deref()).to_owned())
+}
+
+/// `wol layers list [--json]`: the live layers (packages installed with `wol pkg` since the system
+/// was last updated), oldest first, each with its packages, size, date and what happens to it next.
+/// Needs no administrator: the folder and the records are readable.
+pub fn list(env: &mut dyn Env, inv: &Invocation) -> i32 {
+    // No folder (a machine without layers) is no layers; a size or a date that cannot be read is
+    // shown as unknown ("-"), never as 0 bytes (the listing says what it could not read).
+    let ls = capture(env, &["ls".into(), "-1".into(), layers::DIR.into()]).unwrap_or_default();
+    let names: Vec<String> = ls
+        .lines()
+        .map(str::trim)
+        .filter(|n| layers::is_layer_name(n))
+        .map(str::to_owned)
+        .collect();
+    let (du, dates) = if names.is_empty() {
+        (None, None)
+    } else {
+        (
+            capture(env, &layers::size_argv(&names)),
+            capture(env, &layers::date_argv()),
+        )
+    };
+    let folded = booted_folded(env);
+    let rows = layers::list(
+        &ls,
+        du.as_deref(),
+        dates.as_deref(),
+        |n| env.read_file(&Path::new(layers::DIR).join(n).join(layers::RECORD)),
+        &folded,
+    );
+    if inv.flag("json") {
+        let v: Vec<serde_json::Value> = rows
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "name": r.name,
+                    "bytes": r.bytes,
+                    "date": r.date,
+                    "installed": r.installed,
+                    "removed": r.removed,
+                    "state": r.state.id(),
+                })
+            })
+            .collect();
+        crate::run::emit_json(env, &serde_json::Value::Array(v));
+    } else {
+        env.out(&layers::table(&rows));
+    }
+    0
 }
 
 /// `wol layers clear`: on the slot that just booted, remove the live layers it already holds

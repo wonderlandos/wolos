@@ -133,9 +133,10 @@ fn allowed_once_runs_and_is_logged() {
     );
     let a = audit(&d);
     assert_eq!(a.len(), 1);
+    // QA-PLUG-25: the audit names the program too, as the policy and the sheet do.
     assert_eq!(
         (a[0]["helper"].as_str(), a[0]["result"].as_str()),
-        (Some("Claude Code"), Some("approved"))
+        (Some(seen[0].helper.as_str()), Some("approved"))
     );
     let _ = std::fs::remove_dir_all(&d);
 }
@@ -165,5 +166,85 @@ fn no_shell_listening_is_refused() {
     );
     assert!(!d.join("config/wolos/theme").exists());
     assert_eq!(audit(&d)[0]["result"], "refused");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+/// QA-PLUG-62: the MCP client goes away while its sheet is on screen (here: the `sh` that started
+/// `wol mcp` exits after 1 s); a later Allow Once must not run the change. `wol mcp` drops the
+/// request when the program that started it is gone, closes the sheet's connection (the shell
+/// sees the hang-up) and logs a refusal.
+#[test]
+fn eof_cancels_pending_request() {
+    let d = temp("gone");
+    let l = UnixListener::bind(d.join("run/wol-shell.sock")).unwrap();
+    // The sheet is on screen and nobody answers; the shell sees whether the requester hangs up
+    // (poll reports HUP once the peer has closed both directions; a half-close is not one).
+    let shell = std::thread::spawn(move || {
+        use std::os::fd::AsRawFd;
+        let (s, _) = l.accept().unwrap();
+        let mut line = String::new();
+        BufReader::new(&s).read_line(&mut line).unwrap();
+        assert!(line.starts_with("approve "), "{line}");
+        let mut p = libc::pollfd {
+            fd: s.as_raw_fd(),
+            events: 0,
+            revents: 0,
+        };
+        // SAFETY: one valid pollfd, one entry.
+        unsafe { libc::poll(&mut p, 1, 20_000) };
+        p.revents & (libc::POLLHUP | libc::POLLERR) != 0
+    });
+    let msgs = [
+        json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                       "clientInfo": {"name": "Gone-client", "version": "1"}}
+        }),
+        json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+        dark(2),
+    ];
+    let input: String = msgs.iter().map(|m| format!("{m}\n")).collect();
+    std::fs::write(d.join("in.jsonl"), input).unwrap();
+    // The client: starts `wol mcp` with an open pipe on stdin, then exits after 1 s.
+    let start = std::time::Instant::now();
+    let mut client = Command::new("sh")
+        .arg("-c")
+        .arg("(cat \"$1\"; sleep 30) | \"$0\" mcp & sleep 1")
+        .arg(env!("CARGO_BIN_EXE_wol"))
+        .arg(d.join("in.jsonl"))
+        .env_clear()
+        .env("HOME", &d)
+        .env("PATH", "/usr/bin:/bin")
+        .env("XDG_RUNTIME_DIR", d.join("run"))
+        .env("XDG_CONFIG_HOME", d.join("config"))
+        .env("XDG_STATE_HOME", d.join("state"))
+        .env("XDG_DATA_HOME", d.join("data"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    client.wait().unwrap();
+    // `wol mcp` inherited the pipe: its end of file is its exit, after it logged the refusal.
+    let mut reply = String::new();
+    std::io::Read::read_to_string(&mut client.stdout.take().unwrap(), &mut reply).unwrap();
+    assert!(reply.contains("\"isError\":true"), "{reply}");
+    assert!(
+        shell.join().unwrap(),
+        "wol mcp closed the sheet's connection"
+    );
+    assert!(
+        !d.join("config/wolos/theme").exists(),
+        "the change ran after the client was gone"
+    );
+    let a = audit(&d);
+    assert_eq!(a.len(), 1, "{a:?}");
+    assert_eq!(a[0]["result"], "refused", "{a:?}");
+    assert!(
+        a[0]["detail"].as_str().unwrap_or_default().contains("gone")
+            || a[0].to_string().contains("gone"),
+        "{a:?}"
+    );
+    assert!(start.elapsed() < Duration::from_secs(20));
     let _ = std::fs::remove_dir_all(&d);
 }

@@ -23,6 +23,24 @@ lib LibRealtime
   WOL_KEYF_SHELL_LAYER_MAPPED =    64_u32
   WOL_LINE_NONE               =         0
   WOL_ACTION_CONSUME          = 0x100_u32
+  WOL_SNAP_NONE               =         0
+  WOL_SNAP_LEFT               =         1
+  WOL_SNAP_RIGHT              =         2
+  WOL_SNAP_ZOOM               =         3
+  WOL_SNAP_TOP_LEFT           =         4
+  WOL_SNAP_TOP_RIGHT          =         5
+  WOL_SNAP_BOTTOM_LEFT        =         6
+  WOL_SNAP_BOTTOM_RIGHT       =         7
+  WOL_SNAP_OPEN_LEFT          =     1_u32
+  WOL_SNAP_OPEN_RIGHT         =     2_u32
+  WOL_SNAP_OPEN_TOP           =     4_u32
+  WOL_SNAP_OPEN_BOTTOM        =     8_u32
+  WOL_SNAP_STAY               =         0
+  WOL_SNAP_TO                 =         1
+  WOL_SNAP_RESTORE            =         2
+  WOL_SNAP_MINIMISE           =         3
+  WOL_SNAP_MOVE_TILED         =         4
+  WOL_SNAP_ZOOM_TILED         =         5
 
   struct WolVisual
     scale : Float32
@@ -52,6 +70,13 @@ lib LibRealtime
   fun wol_placement_limits(cur_w : Int32, cur_h : Int32, min_w : Int32*, min_h : Int32*, max_w : Int32*, max_h : Int32*) : Int32
   fun wol_keys_step(state : UInt32, key : Int32, flags : UInt32, action : UInt32*) : UInt32
   fun wol_keys_line(code : Int32) : UInt8*
+  fun wol_snap_zone_at(sx : Int32, sy : Int32, sw : Int32, sh : Int32, open : UInt32, px : Int32, py : Int32) : Int32
+  fun wol_snap_box(zone : Int32, ax : Int32, ay : Int32, aw : Int32, ah : Int32, outer : Int32, inner : Int32, x : Int32*, y : Int32*, w : Int32*, h : Int32*) : Int32
+  fun wol_snap_key(now : Int32, key : Int32, tiled : Int32, zoomed : Int32) : Int32
+  fun wol_snap_unsnap(cx : Int32, cy : Int32, cw : Int32, ch : Int32, w : Int32, h : Int32, px : Int32, py : Int32, x : Int32*, y : Int32*)
+  fun wol_snap_still(x : Int32, y : Int32, w : Int32, h : Int32, sx : Int32, sy : Int32, sw : Int32, sh : Int32) : Int32
+  fun wol_snap_zone_name(code : Int32) : UInt8*
+  fun wol_snap_layouts_dwell_ms : UInt64
   fun wol_qos_foreground(pid : Int32) : Int32
   fun wol_frame_record(begin_ns : UInt64, end_ns : UInt64, damage_px : UInt64, screen_px : UInt64, passes : UInt32)
   fun wol_frame_stats_json(buf : UInt8*, len : LibC::SizeT) : Int32

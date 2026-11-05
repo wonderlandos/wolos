@@ -602,12 +602,18 @@ fn plan_pin_full(
 pub fn pin(index: &ShardIndex, dir: &Path, names: &[String], update: bool) -> Result<Pinned> {
     let yml = read_project(dir)?;
     let (text, lock, changed, locked) = plan_pin_full(index, &yml, names, update)?;
-    let cant = |p: &Path| Error::unavailable(format!("{} cannot be written.", p.display()));
+    // The file's name, not its folder; the disk being full is named (QA-STORE-24).
+    let cant = |p: &Path, e: std::io::Error| {
+        let name = p
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        crate::fetch::write_error(&e, &format!("{name} cannot be written."))
+    };
     let (yp, lp) = (dir.join(YML), dir.join(LOCK));
     if text != yml {
-        shared::atomic::atomic_write(&yp, 0o644, text.as_bytes()).map_err(|_| cant(&yp))?;
+        shared::atomic::atomic_write(&yp, 0o644, text.as_bytes()).map_err(|e| cant(&yp, e))?;
     }
-    shared::atomic::atomic_write(&lp, 0o644, lock.as_bytes()).map_err(|_| cant(&lp))?;
+    shared::atomic::atomic_write(&lp, 0o644, lock.as_bytes()).map_err(|e| cant(&lp, e))?;
     Ok(Pinned {
         changed,
         locked,
@@ -863,10 +869,10 @@ pub fn refresh(
         last,
         crate::release::unix_now(),
     )?;
-    let cant = || Error::unavailable("The shard list cannot be saved.");
-    std::fs::create_dir_all(dir).map_err(|_| cant())?;
+    let cant = |e: std::io::Error| crate::fetch::write_error(&e, "The shard list cannot be saved.");
+    std::fs::create_dir_all(dir).map_err(cant)?;
     for (name, bytes) in [(SIG_FILE, &sig), (INDEX_FILE, &text)] {
-        shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(|_| cant())?;
+        shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(cant)?;
     }
     Ok(i)
 }
@@ -888,7 +894,20 @@ pub fn load(
     if fresh {
         return refresh(net, url, dir, keys).or_else(|e| cached(dir, keys).map_err(|_| e));
     }
-    cached(dir, keys).or_else(|_| refresh(net, url, dir, keys))
+    // The cache is downloaded again once half of the time it had left is gone, or after a day
+    // for a list without an `expires`, so a list that never expires does not stay for good
+    // (QA-STORE-21); the cached copy is kept when that download fails (offline).
+    match cached(dir, keys) {
+        Ok(i) => {
+            let fetched = super::plugins::fetched_at(&dir.join(INDEX_FILE));
+            if super::plugins::is_stale(fetched, i.expires, crate::release::unix_now()) {
+                Ok(refresh(net, url, dir, keys).unwrap_or(i))
+            } else {
+                Ok(i)
+            }
+        }
+        Err(_) => refresh(net, url, dir, keys),
+    }
 }
 
 // ---- The JSON requests of the C entry points (wopkg.h `wopkg_shard_*`) ----
@@ -1353,6 +1372,57 @@ mod tests {
         // A changed cache is refused on read.
         std::fs::write(dir.join(INDEX_FILE), b"{\"format\":1,\"shards\":[]}").unwrap();
         assert!(cached(&dir, &keys).is_err());
+    }
+
+    /// QA-STORE-21: a cached list without `expires` older than a day is downloaded again by a
+    /// plain load (no --fresh); a young one is not; an offline load keeps the old one.
+    #[test]
+    fn an_old_cached_list_is_downloaded_again() {
+        use crate::testutil::{Served, serve, temp};
+        let keys = [wol_core::package::public_of(&SEED)];
+        let list = |serial: u64| {
+            serde_json::to_vec(&serde_json::json!({
+                "format": 1, "serial": serial, "expires": 0,
+                "shards": [entry("wolkit", C1, &[])]
+            }))
+            .unwrap()
+        };
+        let (five, six) = (list(5), list(6));
+        let s = serve(vec![
+            ("/five/index.json", Served::bytes(five.clone())),
+            (
+                "/five/index.json.sig",
+                Served::bytes(wol_core::package::sign(&SEED, &five).to_vec()),
+            ),
+            ("/six/index.json", Served::bytes(six.clone())),
+            (
+                "/six/index.json.sig",
+                Served::bytes(wol_core::package::sign(&SEED, &six).to_vec()),
+            ),
+        ]);
+        let net = crate::fetch::Net::new(true);
+        let dir = temp("shard-stale");
+        let get = |p: &str| load(&net, &s.url(p), &dir, &keys, false).unwrap().serial;
+        assert_eq!(get("/five/index.json"), 5);
+        // Young: the cache answers, the other list is not even asked for.
+        assert_eq!(get("/six/index.json"), 5);
+        // Two days old: downloaded again, and an unreachable server keeps the old one.
+        let age = |secs: u64| {
+            let t = std::time::SystemTime::now() - std::time::Duration::from_secs(secs);
+            std::fs::File::options()
+                .write(true)
+                .open(dir.join(INDEX_FILE))
+                .unwrap()
+                .set_modified(t)
+                .unwrap();
+        };
+        age(2 * 86_400);
+        assert_eq!(get("/missing/index.json"), 5);
+        assert_eq!(get("/six/index.json"), 6);
+        // An older serial offered on the next day's download is refused; the cache stays.
+        age(2 * 86_400);
+        assert_eq!(get("/five/index.json"), 6, "never goes back");
+        assert_eq!(get("/missing/index.json"), 6);
     }
 
     /// The signed list the wopkg Crystal specs use (`wopkg/spec/fixtures/shards/`), signed by the

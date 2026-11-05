@@ -249,7 +249,7 @@ fn root_package_changes_need_an_administrator_and_a_fresh_password() {
     for (action, args) in [
         (AdminAction::PkgInstallFile, vec![staged.as_str(), FAKE_SHA]),
         (AdminAction::SystemRollback, vec![]),
-        (AdminAction::SystemChannel, vec!["beta"]),
+        (AdminAction::SystemChannel, vec!["stable"]),
     ] {
         let good = encode(&req(action, &args), b"good");
         let none = encode(&req(action, &args), b"");
@@ -273,7 +273,7 @@ fn root_package_changes_need_an_administrator_and_a_fresh_password() {
         *os.wrote.borrow(),
         [(
             wol_core::admin::CHANNEL_FILE.to_owned(),
-            "beta\n".to_owned()
+            "stable\n".to_owned()
         )]
     );
     for path in ["/home/bob/evil-1-1-any.pkg.tar.zst", "/tmp/x.pkg.tar.zst"] {
@@ -1486,6 +1486,30 @@ fn reports_and_metered_switches_are_administrator_changes() {
     let (path, text) = wrote.last().unwrap();
     assert_eq!(path, wol_core::update::auto::FILE);
     assert!(text.contains("metered=on"), "{text}");
+}
+
+/// IMAGE-F: the two changes `wol doctor hardware` offers (the repo gate, Intel's cooling helper) are
+/// administrator changes: refused for a standard account, one command each for an administrator.
+#[test]
+fn the_hardware_doctor_actions_are_administrator_changes() {
+    let os = Fake::default();
+    let cache = Shared::default();
+    for (action, args, ran) in [
+        (AdminAction::MirrorGate, vec![], "wol mirror gate --yes"),
+        (
+            AdminAction::CoolingHelper,
+            vec!["on"],
+            "systemctl enable --now thermald.service",
+        ),
+    ] {
+        let good = encode(&req(action, &args), b"good");
+        assert_eq!(handle(&good, BOB, &cache, &os), AdminReply::NotAdmin);
+        assert_eq!(handle(&good, ANN, &cache, &os), AdminReply::Ok);
+        assert_eq!(
+            os.ran.borrow().last().map(|a| a.join(" ")).as_deref(),
+            Some(ran)
+        );
+    }
 }
 
 /// QA-100 NET2: a join that fails (wrong password) deletes the profile it made, once, after the

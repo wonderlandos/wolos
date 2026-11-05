@@ -35,6 +35,19 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   run the check now, then read the same files; a stamp older than the request means it could not
   refresh, and an empty list is then never shown as "up to date".
 - Release manifest: version, Arch snapshot date, `[wolos]` revision, linux-wolos version, image URL and sha256.
+- Computers still on 0.12.0 (QA-UPG-1). Their daily check (wolos-system 0.12.0-2, the script of tag v0.12.0)
+  runs `checkupdates` first; it needs fakeroot, which the image does not ship, so the check stops there every
+  time: no stamp, no package list, no release manifest. Nothing a server publishes reaches that check. What does
+  reach 0.12.0: Settings > Software Update > Check Now (`pkg-refresh`, then `pacman -Qu`), which lists newer
+  packages of the `[wolos]` repo its mirror list names (release `wolos-2026-10-31` of wolos-packages). So a release
+  is found by 0.12.0 only when (1) a newer `wolos-system`, with today's update-check, is in that repo (then Check Now
+  shows it, and after it is installed the daily check works), and (2) the latest GitHub release of wolos-packages,
+  the only address 0.12.0 reads, carries `release.json` and `release.json.sig` that 0.12.0 accepts: the strings
+  `version` (not empty), `snapshot` (`YYYY/MM/DD`), `wolos_repo`, `kernel`, `image`, `sha256` (64 hex digits), any
+  other field ignored, signed (raw Ed25519, 64 bytes) by `wolos-2026.pub` or `wolos-2026b.pub`. The release tooling
+  writes that form (wolos-iso `release/release-manifest.sh`, wolos-build `release --iso` marks a stable release
+  the latest); **CI** the controller tests `the_0120_client_reads_the_published_release` and
+  `check_runs_without_checkupdates_or_fakeroot` fail when either side changes.
 - Update Now (wol-admind `pkg-upgrade`) = `pacman -Syu` inside the release (only `[wolos]` moves), made in the
   other root slot by the same builder as the pacman wrapper below (`wol_core::update::pkg::slot_change`). The running
   slot is the restore point Software Update promises: wol-admind logs its name before the first step, and no step
@@ -60,9 +73,11 @@ On from the first boot (ADR 0040). Code: `wol_core::security` (defaults, status)
   new slot is blessed (a good boot, `boot-ok`). Kernel, initramfs and systemd packages and `-Syu` (also `-Syu <pkg>`) go to
   the pending slot instead (taking effect at the next restart; a second change stacks on it); queries pass through.
   A change that fails before pacman commits leaves nothing; one that fails after pacman committed keeps its layer, which
-  merges at the next restart.
+  merges at the next restart. `wol layers list` (no administrator, `--json` too) shows the live layers: each one's packages
+  added and removed, size, date and whether it is still live only (folded at the next update) or already part of this
+  system (removed at the next restart).
 - Developer mode: `wol seal off` (root) makes the running system writable and stops the boot check until the next update.
-- `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones.
+- `wol base verify` checks every file in `/usr/share/wolos/base.manifest` (sha256) and lists changed or missing ones: the first 20 on a terminal, and in `--json` up to 500 in `findings` with the whole count in `findings_total` (`changed`, `missing`, `truncated`; QA-LIVE3-25).
 
 ## Malware check (ADR 0024, 0027)
 A layer of protection against known malware. Code: `crates/xguard`, `wol_core::malware`. Runs on this computer only: no file, hash or verdict leaves it, and sample submission does not exist.
@@ -129,7 +144,7 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 
 | Permission | Enforced by | Why |
 |---|---|---|
-| Screen capture, cursor position, input capture | The compositor (`hypr/permissions.lua`, `hl.permission` calls, first match wins) | Only the portal and WolOS's own tools (`security::SCREENCOPY_SYSTEM`) copy the screen directly. Apps ask through the portal, which asks which screen to share. The rules are static (`security::hypr_permissions`): no grant adds a program to them. |
+| Screen capture, cursor position, input capture | The compositor (`hypr/permissions.lua`, `hl.permission` calls, first match wins) | Only the portal and WolOS's own tools (`security::SCREENCOPY_SYSTEM`, which includes the colour picker `hyprpicker` of Ctrl+Super+P) copy the screen directly. Apps ask through the portal, which asks which screen to share. The rules are static (`security::hypr_permissions`): no grant adds a program to them. |
 | X11 apps (Xwayland) | Xwayland's access list (`hyprland.lua`: `xhost +si:localuser`, `-local:`, `-`) | Xwayland starts without an auth cookie. Only the signed-in account may connect to its X server; other accounts, system users and root may not. Within one account, every X11 app can read the keys and the screen of every other X11 window: X11 apps share one trust domain per account. Wayland apps are not affected. |
 | Compositor plugins | The compositor | Loaded only from `/usr/lib/hyprland/plugins` (`security::PLUGIN_DIR`). |
 | Camera | advisory | Every account needs group video for the GPU, and `/dev/video*` belongs to it. |
@@ -140,6 +155,8 @@ For installers (wopkg and the like): `libxguard.so.1` (`include/xguard.h`) or `w
 Advisory means a grant is recorded and shown to helpers that ask. An app that ignores it is not stopped. Settings says which kind each permission is (`security::enforcement`).
 
 Screen recording is not a grant in the consent database (`/etc/wolos/consent.json`, `consent::SCREEN_CAPTURE`): nothing would read it, since the compositor rules are static and every app asks through the portal each time. The administrator `consent` action refuses it (`consent::refusal`), an old `screen-capture` entry is ignored when the file is read and dropped the next time it is written, and Settings > Privacy & Security shows one row saying apps ask each time, not a switch per app.
+
+Bundled apps work on a fresh system through vendor defaults: a package of a WolOS app installs `/usr/share/wolos/consent.d/<app>.json` (`consent::DEFAULTS_DIR`, the same `{"grants":[...]}` shape; Gallery's is `wolos-crystal/apps/gallery/org.wolos.gallery.consent.json`, `trash` and `share`). Wold and Settings hold what the person has not switched off plus the person's own grants (`consent::effective`); a default is accepted only for a program directly in `/usr/bin` and only for the harmless verbs in `consent::DEFAULTABLE` (`trash`, `share`, `notifications`, `file-panels`, `app-preferences`, `search-provider`), anything else in the file is ignored. Switching a default off in Settings writes the pair to `"revoked"` in `/etc/wolos/consent.json` (`consent::set_over`) and switching it on removes it, so the choice survives updates and the package never touches the person's file. A consent file that is not valid JSON grants nothing, defaults included.
 
 An app with no grant is refused: that is the default for an app WolOS has never seen (ADR 0040). So that the refusal's "Turn them on in System Settings > Privacy & Security" leads to a switch, wold notes each refused (app, capability) once in the account's own list, `/var/lib/wolos/consent-asked/<uid>.json` (`consent::ASKED_DIR`, `{"asked":[{"app","capability"}]}`, newest 64, owned by the account, mode 0600, read at most 64 KiB; `portal::Remembering`). Settings lists those apps under their permission with the switch off; turning it on is the administrator `consent` action as for any grant. The list grants nothing: the consent database alone decides.
 

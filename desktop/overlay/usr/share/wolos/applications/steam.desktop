@@ -10,3 +10,4 @@ Categories=Game;
 MimeType=x-scheme-handler/steam;x-scheme-handler/steamlink;
 StartupWMClass=steam
 PrefersNonDefaultGPU=true
+X-WolOS-Surfaces=S05;S27

@@ -416,73 +416,6 @@ fn scrolled_content_is_hit_where_it_is_drawn() {
     assert!(kinds(&w.events()).contains(&(ev::CLICK, 2)));
 }
 
-fn f32s(b: &[u8]) -> Vec<f32> {
-    (0..b.len() / 4)
-        .map(|i| f32::from_le_bytes(b[i * 4..i * 4 + 4].try_into().unwrap()))
-        .collect()
-}
-
-#[test]
-fn a_surface_that_binds_scroll_gets_the_wheel_with_the_pointer_point() {
-    let mut w = Win::new();
-    w.apply(|p| {
-        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 400.0, 300.0]);
-        p.bind_event(1, event::bit(ev::SCROLL));
-    });
-    w.events();
-    w.ptr(POINTER_MOVE, 120.0, 80.0, 0);
-    w.ptr(POINTER_SCROLL, 0.0, 48.0, 0);
-    let evs = w.events();
-    assert_eq!(
-        kinds(&evs),
-        vec![(ev::SCROLL, 1)],
-        "the wheel reached the surface node"
-    );
-    assert_eq!(
-        f32s(&evs[0].2[..16]),
-        [0.0, 48.0, 120.0, 80.0],
-        "dx, dy as the compositor sent them, then the pointer's x, y"
-    );
-}
-
-#[test]
-fn wheel_steps_pending_for_a_surface_add_up_instead_of_replacing_each_other() {
-    let mut w = Win::new();
-    w.apply(|p| {
-        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 400.0, 300.0]);
-        p.bind_event(1, event::bit(ev::SCROLL));
-    });
-    w.events();
-    w.ptr(POINTER_MOVE, 10.0, 20.0, 0);
-    for dy in [48.0, 48.0, -16.0] {
-        w.ptr(POINTER_SCROLL, 8.0, dy, 0);
-    }
-    let evs = w.events();
-    assert_eq!(evs.len(), 1, "one record for the three steps: {evs:?}");
-    assert_eq!(f32s(&evs[0].2[..16]), [24.0, 80.0, 10.0, 20.0], "their sum");
-}
-
-#[test]
-fn a_surface_that_does_not_bind_scroll_leaves_the_wheel_to_the_container_above() {
-    let mut w = Win::new();
-    w.apply(|p| {
-        place(p, 1, Kind::Scroll, 0, [0.0, 0.0, 200.0, 100.0]);
-        p.set_prop(1, id::OVERFLOW, &[2]);
-        p.bind_event(1, event::bit(ev::SCROLL));
-        place(p, 2, Kind::Surface, 1, [0.0, 0.0, 200.0, 400.0]);
-    });
-    w.events();
-    w.ptr(POINTER_MOVE, 10.0, 50.0, 0);
-    w.ptr(POINTER_SCROLL, 0.0, 30.0, 0);
-    let evs = w.events();
-    assert_eq!(kinds(&evs), vec![(ev::SCROLL, 1)]);
-    assert_eq!(
-        f32s(&evs[0].2[..8]),
-        [0.0, 30.0],
-        "the container's own offset record, not a wheel record"
-    );
-}
-
 #[test]
 fn programmatic_focus_gets_its_state_and_event() {
     let mut w = Win::new();
@@ -565,4 +498,108 @@ fn coalescer_keeps_the_last_move_and_sums_scroll_in_order() {
     c.flush(&mut out);
     assert_eq!(out, vec![sc(1.0), mv(5.0)]);
     assert_eq!((c.taken, c.given), (55, 5));
+}
+
+fn f32_at(p: &[u8], at: usize) -> f32 {
+    f32::from_le_bytes(p[at..at + 4].try_into().unwrap())
+}
+
+/// QA-WEB-13: a `surface` part (a web page) gets every move inside it and the wheel, in the record
+/// kinds v1 already has: `POINTER_ENTER` with the position each time, `SCROLL` with the part's
+/// running offset. Without a bind for them nothing is sent, and a scroll container keeps its wheel.
+#[test]
+fn a_surface_part_gets_pointer_motion_and_the_wheel() {
+    let mut w = Win::new();
+    w.apply(|p| {
+        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 200.0, 100.0]);
+        p.bind_event(1, event::bit(ev::POINTER_ENTER) | event::bit(ev::SCROLL));
+    });
+    w.events();
+    w.ptr(POINTER_MOVE, 10.0, 20.0, 0);
+    w.ptr(POINTER_MOVE, 30.0, 40.0, 0);
+    w.ptr(POINTER_MOVE, 31.0, 41.0, 0);
+    let evs = w.events();
+    assert!(
+        evs.iter().all(|e| e.0 == ev::POINTER_ENTER && e.1 == 1),
+        "{evs:?}"
+    );
+    let last = evs.last().expect("a move inside the surface is reported");
+    assert_eq!((f32_at(&last.2, 0), f32_at(&last.2, 4)), (31.0, 41.0));
+    // Each move reaches the app (a coalesced run keeps the newest, which is the position).
+    w.events();
+    w.ptr(POINTER_MOVE, 50.0, 60.0, 0);
+    assert_eq!(kinds(&w.events()), vec![(ev::POINTER_ENTER, 1)]);
+
+    // The wheel: the running offset, positive down, kept across steps and not clamped at 0.
+    let step = |w: &mut Win, dx: f32, dy: f32| {
+        w.ptr(POINTER_SCROLL, dx, dy, 0);
+        let evs = w.events();
+        assert_eq!(kinds(&evs), vec![(ev::SCROLL, 1)], "{evs:?}");
+        (f32_at(&evs[0].2, 0), f32_at(&evs[0].2, 4))
+    };
+    assert_eq!(step(&mut w, 0.0, 15.0), (0.0, 15.0));
+    assert_eq!(step(&mut w, 2.0, -40.0), (2.0, -25.0));
+    // Steps that wait in the queue are coalesced to the newest offset: no distance is lost.
+    w.ptr(POINTER_SCROLL, 0.0, 10.0, 0);
+    w.ptr(POINTER_SCROLL, 0.0, 10.0, 0);
+    let evs = w.events();
+    assert_eq!(kinds(&evs), vec![(ev::SCROLL, 1)]);
+    assert_eq!((f32_at(&evs[0].2, 0), f32_at(&evs[0].2, 4)), (2.0, -5.0));
+}
+
+#[test]
+fn a_drag_that_started_in_a_surface_goes_on_outside_it_and_a_quiet_surface_hears_nothing() {
+    let mut w = Win::new();
+    w.apply(|p| {
+        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 100.0, 100.0]);
+        p.bind_event(1, event::bit(ev::POINTER_ENTER));
+        place(p, 2, Kind::Surface, 0, [200.0, 0.0, 100.0, 100.0]);
+    });
+    w.events();
+    w.ptr(POINTER_MOVE, 10.0, 10.0, 0);
+    w.ptr(POINTER_DOWN, 10.0, 10.0, BUTTON_LEFT);
+    w.events();
+    w.ptr(POINTER_MOVE, 150.0, 50.0, 0);
+    let evs = w.events();
+    assert_eq!(kinds(&evs), vec![(ev::POINTER_ENTER, 1)], "captured drag");
+    assert_eq!(f32_at(&evs[0].2, 0), 150.0);
+    w.ptr(POINTER_UP, 150.0, 50.0, BUTTON_LEFT);
+    w.events();
+    // Node 2 bound nothing: its moves and wheel are not sent (and nothing panics).
+    w.ptr(POINTER_MOVE, 210.0, 10.0, 0);
+    w.ptr(POINTER_MOVE, 220.0, 20.0, 0);
+    w.ptr(POINTER_SCROLL, 0.0, 30.0, 0);
+    assert!(
+        w.events().iter().all(|e| e.1 != 2),
+        "no bind, no record for the surface"
+    );
+}
+
+/// A press on bare background captures the pointer: dragging across a surface part from there
+/// delivers it nothing (a drag belongs to where it started), and a press that started in the
+/// surface keeps its drag.
+#[test]
+fn a_drag_from_the_background_does_not_reach_a_surface() {
+    let mut w = Win::new();
+    w.apply(|p| {
+        place(p, 1, Kind::Surface, 0, [0.0, 0.0, 100.0, 100.0]);
+        p.bind_event(1, event::bit(ev::POINTER_ENTER) | event::bit(ev::CLICK));
+    });
+    w.events();
+    w.ptr(POINTER_MOVE, 300.0, 250.0, 0);
+    w.ptr(POINTER_DOWN, 300.0, 250.0, BUTTON_LEFT);
+    w.events();
+    for (x, y) in [(200.0, 150.0), (50.0, 50.0), (60.0, 60.0)] {
+        w.ptr(POINTER_MOVE, x, y, 0);
+    }
+    assert!(
+        w.events().iter().all(|e| e.1 != 1),
+        "no motion into the surface while the press began elsewhere"
+    );
+    w.ptr(POINTER_UP, 60.0, 60.0, BUTTON_LEFT);
+    let evs = w.events();
+    assert!(
+        evs.iter().all(|e| e.0 != ev::CLICK),
+        "a press elsewhere is not a click on the surface: {evs:?}"
+    );
 }

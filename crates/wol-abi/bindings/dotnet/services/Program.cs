@@ -24,6 +24,7 @@ unsafe class Services
         Ok(wol_context_create(app.Ptr, app.Len, &ctx, &err));
 
         wol_menu_fn onMenu = (_, _, _) => { };
+        wol_media_fn onKey = (_, _, _, _) => { };
         wol_toolbar_fn onTool = (_, _, _) => { };
         IntPtr menu = 0, bar = 0;
         Ok(wol_menu_create(ctx, file.Ptr, file.Len, onMenu, 0, &menu, &err));
@@ -152,7 +153,30 @@ unsafe class Services
         Ok(wol_open_with(ctx, pic.Ptr, pic.Len, &str, &err));
         Console.WriteLine($"open with: {Text(str)}");
         wol_string_release(str);
+        IntPtr player = 0;
+        using var song = new Utf8("Song");
+        using var band = new Utf8("Band");
+        using var none = new Utf8("");
+        Ok(wol_media_publish(ctx, &player, &err));
+        Ok(wol_media_set_handler(player, onKey, 0, &err));
+        Ok(wol_media_set_track(player, song.Ptr, song.Len, band.Ptr, band.Len, none.Ptr, none.Len, 215.5, &err));
+        Ok(wol_media_set_art(player, pic.Ptr, pic.Len, &err));
+        Ok(wol_media_set_capabilities(player, 1 | 4, &err));
+        Ok(wol_media_set_state(player, 1, 12.5, &err));
+        wol_media_release(wol_media_retain(player));
+        wol_media_release(player);
+        Console.WriteLine("player: published");
+        Ok(wol_recent_add(ctx, pic.Ptr, pic.Len, &err));
+        Console.WriteLine("recent: added");
+        uint rgb = 0;
+        int picked = 0;
+        Ok(wol_color_pick(ctx, &rgb, &picked, &err));
+        Console.WriteLine($"color: {rgb} {picked}");
+        Ok(wol_print_file(ctx, pic.Ptr, pic.Len, &str, &err));
+        Console.WriteLine($"print: {Text(str)}");
+        wol_string_release(str);
         wol_context_release(ctx);
+        GC.KeepAlive(onKey);
         GC.KeepAlive(onMenu);
         GC.KeepAlive(onTool);
     }

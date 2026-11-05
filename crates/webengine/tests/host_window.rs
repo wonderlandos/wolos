@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! The host's window (`webengine::window`, used by `wol-webhost`), without a display: the engine
-//! must ask for Wolkit's native Wayland backend, and the page's `surface` node must take the
-//! keyboard (bound events and focus) so the keys the compositor sends reach the page. Each test
-//! is one of the defects WEBAPP-bench found on `wave3/int`.
+//! must ask for Wolkit's native Wayland backend, and the keys the compositor sends must reach the
+//! page (they arrive as records of the window node, QA-WEB-13). Each test is one of the defects
+//! WEBAPP-bench found on `wave3/int`.
 use webengine::input::{self, Bridged, Input};
 use webengine::window::{SURFACE, native_engine, surface_patch};
 use wolkit::abi::ENGINE_HEADLESS;
@@ -71,6 +71,6 @@ fn keys_reach_the_page_surface() {
     assert_eq!(
         keys,
         [("PageDown", true), ("PageDown", false)],
-        "the surface node binds KEY and holds the focus; got {got:?}"
+        "the window node binds KEY and the page takes the keys from it; got {got:?}"
     );
 }

@@ -47,3 +47,59 @@ fn power_shutdown_help_prints_its_usage() {
     assert!(!env.out.contains("  theme"), "{}", env.out);
     assert!(env.requests.is_empty() && env.execs.is_empty());
 }
+
+/// QA-PLUG-47: a parse error points at the help of the command the person was typing.
+#[test]
+fn a_parse_error_points_at_that_commands_help() {
+    use controller::cli::help_hint;
+    assert!(parse(&["plugin", "check"]).is_err());
+    assert_eq!(
+        help_hint(&["plugin", "check"]),
+        "Try 'wol help plugin check'."
+    );
+    assert_eq!(
+        help_hint(&["plugin", "frob"]),
+        "Try 'wol help plugin'.",
+        "the words that are a command"
+    );
+    assert_eq!(
+        help_hint(&["plugin", "check", "--json"]),
+        "Try 'wol help plugin check'."
+    );
+    assert_eq!(help_hint(&["frobnicate"]), "Try 'wol help'.");
+    assert_eq!(help_hint::<&str>(&[]), "Try 'wol help'.");
+}
+
+/// `wol help <words>` that name no command are a question: the commands whose help line holds the
+/// words (and, with the table installed, the ones that mean it) are listed, and nothing runs.
+#[test]
+fn help_with_words_that_are_no_command_finds_commands() {
+    let mut env = FakeEnv::default();
+    let inv = parse(&["help", "turn", "off", "the", "firewall"]).unwrap();
+    assert_eq!(execute(&inv, &mut env), 0, "{}", env.err);
+    assert!(
+        env.out
+            .starts_with("No command is called “turn off the firewall”."),
+        "{}",
+        env.out
+    );
+    assert!(env.out.contains("wol firewall off"), "{}", env.out);
+    assert!(env.requests.is_empty() && env.execs.is_empty() && env.written.is_empty());
+    // A path that is a command still prints that command's usage.
+    let mut env = FakeEnv::default();
+    execute(&parse(&["help", "power"]).unwrap(), &mut env);
+    assert!(
+        env.out.starts_with("usage: wol") && env.out.contains("power shutdown"),
+        "{}",
+        env.out
+    );
+    // Nothing matches: say so, and exit not-found.
+    let mut env = FakeEnv::default();
+    let code = execute(&parse(&["help", "qwertyuiop"]).unwrap(), &mut env);
+    assert_eq!(code, shared::errors::ErrorCode::NotFound.exit());
+    assert!(
+        env.out.contains("No command or manual page matches"),
+        "{}",
+        env.out
+    );
+}

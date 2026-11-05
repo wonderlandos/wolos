@@ -8,7 +8,8 @@
 //!
 //! `index.json`, format 1:
 //! `{"format":1,"plugins":[{"id","name","version","summary","author","license","kinds":[..],
-//! "permissions":[..],"min_wolos","url","sha256","size"}]}`. An entry that breaks a rule is
+//! "permissions":[..],"min_wolos","url","sha256","size"}]}`, and from the hub (ADR 0047) the optional
+//! "description", "icon" and "screenshots" (pictures by CDN file name `<sha256>.<png|webp>`). An entry that breaks a rule is
 //! dropped on its own (the rest of a signed index stays usable); a second entry with the same id
 //! is dropped too.
 use crate::ffi::{Error, Result};
@@ -52,6 +53,17 @@ pub struct Entry {
     pub sha256: String,
     /// Bytes of the `.wolplug` file.
     pub size: u64,
+    /// The package's own description (hub index; empty = none): plain text, at most
+    /// `shared::package::MAX_DESCRIPTION` characters.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// The listing's icon (hub index; empty = none): the CDN file name `<sha256>.<png|webp>`
+    /// (`shared::package::picture_url`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub icon: String,
+    /// Up to `shared::package::MAX_SCREENSHOTS` screenshots, file names like `icon`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub screenshots: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -122,6 +134,13 @@ impl Entry {
             && hex64(&self.sha256)
             && self.size > 0
             && self.size <= WOLPLUG_MAX_FILE
+            && shared::package::is_description(&self.description)
+            && (self.icon.is_empty() || shared::package::is_picture_file(&self.icon))
+            && self.screenshots.len() <= shared::package::MAX_SCREENSHOTS
+            && self
+                .screenshots
+                .iter()
+                .all(|s| shared::package::is_picture_file(s))
     }
 
     /// Permission labels for the install sheet, in index order.
@@ -340,13 +359,22 @@ pub fn cached(dir: &std::path::Path, keys: &[[u8; 32]]) -> Result<PluginIndex> {
     Ok(index)
 }
 
+/// When the cached list at `path` was written (seconds; 0: unknown, which reads as old).
+pub(super) fn fetched_at(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs())
+}
+
 /// A cached list older than this is downloaded again when the Store opens (lists without an
 /// `expires` too).
 pub const MAX_AGE: u64 = 24 * 3600;
 
 /// Whether a cached list written at `fetched` should be downloaded again at `now`: once half of
 /// the time it had left at download is gone, or after [`MAX_AGE`], whichever comes first.
-fn is_stale(fetched: u64, expires: u64, now: u64) -> bool {
+pub(super) fn is_stale(fetched: u64, expires: u64, now: u64) -> bool {
     let half = if expires == 0 {
         MAX_AGE
     } else {
@@ -369,11 +397,7 @@ pub fn load(
         return refresh(net, url, dir, keys).or_else(|e| cached(dir, keys).map_err(|_| e));
     }
     let now = crate::release::unix_now();
-    let fetched = std::fs::metadata(dir.join(INDEX_FILE))
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .map_or(0, |d| d.as_secs());
+    let fetched = fetched_at(&dir.join(INDEX_FILE));
     match cached_full(dir, keys) {
         Ok((index, f))
             if crate::release::check_fresh("plugin list", f.serial, f.expires, 0, now).is_ok() =>
@@ -409,10 +433,11 @@ pub fn refresh(
         last,
         crate::release::unix_now(),
     )?;
-    let cant = || Error::unavailable("The plugin list cannot be saved.");
-    std::fs::create_dir_all(dir).map_err(|_| cant())?;
+    let cant =
+        |e: std::io::Error| crate::fetch::write_error(&e, "The plugin list cannot be saved.");
+    std::fs::create_dir_all(dir).map_err(cant)?;
     for (name, bytes) in [(SIG_FILE, &sig), (INDEX_FILE, &text)] {
-        shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(|_| cant())?;
+        shared::atomic::atomic_write(&dir.join(name), 0o644, bytes).map_err(cant)?;
     }
     Ok(index)
 }
@@ -432,6 +457,39 @@ mod tests {
     use super::*;
 
     const SEED: [u8; 32] = [3; 32];
+
+    /// QA-PLUG-3 release gate: the index [`DEFAULT_URL`] names is there, signed by a shipped key,
+    /// fresh and well formed; the Store's Plugins page can never load while the host is missing
+    /// (it was `plugins.wolos.org`, which never resolved). Run before a release, on a machine with
+    /// the network and the keys: `WOL_KEYS_DIR=/usr/share/wolos/keys cargo test -p wopkg --
+    /// --ignored release_gate_the_published_plugin_index`.
+    #[test]
+    #[ignore = "release gate: needs the network and the shipped keys"]
+    fn release_gate_the_published_plugin_index_loads() {
+        let dir =
+            std::env::var("WOL_KEYS_DIR").unwrap_or_else(|_| shared::package::KEYS_DIR.into());
+        let keys = wol_core::package::read_keys(std::path::Path::new(&dir));
+        assert!(!keys.is_empty(), "no package keys in {dir}");
+        let cache = std::env::temp_dir().join(format!("wol-plugin-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache);
+        std::fs::create_dir_all(&cache).unwrap();
+        let loaded = load(
+            &crate::fetch::Net::new(false),
+            DEFAULT_URL,
+            &cache,
+            &keys,
+            true,
+        );
+        let _ = std::fs::remove_dir_all(&cache);
+        let index = loaded.unwrap_or_else(|e| panic!("{DEFAULT_URL}: {e:?}"));
+        assert!(index.plugins.len() <= MAX_ENTRIES);
+    }
+
+    /// The gate's target is the CDN, not the host that never resolved.
+    #[test]
+    fn the_index_lives_on_the_cdn() {
+        assert_eq!(DEFAULT_URL, "https://cdn.wolos.org/plugins/index.json");
+    }
 
     fn entry(id: &str) -> serde_json::Value {
         serde_json::json!({
@@ -479,6 +537,53 @@ mod tests {
             verify(&changed, Some(&sig), &keys).is_err(),
             "changed after signing"
         );
+    }
+
+    /// The hub index (hub-pipeline schema/index.schema.json) adds the package's description and
+    /// its pictures by CDN file name; an index without them reads as before.
+    #[test]
+    fn the_listing_description_and_pictures_are_read() {
+        let sha = "95d648d3d175b7df65af3f36caacaacc448897768f22945b5637685a8d5242f6";
+        let (icon, shot) = (format!("{sha}.png"), format!("{sha}.webp"));
+        let mut e = entry("alice.weather");
+        e["description"] = serde_json::json!("Forecast.\nIn the menu bar.");
+        e["icon"] = serde_json::json!(icon);
+        e["screenshots"] = serde_json::json!([shot, icon]);
+        let i = parse(&index(vec![e, entry("bob.clock")])).unwrap();
+        let w = i.get("alice.weather").unwrap();
+        assert_eq!(w.description, "Forecast.\nIn the menu bar.");
+        assert_eq!(w.icon, icon);
+        assert_eq!(w.screenshots, [shot.clone(), icon.clone()]);
+        assert_eq!(
+            shared::package::picture_url(&w.icon).as_deref(),
+            Some(format!("https://cdn.wolos.org/plugins/pictures/{icon}").as_str())
+        );
+        let old = i.get("bob.clock").unwrap();
+        assert!(old.description.is_empty() && old.icon.is_empty() && old.screenshots.is_empty());
+        let text = serde_json::to_string(old).unwrap();
+        assert!(
+            !text.contains("description")
+                && !text.contains("icon")
+                && !text.contains("screenshots")
+        );
+        // Out of bounds: the entry is dropped, the rest of the list stays.
+        for (k, v) in [
+            ("description", serde_json::json!("x".repeat(4001))),
+            ("description", serde_json::json!("a\u{1b}b")),
+            ("icon", serde_json::json!(sha)),
+            (
+                "icon",
+                serde_json::json!("https://cdn.wolos.org/plugins/pictures/x.png"),
+            ),
+            ("screenshots", serde_json::json!(vec![shot.clone(); 9])),
+            ("screenshots", serde_json::json!([format!("{sha}.gif")])),
+        ] {
+            let mut e = entry("alice.weather");
+            e[k] = v.clone();
+            let i = parse(&index(vec![e, entry("bob.clock")])).unwrap();
+            assert!(i.get("alice.weather").is_none(), "{k}={v}");
+            assert!(i.get("bob.clock").is_some());
+        }
     }
 
     #[test]

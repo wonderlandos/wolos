@@ -26,4 +26,17 @@ if [ -z "$p" ] || [ ! -x "$p" ]; then
 fi
 SHELL=$p
 export SHELL
+# bash started by a terminal is neither a login shell nor does Arch's bash.bashrc know WolOS: it
+# reads the WolOS setup first (history, keys, colours, the sudo hints), which then reads the
+# person's own ~/.bashrc (QA-FILES-4).
+if [ "$id" = bash ] && [ -r "$root/usr/share/wolos/bash/bashrc" ]; then
+	case " $* " in
+	*" -l "* | *" --login "* | *" -c "* | *" --rcfile "*) ;;
+	*)
+		WOLOS_TERM_BASH=1
+		export WOLOS_TERM_BASH
+		exec "$p" --rcfile "$root/usr/share/wolos/bash/bashrc" "$@"
+		;;
+	esac
+fi
 exec "$p" "$@"

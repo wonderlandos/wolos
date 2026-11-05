@@ -43,13 +43,13 @@ describe Wopkg::Completions do
     File.write("#{dir}/comp.ps1", Wopkg::Completions.pwsh)
     probe = <<-PS
       . '#{dir}/comp.ps1'
-      foreach ($line in 'wopkg install fire', 'wopkg ins', 'wopkg channel b', 'wopkg -S fire', 'wopkg sha') {
+      foreach ($line in 'wopkg install fire', 'wopkg ins', 'wopkg channel s', 'wopkg -S fire', 'wopkg sha') {
           (TabExpansion2 -inputScript $line -cursorColumn $line.Length).CompletionMatches.CompletionText -join ' '
       }
       PS
     buf = IO::Memory.new
     Process.run("pwsh", ["-NoProfile", "-NonInteractive", "-Command", probe], env: {"PATH" => "#{dir}:#{ENV["PATH"]}"}, output: buf, error: STDERR)
-    buf.to_s.lines.map(&.strip).should eq(["firefox firefox-i18n-de", "install", "beta", "firefox firefox-i18n-de", "shard"])
+    buf.to_s.lines.map(&.strip).should eq(["firefox firefox-i18n-de", "install", "stable", "firefox firefox-i18n-de", "shard"])
   end
 
   it "bash completes names from the helper" do
