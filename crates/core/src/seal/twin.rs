@@ -91,7 +91,8 @@ pub enum Step {
 /// What `wol boot bless` does to `slot`'s two entries. `entries` are the (file name, text) pairs
 /// of `loader/entries`; `running`: this good boot is `slot`'s.
 /// - The slot has an entry that names an image: its twin is written with the same counter and
-///   text when it differs (or is missing: a system installed before 0.13), other twins go.
+///   text when it differs (or is missing: a system installed before 0.13), other twins go. For
+///   the running slot (this boot is good) the twin is blessed: its entry is blessed next.
 /// - It has none and this boot is its own (started from the twin): the entry is written again,
 ///   blessed, from the twin; garbled entries of the slot go. The twin is left as it is
 ///   (systemd-bless-boot renames the entry that started).
@@ -110,7 +111,10 @@ pub fn steps(slot: &str, running: bool, entries: &[(&str, &str)]) -> Vec<Step> {
         let (Some(c), Some(want)) = (counter(slot, "", n), text(t)) else {
             return out;
         };
-        let want_name = name(slot, c);
+        // This good boot's own slot: blessed, as systemd-bless-boot (after `wol boot bless`) is
+        // about to bless the entry that started; a copied `+0-1` would leave an out-of-tries
+        // fallback beside a blessed entry until the next shutdown (FIX-BOOT-TWIN).
+        let want_name = name(slot, if running { "" } else { c });
         if !twins.iter().any(|(tn, tt)| *tn == want_name && *tt == want) {
             out.push(Step::Write {
                 name: want_name.clone(),
@@ -192,13 +196,39 @@ mod tests {
     #[test]
     fn the_twin_follows_its_slot_entry() {
         let fb = text(A).unwrap();
-        // None yet (installed before 0.13): written with the entry's counter.
+        // None yet (installed before 0.13), the other slot: written with the entry's counter.
         assert_eq!(
-            steps_of("wolos-a", true, &[("wolos-a+2-1.conf", A)]),
+            steps_of("wolos-a", false, &[("wolos-a+2-1.conf", A)]),
             [Step::Write {
                 name: "wolos-a-fallback+2-1.conf".into(),
                 text: fb.clone()
             }]
+        );
+        // This good boot's own slot: blessed, as systemd-bless-boot is about to bless the entry
+        // that started (bless runs before it). A counted start (`+0-1` after boot-rearm's one try)
+        // never leaves an out-of-tries fallback beside a blessed entry (fb13-a VM).
+        assert_eq!(
+            steps_of("wolos-a", true, &[("wolos-a+2-1.conf", A)]),
+            [Step::Write {
+                name: "wolos-a-fallback.conf".into(),
+                text: fb.clone()
+            }]
+        );
+        assert_eq!(
+            steps_of(
+                "wolos-a",
+                true,
+                &[("wolos-a+0-1.conf", A), ("wolos-a-fallback+1.conf", &fb)]
+            ),
+            [
+                Step::Write {
+                    name: "wolos-a-fallback.conf".into(),
+                    text: fb.clone()
+                },
+                Step::Remove {
+                    name: "wolos-a-fallback+1.conf".into()
+                }
+            ]
         );
         // In step: nothing.
         assert!(
