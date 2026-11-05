@@ -310,13 +310,14 @@ fn cjk_arabic_hebrew_fonts_ship_with_fallbacks() {
     );
 }
 
-/// QA-NET-4: .local names through avahi + nss-mdns before resolved.
+/// QA-NET-4: .local names through avahi + nss-mdns before resolved, IPv4 `mdns4_minimal` (the 0.13.0
+/// dry run measured a 5 s AAAA wait with `mdns_minimal`).
 #[test]
 fn mdns_names_resolve_through_nss_mdns() {
     assert!(ships("avahi") && ships("nss-mdns"));
     assert!(read("files/usr/lib/systemd/resolved.conf.d/wolos.conf").contains("MulticastDNS=no"));
     assert!(
-        read("wolos-system/nsswitch-mdns.sh").contains("mdns_minimal [NOTFOUND=return] resolve")
+        read("wolos-system/nsswitch-mdns.sh").contains("mdns4_minimal [NOTFOUND=return] resolve")
     );
     assert_eq!(
         read("wolos-system/wolos-system.install")

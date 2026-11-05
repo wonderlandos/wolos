@@ -18,7 +18,6 @@ use rc::{Hits, Row, Src, assert_ratchet, find_words, hit};
 /// wd-store). Each is a wait the sweep must read once: a dismissal gets `patience`, anything else a
 /// `// fixed wait:` line. Only shrinks.
 const BASELINE: &[Row] = &[
-    ("RH-341", "crates/shell/src/kit/assistant.rs", 1, "STD-7"),
     ("RH-341", "crates/shell/src/kit/form.rs", 1, "STD-7"),
     ("RH-341", "crates/shell/src/kit/lifetime.rs", 1, "STD-7"),
     ("RH-341", "crates/shell/src/kit/mod.rs", 1, "STD-7"),
@@ -34,7 +33,7 @@ const BASELINE: &[Row] = &[
     ("RH-341", "crates/shell/src/ui/plugins.rs", 1, "STD-7"),
     ("RH-341", "crates/shell/src/ui/searchbar.rs", 3, "STD-7"),
     ("RH-341", "crates/shell/src/ui/settings/lock.rs", 1, "STD-7"),
-    ("RH-341", "crates/shell/src/ui/settings/mod.rs", 4, "STD-7"),
+    ("RH-341", "crates/shell/src/ui/settings/mod.rs", 1, "STD-7"),
     (
         "RH-341",
         "crates/shell/src/ui/settings/sound.rs",
