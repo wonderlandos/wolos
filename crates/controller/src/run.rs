@@ -63,6 +63,10 @@ pub trait Env {
     }
     fn sys_topic(&mut self, topic: &str) -> Option<serde_json::Value>;
     fn now_secs(&self) -> u64;
+    /// One TLS handshake with `host:443` through WolOS's own Rust stack (`wol doctor tls`).
+    fn tls_probe(&mut self, host: &str) -> Result<wol_core::net::Negotiated, String> {
+        wol_core::net::probe(host, std::time::Duration::from_secs(15))
+    }
     fn config_home(&self) -> PathBuf;
     /// Like `exec`, but the child gets no stdin and its stdout goes to our stderr (`wol mcp`:
     /// stdout carries the protocol).
@@ -1935,6 +1939,8 @@ pub struct FakeEnv {
     /// Per-command `capture_status` answers: (`argv joined by spaces`, exit status, stderr);
     /// stdout is the `captures` entry. Else `capture`'s answer with status 0.
     pub statuses: Vec<(String, i32, String)>,
+    /// `tls_probe` answers per host; a host not listed answers TLS 1.3 with X25519MLKEM768.
+    pub tls_probes: Vec<(String, Result<wol_core::net::Negotiated, String>)>,
     /// Lock files held through `try_lock` (share one between two fakes to interleave runs).
     pub locks: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
     /// Commands (`argv joined by spaces`) whose `capture` panics: a check that crashes, to prove
@@ -2058,6 +2064,16 @@ impl Env for FakeEnv {
         match self.captures.iter().find(|c| c.0 == line) {
             Some(c) => Some(c.1.clone()),
             None => self.captured.clone(),
+        }
+    }
+    fn tls_probe(&mut self, host: &str) -> Result<wol_core::net::Negotiated, String> {
+        match self.tls_probes.iter().find(|(h, _)| h == host) {
+            Some((_, r)) => r.clone(),
+            None => Ok(wol_core::net::Negotiated {
+                version: "TLSv1.3".into(),
+                group: wol_core::net::HYBRID.into(),
+                cipher: "TLS13_AES_256_GCM_SHA384".into(),
+            }),
         }
     }
     fn capture_status(&mut self, argv: &[&str]) -> Option<(i32, String, String)> {

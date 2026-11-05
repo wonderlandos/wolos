@@ -23,6 +23,9 @@ libc = { workspace = true }
 log = { workspace = true }
 raw-window-handle = { workspace = true }
 url = { workspace = true }
+# The engine's own TLS stack (already in its lock): the shim installs its aws-lc-rs provider with
+# the hybrid post-quantum group first (src/engine/tls.rs, ADR 0055).
+rustls = { workspace = true, features = ["aws-lc-rs"] }
 # baked-in-resources: the engine's resource reader does not work from a cdylib otherwise (as the
 # engine's own C API). No clipboard feature: the host's clipboard comes in through wwe_config.
 servo = { workspace = true, features = [

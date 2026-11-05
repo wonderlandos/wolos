@@ -1,0 +1,78 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# tls-policy: points the system TLS libraries at the WolOS TLS policy (ADR 0055), post-quantum hybrid
+# first. Run by the pacman hook wolos-tls.hook after openssl, gnutls or wolos-system is installed or
+# upgraded. Idempotent; it owns only the lines that follow a `# wolos-tls` comment line:
+#   /etc/ssl/openssl.cnf  `ssl_conf = wolos_ssl_conf` right after [openssl_init] and, at the end, an
+#                         `.include` of /usr/share/wolos/tls/openssl.cnf (OpenSSL has no drop-in
+#                         directory). A file with an `ssl_conf` of its own is left alone and said.
+#   /etc/gnutls/config    `default-priority-string` in an [overrides] section, from
+#                         /usr/share/wolos/tls/gnutls.priority (GnuTLS reads this one file).
+# Both files belong to their packages and are pacman backup files, so the edit survives upgrades,
+# and this runs again after each one. Exit 1 when a file was left alone.
+# `tls-policy --remove` (wolos-tls-remove.hook, before wolos-system is removed): only the marked
+# lines go, so neither file is left with an `.include` of a file that is about to disappear.
+# Env (tests): WOLOS_TLS_ROOT, a directory standing for /.
+set -eu
+root=${WOLOS_TLS_ROOT:-}
+share=$root/usr/share/wolos/tls
+ossl=$root/etc/ssl/openssl.cnf
+gtls=$root/etc/gnutls/config
+mark='# wolos-tls'
+rc=0
+remove=0
+case ${1:-} in
+--remove) remove=1 ;;
+'') ;;
+*)
+  echo "usage: tls-policy [--remove]" >&2
+  exit 2
+  ;;
+esac
+
+# drop FILE: removes every `# wolos-tls` line and the one line after it.
+drop() {
+  sed -i "/^$mark\$/{N;d;}" "$1"
+}
+
+if [ "$remove" = 1 ]; then
+  if [ -f "$ossl" ]; then
+    drop "$ossl"
+    sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$ossl"
+  fi
+  [ -f "$gtls" ] && drop "$gtls"
+  exit 0
+fi
+
+if [ -f "$ossl" ] && [ -f "$share/openssl.cnf" ]; then
+  drop "$ossl"
+  # Trailing blank lines left by an earlier run go too, so runs do not pile them up.
+  sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$ossl"
+  if grep -Eq '^[[:space:]]*ssl_conf[[:space:]]*=' "$ossl"; then
+    echo "tls-policy: $ossl names an ssl_conf of its own; OpenSSL keeps it, without the WolOS TLS policy" >&2
+    rc=1
+  else
+    if grep -Eq '^\[[[:space:]]*openssl_init[[:space:]]*\]' "$ossl"; then
+      sed -i -E "/^\[[[:space:]]*openssl_init[[:space:]]*\]/a $mark\nssl_conf = wolos_ssl_conf" "$ossl"
+    else
+      # No [openssl_init] (a hand-made file): name one from the default section, at the top.
+      sed -i "1i $mark\nopenssl_conf = wolos_openssl_init" "$ossl"
+      printf '\n%s\n[wolos_openssl_init]\n' "$mark" >> "$ossl"
+      printf '%s\nssl_conf = wolos_ssl_conf\n' "$mark" >> "$ossl"
+    fi
+    printf '\n%s\n.include /usr/share/wolos/tls/openssl.cnf\n' "$mark" >> "$ossl"
+  fi
+fi
+
+if [ -f "$share/gnutls.priority" ] && [ -d "$root/etc/gnutls" ]; then
+  prio=$(grep -v '^#' "$share/gnutls.priority" | grep -v '^[[:space:]]*$' | head -n 1)
+  [ -f "$gtls" ] || : > "$gtls"
+  drop "$gtls"
+  if grep -Eq '^[[:space:]]*default-priority-string' "$gtls"; then
+    echo "tls-policy: $gtls sets a default-priority-string of its own; GnuTLS keeps it, without the WolOS TLS policy" >&2
+    rc=1
+  else
+    printf '%s\n[overrides]\n%s\ndefault-priority-string = %s\n' "$mark" "$mark" "$prio" >> "$gtls"
+  fi
+fi
+exit $rc

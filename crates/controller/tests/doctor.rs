@@ -354,3 +354,41 @@ fn theme_list_is_json_when_piped_and_a_table_at_a_terminal() {
         term.out
     );
 }
+
+/// ADR 0055: plain `wol doctor` (and so the Doctor app) shows a system whose TLS policy is not
+/// applied, from the files alone; the network probes run only for `wol doctor tls`.
+#[test]
+fn a_classical_system_shows_in_plain_doctor_and_probes_only_when_asked() {
+    let mut env = FakeEnv::default();
+    run("doctor --json", &mut env);
+    let v = json(&env);
+    let checks = v["checks"].as_array().unwrap();
+    let p = checks
+        .iter()
+        .find(|c| c["id"] == "security.tls-policy")
+        .expect("security.tls-policy in plain doctor");
+    assert_eq!(
+        p["status"], "fail",
+        "no policy lines in the fake's files: {p}"
+    );
+    assert!(checks.iter().any(|c| c["id"] == "security.browser-tls"));
+    assert!(
+        !checks.iter().any(|c| c["area"] == "tls"),
+        "no network probe in plain doctor"
+    );
+    assert!(
+        env.captured_argvs
+            .iter()
+            .all(|a| a[0] != "curl" && a[0] != "gnutls-cli")
+    );
+    // Asked by name: the probes, and only them.
+    let mut env = FakeEnv::default();
+    run("doctor tls --json", &mut env);
+    let ids: Vec<String> = json(&env)["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["id"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(ids, ["tls.openssl", "tls.gnutls", "tls.wolos"]);
+}

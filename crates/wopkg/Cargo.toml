@@ -14,7 +14,8 @@ crate-type = ["staticlib", "rlib"]
 
 [dependencies]
 shared.workspace = true
-wol_core.workspace = true
+# `tls`: the one TLS setup, hybrid post-quantum first (wol_core::net::tls_config, ADR 0055).
+wol_core = { workspace = true, features = ["tls"] }
 libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true

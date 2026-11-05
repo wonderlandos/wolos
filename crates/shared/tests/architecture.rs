@@ -46,7 +46,10 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
         for dep in deps {
             let ok = match pkg.as_str() {
                 "shared" => false,
-                "core" => dep == "shared",
+                // wolcrypt (ADR 0055): only behind core's `tls` feature, for the one TLS provider
+                // (`wol_core::net`); a BSD-2-Clause leaf that depends on nothing of ours.
+                "core" => dep == "shared" || dep == "wolcrypt",
+                "wolcrypt" => false,
                 // `wol plugin check|run` loads and renders plugin Lua without a display (ADR 0031).
                 // `wol help <words>` finds a command by meaning (wolsem, docs/modules/search.md).
                 "controller" => ["shared", "core", "wol-lua", "wolsem"].contains(&dep.as_str()),
@@ -70,6 +73,9 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The Federate client (ADR 0052) uses wolcrypt (a BSD-2-Clause leaf, no workspace
                 // dependency) for the hybrid TLS group and to seal its local state.
                 "federate" => dep == "wolcrypt",
+                // The local keyring (ADR 0054, BSD-2-Clause) seals its items with wolcrypt too and
+                // keeps to the shared types; it does not use core.
+                "wolkeyring" => dep == "wolcrypt" || dep == "shared",
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",

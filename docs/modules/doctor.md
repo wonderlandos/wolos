@@ -17,11 +17,12 @@ One list of checks for the whole computer, each worded for a person and each wit
 | sound | `pipewire`, `wireplumber`, `realtime`, `config`, `input-level`, `clock`, `xruns`, `rnnoise`, `obs`, `portal`, `devices` | `crates/controller/src/audio_doctor.rs` |
 | games | `base`, `multilib`, `steam`, `drm`, `lib32-gl`, `vulkan-icd`, `vulkan`, `futex-waitv`, `ntsync`, `wine` | `wol_core::games::doctor` |
 | updates | `checked`, `waiting` | the update snapshot (`run::update_snapshot`): a look older than three days is `warn` |
-| security | `firewall`, `remote-login`, `system-log`, `protections`, `malware`, `stopped` | `wol_core::security` (signatures older than 14 days are `warn`) |
+| security | `firewall`, `remote-login`, `system-log`, `protections`, `keyboard-access`, `tls-policy`, `browser-tls`, `malware`, `stopped` | `wol_core::security` (signatures older than 14 days are `warn`); `tls-policy` and `browser-tls` read the TLS policy files (`crates/controller/src/doctor/tls.rs`, ADR 0055; no network) |
 | storage | `space`, `encryption`, `restore-points` | `wol_core::storage` |
 | network | `connection`, `names`, `devices` | `wol_core::netinfo`, the hardware snapshot |
 | power | `battery`, `sleep` | `wol_core::power` |
 | display | `screens`, `devices` | `shared::hardware` |
+| tls (only when asked: `wol doctor tls`) | `openssl`, `gnutls`, `wolos` | `crates/controller/src/doctor/tls.rs`, `wol_core::net` (ADR 0055): a handshake per stack with `pq.cloudflareresearch.com` and `cdn.wolos.org` (curl, gnutls-cli, `wol_core::net::probe`), the version, group and cipher each got; a classical answer from the post-quantum server is `fail`, from the update server `warn` |
 
 A fix is one of two things: wol-admind requests (`needs_admin`: installing a package, turning on the firewall; the password is asked for like for every admin verb) or one command run as the person (`systemctl --user start ...`, `wpctl set-volume ...`). `action_of` only turns the recognised shapes of the existing doctors' fix lines into actions; anything else (`enable [multilib]`, "plug in a microphone") stays advice and gets no button.
 
@@ -29,6 +30,7 @@ A fix is one of two things: wol-admind requests (`needs_admin`: installing a pac
 
 ```
 wol doctor [--json] [area]       every check, or one area; exit 1 when any check is `fail`
+wol doctor tls [--json]          what each TLS stack negotiates now (connects to two servers; never part of plain `wol doctor`)
 wol doctor fix [--json] <id>     run that check's fix, then check its area again
 ```
 

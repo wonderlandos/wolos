@@ -30,6 +30,7 @@ pub mod memsaver;
 pub mod mirror;
 pub mod modules;
 pub mod nearby;
+pub mod net;
 pub mod netconf;
 pub mod netinfo;
 pub mod package;

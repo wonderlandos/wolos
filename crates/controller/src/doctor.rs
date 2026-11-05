@@ -16,10 +16,18 @@ use std::path::Path;
 use wol_core::games::doctor as games;
 
 pub mod groups;
+pub mod tls;
 
 /// Every area, in the order the Doctor app lists them.
 pub const AREAS: &[&str] = &[
     "sound", "games", "updates", "security", "storage", "network", "power", "display",
+];
+/// Areas run only when asked for by name (`wol doctor tls` connects to servers outside the
+/// computer, so neither plain `wol doctor` nor the Doctor app runs it).
+pub const ON_ASK: &[&str] = &[tls::AREA];
+/// What `wol doctor <area>` accepts: [`AREAS`], then [`ON_ASK`].
+pub const CHOICES: &[&str] = &[
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "tls",
 ];
 
 /// Last-check age that turns the update check into a warning: three days.
@@ -671,6 +679,8 @@ fn security(env: &mut dyn Env) -> Vec<Check> {
         group.as_deref(),
         passwd.as_deref(),
     ));
+    // ADR 0055: the system TLS policy and the browser's TLS rows (files only, no network).
+    v.extend(tls::file_checks(env));
     v.extend(malware_checks(&malware));
     v
 }
@@ -1149,7 +1159,8 @@ fn device_steps(bad: &[&&shared::hardware::Device]) -> (Vec<AdminRequest>, Later
 /// The checks of one area; unknown areas give none. An area whose checks crash, or find nothing to
 /// look at, is one row that says so ([`guarded`]): the report is never empty and never lost.
 pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
-    let Some(area) = AREAS.iter().find(|a| **a == area).copied() else {
+    // An on-ask area (the TLS probes, ADR 0055) runs only by name; an unknown one gives none.
+    let Some(area) = AREAS.iter().chain(ON_ASK).find(|a| **a == area).copied() else {
         return Vec::new();
     };
     guarded(area, || match area {
@@ -1160,6 +1171,7 @@ pub fn area_checks(env: &mut dyn Env, area: &str) -> Vec<Check> {
         "storage" => storage(env),
         "network" => network(env),
         "power" => power(env),
+        tls::AREA => tls::checks(env),
         _ => display(env),
     })
 }
@@ -1174,6 +1186,7 @@ fn area_name(area: &str) -> &'static str {
         "storage" => "Storage",
         "network" => "Network",
         "power" => "Power",
+        tls::AREA => "Secure connections",
         _ => "Displays",
     }
 }
@@ -1219,8 +1232,11 @@ fn guarded(area: &'static str, run: impl FnOnce() -> Vec<Check>) -> Vec<Check> {
     }
 }
 
-/// Every area in [`AREAS`] order, or the one asked for.
+/// Every area in [`AREAS`] order, or the one asked for (an [`ON_ASK`] area only by name).
 pub fn checks(env: &mut dyn Env, area: Option<&str>) -> Vec<Check> {
+    if let Some(a) = area.filter(|a| ON_ASK.contains(a)) {
+        return area_checks(env, a);
+    }
     AREAS
         .iter()
         .filter(|a| area.is_none_or(|x| x == **a))
@@ -1299,7 +1315,7 @@ fn run(env: &mut dyn Env, area: Option<&str>, json: bool) -> i32 {
 /// The check `id` as it is now, when its area and id exist.
 fn find(env: &mut dyn Env, id: &str) -> Option<Check> {
     let area = id.split('.').next().unwrap_or_default();
-    if !AREAS.contains(&area) {
+    if !AREAS.contains(&area) && !ON_ASK.contains(&area) {
         return None;
     }
     area_checks(env, area).into_iter().find(|c| c.id == id)
@@ -1446,8 +1462,7 @@ pub fn after_failed(
 /// check as it is now; the text report prints the same on stderr.
 fn fix(env: &mut dyn Env, id: &str, json: bool) -> i32 {
     let area = id.split('.').next().unwrap_or_default();
-    let found = AREAS
-        .contains(&area)
+    let found = (AREAS.contains(&area) || ON_ASK.contains(&area))
         .then(|| area_checks(env, area).into_iter().find(|c| c.id == id))
         .flatten();
     let Some(c) = found else {

@@ -257,6 +257,20 @@ wolkitFixtures({
     },
     {
      "area": "security",
+     "detail": "OpenSSL and GnuTLS offer the post-quantum group first, TLS 1.2 or newer, modern ciphers only.",
+     "id": "security.tls-policy",
+     "status": "ok",
+     "title": "System TLS policy"
+    },
+    {
+     "area": "security",
+     "detail": "Offers the post-quantum group to every site; Encrypted Client Hello and http-to-https upgrades are on (set by policy, measured in the browser, not here).",
+     "id": "security.browser-tls",
+     "status": "ok",
+     "title": "Atlas browser"
+    },
+    {
+     "area": "security",
      "detail": "The malware check is off. Turn it on in Settings > Privacy & Security.",
      "id": "security.malware",
      "status": "warn",
