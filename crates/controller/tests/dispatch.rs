@@ -152,7 +152,12 @@ fn theme_apply_restyles_without_saving_a_theme() {
         ..Default::default()
     };
     assert_eq!(run("theme apply", &mut env), 0, "{}", env.err);
-    assert_eq!(env.out, "wol-light\n");
+    // Auto: light or dark by the hour (`theme_apply_follows_the_clock_in_auto` pins which).
+    assert!(
+        ["wol-light\n", "wol-dark\n"].contains(&env.out.as_str()),
+        "{}",
+        env.out
+    );
     assert!(
         !home.join(shared::theme::ACTIVE_FILE).exists(),
         "no theme file: Auto stays Auto"
@@ -1186,4 +1191,50 @@ fn open_returns_and_shares_no_pipe_with_the_app() {
             .unwrap(),
         3
     );
+}
+
+/// QA-IMG13-2 (Settings opened with a light title strip over a dark body, 04:36 on a fresh
+/// install): Auto follows the clock. The shell paints its windows by the hour, and `wol theme
+/// apply` (the session start and the Auto switch) must paint the compositor's strip and the
+/// toolkits by the same hour. It read the system-wide appearance file instead, so a fresh
+/// install at night got the light strip. Twelve hours apart is one night and one day in any
+/// time zone.
+#[test]
+fn theme_apply_follows_the_clock_in_auto() {
+    for saved in [None, Some("wol-auto-violet")] {
+        let (mut seen, mut bars) = (Vec::new(), Vec::new());
+        for now in [43_200_u64 * 5, 43_200 * 5 + 43_200] {
+            let home = temp_home("apply-clock");
+            if let Some(id) = saved {
+                std::fs::create_dir_all(home.join("wolos")).unwrap();
+                std::fs::write(home.join(shared::theme::ACTIVE_FILE), format!("{id}\n")).unwrap();
+            }
+            let mut env = FakeEnv {
+                home: home.clone(),
+                now: Some(now),
+                ..Default::default()
+            };
+            assert_eq!(run("theme apply", &mut env), 0, "{saved:?}: {}", env.err);
+            let id = env.out.trim().to_string();
+            // The strip is told the same theme: its bar colour is that theme's surface.
+            let strip = env
+                .captured_argvs
+                .iter()
+                .chain(env.execs.iter())
+                .find(|a| a.iter().any(|x| x.contains("plugin.hyprbars.bar_color\"")))
+                .cloned();
+            assert!(strip.is_some(), "{saved:?} {id}: the strip is restyled");
+            bars.push(strip.unwrap_or_default());
+            seen.push(id);
+        }
+        let dark = seen.iter().filter(|i| i.contains("dark")).count();
+        assert_eq!(
+            dark, 1,
+            "{saved:?}: one hour is night, the other day: {seen:?}"
+        );
+        assert_ne!(
+            bars[0], bars[1],
+            "{saved:?}: the strip's colour follows the hour"
+        );
+    }
 }
