@@ -1372,3 +1372,65 @@ fn the_admin_check_works_without_user_in_the_environment() {
     assert!(account_is_admin(Some("ada"), 1001, passwd, group));
     assert!(!account_is_admin(None, 4242, passwd, group), "unknown uid");
 }
+
+/// QA-A9-CORE-3: the deadline ends the step's whole process group, SIGINT first. A package
+/// transaction gets a minute; the installing half of a one-copy Update Now is never SIGKILLed
+/// (a kill mid-install leaves the only copy half updated); the download half and every quick
+/// action keep a short grace.
+#[test]
+fn a_step_is_interrupted_before_it_is_killed() {
+    let a = |s: &[&str]| s.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
+    let pacman = |args: &[&str]| {
+        let mut v = vec!["/usr/bin/pacman".to_owned()];
+        v.extend(a(args));
+        v
+    };
+    assert_eq!(
+        step_limit(&pacman(&["-Syuw", "--noconfirm"]), true),
+        (LONG_STEP_SECS, LONG_STEP_GRACE_SECS)
+    );
+    assert_eq!(
+        step_limit(&pacman(&["-Su", "--noconfirm"]), true),
+        (LONG_STEP_SECS, INSTALL_GRACE_SECS)
+    );
+    assert_eq!(
+        step_limit(&a(&["sed", "-i", "x"]), true).1,
+        LONG_STEP_GRACE_SECS
+    );
+    assert_eq!(step_limit(&pacman(&["-Su"]), false), (STEP_SECS, 0));
+    assert!(installs_in_place(&pacman(&["-Su", "--noconfirm"])));
+    assert!(!installs_in_place(&pacman(&["-Syuw", "--noconfirm"])));
+    assert!(!installs_in_place(&a(&["rm", "-Su"])));
+    const { assert!(INSTALL_GRACE_SECS > LONG_STEP_GRACE_SECS) };
+}
+
+/// QA-A9-CORE-5: the plan for `boot-environment` names the entry file as the directory lists it
+/// (sd-boot matches the default against it, counter included), the plain name when it lists none.
+#[test]
+fn boot_environment_names_the_counted_entry_file() {
+    let plan = |listing: Option<&'static str>| {
+        let probe = move |a: &[&str]| {
+            (a == ["ls", "-1", "/efi/loader/entries"])
+                .then(|| listing.map(str::to_owned))
+                .flatten()
+        };
+        let steps = plan_with(&r(BootEnvironment, &["wolos-a"]), &probe).unwrap();
+        match &steps[..] {
+            [AdminStep::Run(a)] => a.join(" "),
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(
+        plan(Some("wolos-a+3.conf\nwolos-b.conf\nloader.conf\n")),
+        "bootctl set-default wolos-a+3.conf"
+    );
+    assert_eq!(
+        plan(Some("wolos-a+2-1.conf\nwolos-b.conf\n")),
+        "bootctl set-default wolos-a+2-1.conf"
+    );
+    assert_eq!(
+        plan(Some("wolos-b.conf\n")),
+        "bootctl set-default wolos-a.conf"
+    );
+    assert_eq!(plan(None), "bootctl set-default wolos-a.conf");
+}

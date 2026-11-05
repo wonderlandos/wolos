@@ -6,7 +6,7 @@
 use crate::cli::Invocation;
 use crate::run::{Env, fail};
 use shared::errors::ErrorCode;
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 use std::path::Path;
 use wol_core::update::{self as up, Step, layers, pkg};
 
@@ -461,12 +461,37 @@ pub fn clear(env: &mut dyn Env) -> i32 {
     // (the one being made has no record yet); held to the end so none starts meanwhile.
     let lock = env.try_lock(Path::new(up::LOCK)).ok().flatten();
     let mut unfinished = Vec::new();
+    let mut unreleased = Vec::new();
     if lock.is_some() {
         let has = |n: &str| {
             env.read_file(&Path::new(layers::DIR).join(n).join(layers::RECORD))
                 .is_some()
         };
         unfinished = layers::unfinished(&ls, has);
+        // QA-A9-CORE-2: the one owner of the unfinished-layer cleanup, under the update lock
+        // (boot-ok's shell loop guarded itself with `mountpoint`, which cannot see the layer
+        // chroot that lives in a private mount namespace). A layer with its record and no
+        // extension-release (a cut between the two writes of `finish`) gets the release.
+        let has_release = |n: &str| env.read_file(Path::new(&layers::release_file(n))).is_some();
+        unreleased = layers::unreleased(&ls, has, has_release);
+    }
+    let mut released = false;
+    for n in &unreleased {
+        let file = layers::release_file(n);
+        let ok = Path::new(&file)
+            .parent()
+            .is_some_and(|d| env.make_dir(d).is_ok())
+            && env
+                .write_file(Path::new(&file), &layers::extension_release())
+                .is_ok();
+        if !ok {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                "could not finish an installed layer",
+            );
+        }
+        released = true;
     }
     // QA-LIVE3-1: folded layers are kept (out of the merge) while the other slot, the restore
     // point, does not hold them; a slot that does not hold a kept one (a rollback) gets it back.
@@ -484,6 +509,14 @@ pub fn clear(env: &mut dyn Env) -> i32 {
     let tidy = layers::tidy(&folded, other.as_deref(), &ls, &kept, &unfinished);
     let steps = layers::tidy_steps(&tidy);
     let refresh = steps.iter().position(|s| *s == layers::refresh_step());
+    // A release written above is merged by a refresh; the steps carry one when they move layers.
+    if released && refresh.is_none() && env.exec(&layers::refresh_step()).unwrap_or(127) != 0 {
+        return fail(
+            env,
+            ErrorCode::Failed,
+            "could not merge the finished layers",
+        );
+    }
     for (i, a) in steps.iter().enumerate() {
         if env.exec(a).unwrap_or(127) != 0 {
             // Stopped before the refresh: merge what is in the extensions directory now, so the
@@ -500,11 +533,22 @@ pub fn clear(env: &mut dyn Env) -> i32 {
     0
 }
 
-/// Copy `from` over `to`; an overlay whiteout deletes the path instead.
+/// Copy `from` over `to`; an overlay whiteout deletes the path instead. What a person installed
+/// into a layer arrives as pacman put it (QA-A9-CORE-1, RC-20): the mode with its set-id bits,
+/// the owner, every extended attribute (`security.capability` is one), hard links as one inode.
+/// `fs::copy` carries none of the last three and `chown` clears the set-id bits and the file
+/// capability, so the order is content, owner, attributes, mode.
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    copy_dir(from, to, &mut std::collections::HashMap::new())
+}
+
+type Links = std::collections::HashMap<(u64, u64), std::path::PathBuf>;
+
+fn copy_dir(from: &Path, to: &Path, links: &mut Links) -> std::io::Result<()> {
     let Ok(rd) = std::fs::read_dir(from) else {
         return Ok(());
     };
+    let made = !to.exists();
     std::fs::create_dir_all(to)?;
     for e in rd.flatten() {
         let (src, dst) = (e.path(), to.join(e.file_name()));
@@ -517,14 +561,90 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
                 let _ = std::fs::remove_file(&dst);
             }
         } else if ft.is_dir() {
-            copy_tree(&src, &dst)?;
+            copy_dir(&src, &dst, links)?;
         } else if ft.is_symlink() {
             let _ = std::fs::remove_file(&dst);
             std::os::unix::fs::symlink(std::fs::read_link(&src)?, &dst)?;
-        } else if ft.is_file() {
-            let _ = std::fs::remove_file(&dst);
-            std::fs::copy(&src, &dst)?;
             let _ = std::os::unix::fs::lchown(&dst, Some(md.uid()), Some(md.gid()));
+        } else if ft.is_file() {
+            copy_file(&src, &dst, &md, links)?;
+        }
+    }
+    if made {
+        // A directory the layer made keeps its owner, attributes and mode (after its children,
+        // so a read-only mode does not stop the copy).
+        let md = std::fs::symlink_metadata(from)?;
+        let _ = std::os::unix::fs::lchown(to, Some(md.uid()), Some(md.gid()));
+        copy_xattrs(from, to)?;
+        std::fs::set_permissions(to, std::fs::Permissions::from_mode(md.mode() & 0o7777))?;
+    }
+    Ok(())
+}
+
+fn copy_file(
+    src: &Path,
+    dst: &Path,
+    md: &std::fs::Metadata,
+    links: &mut Links,
+) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(dst);
+    let key = (md.dev(), md.ino());
+    if let Some(first) = links.get(&key).filter(|_| md.nlink() > 1) {
+        return std::fs::hard_link(first, dst);
+    }
+    let mut from = std::fs::File::open(src)?;
+    let mut out = std::fs::File::create(dst)?;
+    std::io::copy(&mut from, &mut out)?;
+    drop(out);
+    let _ = std::os::unix::fs::lchown(dst, Some(md.uid()), Some(md.gid()));
+    copy_xattrs(src, dst)?;
+    std::fs::set_permissions(dst, std::fs::Permissions::from_mode(md.mode() & 0o7777))?;
+    if md.nlink() > 1 {
+        links.insert(key, dst.to_path_buf());
+    }
+    Ok(())
+}
+
+/// Copy every extended attribute of `src` to `dst` (neither followed if a link). A file system
+/// that has no attributes is not an error, except for the capability, which a program needs.
+fn copy_xattrs(src: &Path, dst: &Path) -> std::io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let c =
+        |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes()).map_err(std::io::Error::other);
+    // A syscall's byte count, or its errno.
+    let count = |r: isize| usize::try_from(r).map_err(|_| std::io::Error::last_os_error());
+    let (s, d) = (c(src)?, c(dst)?);
+    // SAFETY: `s` is NUL-terminated; a null buffer with size 0 only asks for the length.
+    let n = count(unsafe { libc::llistxattr(s.as_ptr(), std::ptr::null_mut(), 0) })?;
+    if n == 0 {
+        return Ok(());
+    }
+    let mut names = vec![0u8; n];
+    // SAFETY: `names` is `n` writable bytes.
+    let n = count(unsafe { libc::llistxattr(s.as_ptr(), names.as_mut_ptr().cast(), names.len()) })?;
+    for name in names[..n].split(|b| *b == 0).filter(|n| !n.is_empty()) {
+        let name = std::ffi::CString::new(name).map_err(std::io::Error::other)?;
+        // SAFETY: as above, for the value length.
+        let len =
+            count(unsafe { libc::lgetxattr(s.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0) })?;
+        let mut val = vec![0u8; len];
+        // SAFETY: `val` is `len` writable bytes.
+        let got = count(unsafe {
+            libc::lgetxattr(
+                s.as_ptr(),
+                name.as_ptr(),
+                val.as_mut_ptr().cast(),
+                val.len(),
+            )
+        })?;
+        // SAFETY: `d` and `name` are NUL-terminated; `val` holds `got` valid bytes.
+        let r = unsafe { libc::lsetxattr(d.as_ptr(), name.as_ptr(), val.as_ptr().cast(), got, 0) };
+        if r < 0 {
+            let e = std::io::Error::last_os_error();
+            let unsupported = e.raw_os_error() == Some(libc::ENOTSUP);
+            if !(unsupported && name.to_bytes() != b"security.capability") {
+                return Err(e);
+            }
         }
     }
     Ok(())

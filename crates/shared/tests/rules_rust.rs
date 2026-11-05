@@ -314,7 +314,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-064", "wopkg", 25),
     ("RR-064", "xguard", 7),
     // +2 (memsaver/budget.rs, MEMSAVER-X): the `posix_fadvise(DONTNEED)` call of `evict`.
-    ("RR-065", "core", 23),
+    // +4 (FIX-A9-CORE, QA-A9-CORE-3): system/mod.rs `stop_tree` signals a timed-out child's whole
+    //   process group (getpgid, kill, SIGINT, SIGKILL); std has no group signal and `Child::kill`
+    //   is a SIGKILL of one pid, which left arch-chroot and pacman running.
+    ("RR-065", "core", 27),
     // +3 (memsaver/budget.rs, MEMSAVER-X): `evict` walks and opens the app's own files.
     // +15 (INT-2, 0.13 integration): monitor/{mod,procs,startup}.rs read /proc and /sys under a
     //   `Root` (the fixture folder in tests); consent.rs, storage.rs, net.rs and admin.rs read the
@@ -326,9 +329,13 @@ const BASELINE: &[(&str, &str, usize)] = &[
     // +4 (MANUAL 0.12.0, RR-114 justification): controller/src/secret.rs turns terminal echo off
     // for the administrator password; std has no termios and controller depends on no listed crate.
     // +2 (JS-RUNTIME-X, ADR 0061, wolos-mm.rs): prctl before an exec, pidfd_open + process_madvise.
-    ("RR-068", "controller", 57),
+    // +5 (FIX-A9-CORE, QA-A9-CORE-1): pkg.rs `copy_xattrs` (llistxattr x2, lgetxattr x2, lsetxattr)
+    //   keeps a layer file's security.capability and user xattrs when `wol layers fold` copies it;
+    //   std has no xattr API and `fs::copy` dropped them (RH-201).
+    ("RR-068", "controller", 62),
     // +1 (memsaver/budget.rs, MEMSAVER-X): the one `posix_fadvise` in `evict` (see unsafe_ratchet.rs).
-    ("RR-068", "core", 7),
+    // +2 (FIX-A9-CORE, QA-A9-CORE-3): system/mod.rs `stop_tree` (getpgid, kill).
+    ("RR-068", "core", 9),
     ("RR-068", "proxy", 1),
     ("RR-068", "shared", 16),
     ("RR-068", "shell", 6),

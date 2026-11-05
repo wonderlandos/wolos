@@ -1044,14 +1044,16 @@ impl AdminOs for RealOs {
         check_password(cmd, password, AUTH_TIMEOUT)
     }
     fn run(&self, argv: &[String], long: bool) -> bool {
+        let (secs, grace) = wol_core::admin::step_limit(argv, long);
         let argv: Vec<&str> = argv.iter().map(String::as_str).collect();
-        let secs = if long {
-            wol_core::admin::LONG_STEP_SECS
-        } else {
-            wol_core::admin::STEP_SECS
-        };
         let t = std::time::Duration::from_secs(secs.into());
-        crate::privileged::capture(&argv, t).is_some()
+        // A long step (pacman) is interrupted at the deadline and given its grace to end the
+        // package it is on; the group is killed after (QA-A9-CORE-3).
+        let grace = match grace {
+            0 => wol_core::system::KILL_GRACE,
+            g => std::time::Duration::from_secs(g.into()),
+        };
+        crate::privileged::capture_grace(&argv, t, grace).is_some()
     }
     fn last_error(&self) -> String {
         wol_core::privileged::take_last_stderr()

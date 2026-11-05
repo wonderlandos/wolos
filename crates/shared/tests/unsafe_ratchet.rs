@@ -124,6 +124,11 @@ use std::path::{Path, PathBuf};
 /// golden cases); wopkg 103 -> 104 (`context.rs`: `geteuid`, no std call, SAFETY line); wolkeyring
 /// 0 -> 1 (ADR 0054, `src/bin/wol-keyringd.rs`: `prctl(PR_SET_DUMPABLE, 0)` and `setrlimit(RLIMIT_CORE,
 /// 0)` so no core file can hold the keys, SAFETY line; the library has `#![forbid(unsafe_code)]`).
+/// FIX-A9-CORE (2026-11-05): controller 61 -> 68 (`src/pkg.rs` `copy_xattrs`: five SAFETY-lined
+/// calls, `llistxattr` x2, `lgetxattr` x2, `lsetxattr`, so `wol layers fold` keeps a package's
+/// `security.capability` and other xattrs, QA-A9-CORE-1; std has no xattr call; and the two calls
+/// of the test that reads them back); core 14 -> 16 (`src/system/mod.rs` `stop_tree`: `getpgid`
+/// and `kill` on a process group the runner spawned, SAFETY lines, QA-A9-CORE-3).
 /// A new crate needs a line here.
 const BASELINE: &[(&str, usize)] = &[
     ("wol-abi", 513),
@@ -131,11 +136,11 @@ const BASELINE: &[(&str, usize)] = &[
     ("wopkg", 104),
     ("realtime", 49),
     ("xguard", 65),
-    ("controller", 61),
+    ("controller", 68),
     ("api", 33),
     ("audio", 0),
     ("aurlaws", 0),
-    ("core", 14),
+    ("core", 16),
     ("proxy", 3),
     ("shared", 19),
     // +1 (RATCHET-1): tests/support/broadway.rs, the one `set_var` of GDK_BACKEND/BROADWAY_DISPLAY

@@ -58,7 +58,14 @@ fn tail_of(bytes: &[u8]) -> String {
 /// `cat`/`ls` probes are answered without a fork (`crate::system::builtin`). A failure leaves
 /// the child's stderr for [`take_last_stderr`].
 pub fn capture(argv: &[&str], timeout: Duration) -> Option<String> {
+    capture_grace(argv, timeout, crate::system::KILL_GRACE)
+}
+
+/// [`capture`] where a child past `timeout` is interrupted (its whole process group), given `grace`
+/// to stop, then killed: a package transaction gets time to finish its package (QA-A9-CORE-3).
+pub fn capture_grace(argv: &[&str], timeout: Duration, grace: Duration) -> Option<String> {
     use std::io::Read;
+    use std::os::unix::process::CommandExt;
     if let Some(out) = crate::system::builtin(argv) {
         // No child ran: nothing of an earlier failure is left to be mistaken for this one's.
         let _ = take_last_stderr();
@@ -67,6 +74,7 @@ pub fn capture(argv: &[&str], timeout: Duration) -> Option<String> {
     let (file, args) = argv.split_first()?;
     let mut child = privileged_command(file)
         .args(args)
+        .process_group(0)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -90,7 +98,7 @@ pub fn capture(argv: &[&str], timeout: Duration) -> Option<String> {
             let _ = tx.send(all);
         });
     }
-    let out = crate::system::wait_output(child, timeout);
+    let out = crate::system::wait_output_grace(child, timeout, grace);
     // Only a failure is explained, and only for a moment: a grandchild may hold the pipe open
     // (a success never waits for it).
     let said = if out.is_none() {

@@ -8,6 +8,7 @@ pub mod info;
 pub mod proc;
 pub mod stats;
 
+use std::os::unix::process::CommandExt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -141,6 +142,7 @@ pub fn run_with_timeout(argv: &[&str], timeout: Duration) -> Option<String> {
     let (file, args) = argv.split_first()?;
     let child = Command::new(file)
         .args(args)
+        .process_group(0)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -155,6 +157,7 @@ pub fn run_input(mut cmd: std::process::Command, input: &str, timeout: Duration)
     use std::io::Write;
     use std::process::Stdio;
     let mut child = cmd
+        .process_group(0)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -164,6 +167,51 @@ pub fn run_input(mut cmd: std::process::Command, input: &str, timeout: Duration)
         let _ = i.write_all(input.as_bytes());
     }
     wait_output(child, timeout)
+}
+
+/// How long a child that was interrupted at its deadline has to stop before it is killed (a
+/// quick tool; a package transaction is given `wol_core::admin::LONG_STEP_GRACE_SECS`).
+pub const KILL_GRACE: Duration = Duration::from_secs(2);
+
+/// End `child` and everything it started (QA-A9-CORE-3, RC-22: the child dies, its transaction
+/// does not). `child.kill()` is a SIGKILL of the one pid: a grandchild (arch-chroot, pacman) went
+/// on as an orphan, and a pacman killed mid-package leaves a half-installed system. So: SIGINT to
+/// the whole process group (pacman stops between packages on it), up to `grace` for the group to
+/// be empty, then SIGKILL to what is left. The group is signalled only when `child` leads its own
+/// (spawned with `process_group(0)`), never the caller's; otherwise only the child is.
+pub fn stop_tree(child: &mut std::process::Child, grace: Duration) {
+    let Ok(pid) = i32::try_from(child.id()) else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return;
+    };
+    // SAFETY: getpgid only reads the group of a pid we spawned and have not reaped.
+    let leads = unsafe { libc::getpgid(pid) } == pid;
+    let target = if leads { -pid } else { pid };
+    let send = |sig: i32| {
+        // SAFETY: kill(2) on our own child (or its group); a stale target only fails with ESRCH.
+        unsafe { libc::kill(target, sig) == 0 }
+    };
+    send(libc::SIGINT);
+    let until = std::time::Instant::now() + grace;
+    let mut reaped = false;
+    loop {
+        if !reaped && matches!(child.try_wait(), Ok(Some(_))) {
+            reaped = true;
+        }
+        // Gone: the child reaped and, for a group, nobody left in it (kill 0 = existence).
+        let alive = if leads { send(0) } else { !reaped };
+        if !alive || std::time::Instant::now() >= until {
+            break;
+        }
+        std::thread::sleep(CHILD_POLL);
+    }
+    if !reaped || (leads && send(0)) {
+        send(libc::SIGKILL);
+    }
+    if !reaped {
+        let _ = child.wait();
+    }
 }
 
 /// How often [`run_full`] looks whether its child exited.
@@ -202,6 +250,7 @@ pub fn run_full(
     let (file, args) = argv.split_first().ok_or(RunFail::Start(String::new()))?;
     let mut child = Command::new(file)
         .args(args)
+        .process_group(0)
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -243,8 +292,7 @@ pub fn run_full(
                 std::thread::sleep(CHILD_POLL);
             }
             _ => {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop_tree(&mut child, KILL_GRACE);
                 return Err(RunFail::TimedOut);
             }
         }
@@ -271,12 +319,23 @@ pub fn run_input_err(argv: &[&str], input: &str, timeout: Duration) -> Result<St
 
 /// Stdout of a spawned child (stdout piped) when it exits 0 within `timeout`; killed otherwise.
 /// Wakes on stdout EOF instead of polling, so a short command costs its own run time only.
-pub fn wait_output(mut child: std::process::Child, timeout: Duration) -> Option<String> {
+/// A child past the deadline is stopped with [`stop_tree`] (its whole process group when it leads
+/// one, which every spawn of this module makes it).
+pub fn wait_output(child: std::process::Child, timeout: Duration) -> Option<String> {
+    wait_output_grace(child, timeout, KILL_GRACE)
+}
+
+/// [`wait_output`] with `grace` between the interrupt and the kill: a package transaction is given
+/// a minute to finish the package it is on (`wol_core::admin::LONG_STEP_GRACE_SECS`).
+pub fn wait_output_grace(
+    mut child: std::process::Child,
+    timeout: Duration,
+    grace: Duration,
+) -> Option<String> {
     use std::io::Read;
     let deadline = std::time::Instant::now() + timeout;
     let Some(mut out) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
+        stop_tree(&mut child, grace);
         return None;
     };
     let (tx, rx) = std::sync::mpsc::channel();
@@ -296,8 +355,7 @@ pub fn wait_output(mut child: std::process::Child, timeout: Duration) -> Option<
                 nap = (nap * 2).min(Duration::from_millis(5));
             }
             _ => {
-                let _ = child.kill();
-                let _ = child.wait();
+                stop_tree(&mut child, grace);
                 break None;
             }
         }
@@ -708,5 +766,149 @@ mod tests {
         assert_eq!(builtin(&["cat", "relative"]), None);
         assert_eq!(builtin(&["echo", "hi"]), None);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Whether process `pid` still runs (a zombie waiting for its reaper is gone for our purpose).
+    fn running(pid: i32) -> bool {
+        std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|t| {
+                t.rsplit_once(')')
+                    .map(|(_, r)| r.trim_start().starts_with(['R', 'S', 'D']))
+            })
+            .unwrap_or(false)
+    }
+
+    /// [`running`] is false within five seconds (a SIGKILL is delivered, not instant).
+    fn gone(pid: i32) -> bool {
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while running(pid) {
+            if std::time::Instant::now() >= until {
+                return false;
+            }
+            std::thread::yield_now();
+        }
+        true
+    }
+
+    /// Wait for the one byte a test child prints once its signal handler is set.
+    fn ready(child: &mut std::process::Child) {
+        use std::io::Read;
+        let mut b = [0u8; 1];
+        child.stdout.as_mut().unwrap().read_exact(&mut b).unwrap();
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("wol-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn pid_in(f: &std::path::Path) -> i32 {
+        std::fs::read_to_string(f).unwrap().trim().parse().unwrap()
+    }
+
+    /// QA-A9-CORE-3: a step past its deadline ends with everything it started. The old kill was
+    /// `child.kill()`: the shell died and its `sleep` (arch-chroot, pacman) went on orphaned.
+    #[test]
+    fn a_timeout_ends_the_whole_process_group() {
+        let d = scratch("grandchild");
+        let pidf = d.join("pid");
+        let script = format!("sleep 30 & echo $! > {}; wait", pidf.display());
+        let child = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let out = wait_output_grace(child, Duration::from_secs(1), Duration::from_millis(300));
+        assert_eq!(out, None);
+        let sleeper = pid_in(&pidf);
+        assert!(
+            gone(sleeper),
+            "the grandchild sleep {sleeper} outlived the timeout"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The same through the public runners (`run_with_timeout`, `run_full`): both spawn the child
+    /// as the leader of its own group.
+    #[test]
+    fn the_runners_kill_the_group_too() {
+        let d = scratch("runners");
+        let (a, b) = (d.join("a"), d.join("b"));
+        let sh = |f: &std::path::Path| format!("sleep 30 & echo $! > {}; wait", f.display());
+        assert_eq!(
+            run_with_timeout(&["sh", "-c", &sh(&a)], Duration::from_millis(500)),
+            None
+        );
+        assert_eq!(
+            run_full(&["sh", "-c", &sh(&b)], None, Duration::from_millis(500)),
+            Err(RunFail::TimedOut)
+        );
+        for f in [&a, &b] {
+            assert!(
+                gone(pid_in(f)),
+                "{}: sleep outlived the timeout",
+                f.display()
+            );
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A package transaction is interrupted first (pacman stops between packages on SIGINT) and
+    /// killed only after the grace: the handler runs, and a child that ignores SIGINT is killed.
+    #[test]
+    fn the_group_is_interrupted_before_it_is_killed() {
+        let d = scratch("int-first");
+        let marker = d.join("got-int");
+        let script = format!(
+            "trap 'echo got > {}; exit 0' INT; printf r; while :; do sleep 0.05; done",
+            marker.display()
+        );
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", &script])
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        ready(&mut child);
+        assert_eq!(
+            wait_output_grace(child, Duration::from_millis(100), Duration::from_secs(5)),
+            None
+        );
+        assert!(
+            marker.exists(),
+            "SIGINT never reached the child before the kill"
+        );
+        // Ignoring SIGINT: killed once the grace is over, not before.
+        let mut stubborn = std::process::Command::new("sh")
+            .args(["-c", "trap '' INT; printf r; while :; do sleep 0.05; done"])
+            .process_group(0)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        ready(&mut stubborn);
+        let t = std::time::Instant::now();
+        stop_tree(&mut stubborn, Duration::from_millis(400));
+        assert!(
+            t.elapsed() >= Duration::from_millis(400),
+            "killed before the grace"
+        );
+        assert!(stubborn.try_wait().unwrap().is_some());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A child that does not lead its own group is the only one signalled: the caller's group is
+    /// never hit.
+    #[test]
+    fn a_child_in_the_callers_group_is_stopped_alone() {
+        let mut c = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        stop_tree(&mut c, Duration::from_millis(300));
+        assert!(c.try_wait().unwrap().is_some());
     }
 }

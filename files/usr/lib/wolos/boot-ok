@@ -7,24 +7,20 @@
 # leaves the try counter; three such boots fall back.
 # A good boot of a new slot also clears the live layers it already holds (`wol layers clear`,
 # its folded list): they stay until here so a slot that fails falls back to an old slot that
-# still has them. Layers a cut-off `wol pkg` left are settled first (QA-STORE-45): one without
-# its record never committed and goes; one with its record but no extension-release committed
-# and gets it.
+# still has them. The same command settles the layers a cut-off `wol pkg` left, under the update
+# lock (QA-STORE-45, QA-A9-CORE-2): one without its record never committed and goes; one with its
+# record but no extension-release committed and gets it.
 # `wol boot bless` rewrites loader/entries/wolos-*; wolos-mok-enroll.service may be rewriting the
 # same entries at this boot (a Firmware-tier install moving to the key-screen tier, boot-enroll ->
 # esp-sync), so bless waits for that unit to end, at most a minute (audit3 R2B-8).
 # Env (tests): WOLOS_BOOT_OK_WAIT (seconds between looks, 5), WOLOS_BOOT_OK_LIMIT (seconds to wait
 # for the screen, 90), WOLOS_PROC (/proc), WOLOS_CMDLINE_FILE (/proc/cmdline), WOLOS_MARKS
-# (/var/lib/wolos), WOLOS_LAYERS (/var/lib/extensions), WOLOS_LAYERS_WORK (/var/lib/wolos/layers),
-# WOLOS_LAYER_CHROOT (/run/wolos/layer-root), WOLOS_ESP (/efi), WOLOS_SLOTS (/run/wolos/slots.json).
+# (/var/lib/wolos), WOLOS_ESP (/efi), WOLOS_SLOTS (/run/wolos/slots.json).
 set -eu
 wait=${WOLOS_BOOT_OK_WAIT:-5}
 limit=${WOLOS_BOOT_OK_LIMIT:-90}
 P=${WOLOS_PROC:-/proc}
 M=${WOLOS_MARKS:-/var/lib/wolos}
-X=${WOLOS_LAYERS:-/var/lib/extensions}
-W=${WOLOS_LAYERS_WORK:-/var/lib/wolos/layers}
-C=${WOLOS_LAYER_CHROOT:-/run/wolos/layer-root}
 
 # A slot that failed its seal or floor check this boot is not good, whatever comes up after it
 # (QA-LIVE3-36; a check that passes removes its slot's mark, so a mark is this boot's).
@@ -90,26 +86,14 @@ if list=$(bootctl --esp-path="$ESP" list --json=short 2>/dev/null) && [ -n "$lis
   fi
 fi
 
-# Layers a cut-off `wol pkg` left; never while one runs (its chroot is mounted).
-changed=
-if ! mountpoint -q "$C" 2>/dev/null; then
-  for l in "$X"/wolos-layer-*; do
-    [ -d "$l" ] || continue
-    name=${l##*/}
-    rel="$l/usr/lib/extension-release.d/extension-release.$name"
-    if [ ! -f "$l/wolos-layer.json" ]; then
-      echo "boot-ok: $name never finished installing: removed" >&2
-      rm -rf "${l:?}" "${W:?}/$name"
-      changed=1
-    elif [ ! -f "$rel" ]; then
-      mkdir -p "${rel%/*}"
-      printf 'ID=_any\nARCHITECTURE=x86-64\n' > "$rel"
-      changed=1
-    fi
-  done
+# The mark of an update that was cut after it wrote this slot's boot entry and before it removed
+# the mark (power lost): this slot is up and blessed, so the update did finish (QA-A9-CORE-4).
+# Only the slot being built is named in it, and a build of the other slot is not touched.
+if [ -n "$slot" ] && [ "$(cut -d' ' -f1 "$M/update-building" 2>/dev/null || :)" = "$slot" ]; then
+  rm -f "$M/update-building" || :
 fi
-# Through the unit (its reload is `systemd-sysext refresh`): a merge made from this service's
-# own mount namespace never reaches the system.
-[ -z "$changed" ] || systemctl reload-or-restart systemd-sysext.service || :
+# Layers a cut-off `wol pkg` left, and the folded ones, are `wol layers clear`'s: it holds the
+# update lock for them, which a shell test of "a chroot is mounted" cannot (the layer chroot
+# lives in a private mount namespace, so `mountpoint` here is false for ever; QA-A9-CORE-2).
 # Harmless if it fails: the layers stay merged and the next good boot tries again.
 wol layers clear || :

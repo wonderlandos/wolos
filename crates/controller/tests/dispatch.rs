@@ -582,10 +582,10 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
         "{}",
         env.out
     );
-    assert!(
-        env.out
-            .contains("unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n")
-    );
+    assert!(env.out.contains(
+        "unshare --mount --propagation private --fork --kill-child=SIGKILL \
+                wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n"
+    ));
     // QA-STORE-76: an empty argument reads as '' (not a bare "bootctl set-default ").
     assert!(env.out.ends_with("bootctl set-default ''\n"), "{}", env.out);
 }
@@ -929,7 +929,7 @@ fn one_copy_failure_no_rollback() {
     let ran: Vec<String> = env.execs.iter().map(|e| e.join(" ")).collect();
     assert_eq!(
         ran,
-        ["/usr/bin/pacman -Syu --noconfirm"],
+        ["/usr/bin/pacman -Syuw --noconfirm"],
         "nothing after the failure"
     );
     assert!(

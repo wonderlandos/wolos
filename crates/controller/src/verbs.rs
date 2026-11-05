@@ -1114,7 +1114,16 @@ pub fn rollback(env: &mut dyn Env, be: Option<&str>) -> i32 {
         },
     };
     if env.is_root() {
-        return crate::run::exec(env, &be::activate_argv(&name));
+        // The entry file as it is on the ESP, counter included (QA-A9-CORE-5).
+        let dir = be::entries_dir();
+        let listed: String = env
+            .list_dir(Path::new(&dir))
+            .iter()
+            .filter_map(|p| Path::new(p).file_name())
+            .map(|n| n.to_string_lossy().into_owned() + "\n")
+            .collect();
+        let entry = be::entry_file(&name, Some(&listed));
+        return crate::run::exec(env, &be::activate_argv(&entry));
     }
     restore_activate(env, &name)
 }

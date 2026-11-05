@@ -258,6 +258,31 @@ fn restore_list_marks_the_rollback_target() {
     assert!(none.err.contains("root slots"));
 }
 
+/// QA-A9-CORE-5: `bootctl set-default` writes the text it is given, and sd-boot matches it against
+/// the entry's file name, counter included (systemd v257 boot.c). While boot-rearm has a slot
+/// counted (`wolos-a+3.conf`), `wolos-a.conf` matched nothing and the restore did nothing.
+#[test]
+fn restoring_a_counted_slot_names_its_entry_file() {
+    let counted = |entry: &str| {
+        let mut e = slots_env("activate-counted");
+        e.root = true;
+        e.files.push((
+            PathBuf::from(format!("/efi/loader/entries/{entry}")),
+            "title WolOS\n".into(),
+        ));
+        e
+    };
+    let mut e = counted("wolos-a+3.conf");
+    assert_eq!(run("update rollback", &mut e), 0, "{}", e.err);
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["bootctl set-default wolos-a+3.conf"], "{}", e.err);
+    // A blessed slot has the plain name.
+    let mut e = counted("wolos-a.conf");
+    assert_eq!(run("update rollback", &mut e), 0, "{}", e.err);
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["bootctl set-default wolos-a.conf"]);
+}
+
 #[test]
 fn rollback_goes_through_wol_admind_with_the_password() {
     let mut e = slots_env("rollback");

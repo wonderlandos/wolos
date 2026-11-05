@@ -139,7 +139,7 @@ fn cache_bind_and_umount_in_rollback() {
         .iter()
         .position(|s| {
             *s == format!(
-                "unshare --mount --propagation private wol update chroot {tx} -- \
+                "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {tx} -- \
 /usr/bin/pacman -Syu --noconfirm"
             )
         })
@@ -196,16 +196,30 @@ fn interrupted_build_leaves_a_marker() {
             .any(|a| a.contains(&up::BUILDING.to_owned()))
     );
     assert_eq!(
-        up::interrupted(Some("wolos-b 2026/11/02\n"), false),
+        up::interrupted(Some("wolos-b 2026/11/02\n"), false, Some("wolos-a")),
         Some("wolos-b")
     );
     assert_eq!(
-        up::interrupted(Some("wolos-b current\n"), true),
+        up::interrupted(Some("wolos-b 2026/11/02\n"), false, None),
+        Some("wolos-b")
+    );
+    assert_eq!(
+        up::interrupted(Some("wolos-b current\n"), true, Some("wolos-a")),
         None,
         "running now"
     );
-    assert_eq!(up::interrupted(None, false), None);
-    assert_eq!(up::interrupted(Some("../x\n"), false), None);
+    assert_eq!(up::interrupted(None, false, None), None);
+    assert_eq!(up::interrupted(Some("../x\n"), false, None), None);
+}
+
+/// QA-A9-CORE-4: power cut between the new boot entry and `rm -f update-building`. The new slot
+/// is the one running (it booted and was blessed), so the update finished: not "interrupted".
+#[test]
+fn a_mark_naming_the_running_slot_is_not_an_interrupted_update() {
+    assert_eq!(
+        up::interrupted(Some("wolos-b current\n"), false, Some("wolos-b")),
+        None
+    );
 }
 
 /// QA-UPG-11: the copy's /etc/kernel/cmdline names its own subvolume (it said @wolos-a in b).
