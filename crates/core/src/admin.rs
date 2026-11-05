@@ -314,8 +314,34 @@ pub const LONG_ACTIONS: [AdminAction; 9] = [
 ];
 /// How long wol-admind lets one step of a [`LONG_ACTIONS`] action run, in seconds.
 pub const LONG_STEP_SECS: u32 = 1800;
+/// How long a step of a [`LONG_ACTIONS`] action that ran past [`LONG_STEP_SECS`] has to stop after
+/// SIGINT (pacman ends between packages on it) before its whole process group is killed.
+pub const LONG_STEP_GRACE_SECS: u32 = 60;
+/// How long an in-place `pacman -Su` (the installing half of a one-copy Update Now) has to end the
+/// package it is on after SIGINT. It is never killed: SIGKILL in the middle of an install leaves
+/// the only copy of the system half updated, where SIGINT stops pacman between packages
+/// (QA-A9-CORE-3). A day is a bound for a stuck process, not a plan for a slow one.
+pub const INSTALL_GRACE_SECS: u32 = 86_400;
 /// How long wol-admind lets one step of any other action run, in seconds.
 pub const STEP_SECS: u32 = 30;
+
+/// Whether `argv` is the installing half of a one-copy Update Now: `pacman -Su ...` (the download
+/// half, `-Syuw`, installs nothing and may be killed).
+pub fn installs_in_place(argv: &[String]) -> bool {
+    argv.first().is_some_and(|p| p == crate::update::PACMAN) && argv.iter().any(|a| a == "-Su")
+}
+
+/// (deadline, grace) in seconds for one wol-admind step: the deadline [`step_secs`] gives (a long
+/// action's step is `long`), then SIGINT to the step's whole process group and `grace` seconds to
+/// end (0: the system default, `system::KILL_GRACE`), then SIGKILL. A package transaction is given
+/// a minute (an install in place: [`INSTALL_GRACE_SECS`], never killed in practice).
+pub fn step_limit(argv: &[String], long: bool) -> (u32, u32) {
+    match (long, installs_in_place(argv)) {
+        (true, true) => (LONG_STEP_SECS, INSTALL_GRACE_SECS),
+        (true, false) => (LONG_STEP_SECS, LONG_STEP_GRACE_SECS),
+        (false, _) => (STEP_SECS, 0),
+    }
+}
 /// What a client adds to the steps' time for the password check, copies and the reply itself.
 pub const REPLY_MARGIN_SECS: u32 = 60;
 
@@ -472,8 +498,13 @@ pub fn plan_with(
             .into_iter()
             .map(AdminStep::Run)
             .collect(),
+        // The entry's file name has the boot counter in it while the slot is counted (sd-boot
+        // matches the default against it), so it is read from the directory (QA-A9-CORE-5).
         AdminAction::BootEnvironment => {
-            vec![AdminStep::Run(crate::update::be::activate_argv(&a[0]))]
+            let dir = crate::update::be::entries_dir();
+            let listing = probe(&["ls", "-1", &dir]);
+            let entry = crate::update::be::entry_file(&a[0], listing.as_deref());
+            vec![AdminStep::Run(crate::update::be::activate_argv(&entry))]
         }
         AdminAction::HwLoad => vec![argv(&["modprobe", &a[0]])],
         // Queues the key once (prints `enrolled` and changes nothing when it is already in db).

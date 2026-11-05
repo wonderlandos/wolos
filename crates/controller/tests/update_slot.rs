@@ -185,7 +185,7 @@ fn pacman_u_files_reach_the_copy_with_their_signature() {
         .iter()
         .position(|s| {
             s.to_string()
-                .starts_with("unshare --mount --propagation private wol update chroot ")
+                .starts_with("unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot ")
         })
         .unwrap();
     let mut ran = 0;
@@ -222,7 +222,7 @@ fn pacman_u_files_reach_the_copy_with_their_signature() {
     assert_eq!(
         pacman,
         format!(
-            "unshare --mount --propagation private wol update chroot {work} -- /usr/bin/pacman -U --noconfirm \
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {work} -- /usr/bin/pacman -U --noconfirm \
 /var/tmp/wolos-pkg/0/linux-wolos-7.3.1-1-x86_64.pkg.tar.zst /var/tmp/wolos-pkg/1/hello[1].pkg.tar.zst"
         )
     );

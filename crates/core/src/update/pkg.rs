@@ -241,9 +241,20 @@ pub fn update_now_args(holds: &[String]) -> Vec<String> {
 /// Update Now on a computer with one copy of WolOS (ADR 0023, [`super::SINGLE_COPY`]): the
 /// running system is updated in place, with nothing to go back to (the page says so first).
 pub fn update_now_in_place(holds: &[String]) -> Vec<Step> {
-    let mut a = vec![super::PACMAN.to_owned()];
-    a.extend(update_now_args(holds));
-    vec![Step::Run(a)]
+    in_place_pacman(&update_now_args(holds))
+}
+
+/// `pacman -Syu ARGS` on the running system as two steps (QA-A9-CORE-3): `-Syuw` downloads and
+/// installs nothing, so the deadline may kill it; `-Su` installs from the cache and is given
+/// SIGINT, never SIGKILL (wol-admind: `wol_core::admin::step_limit`), because a kill in the
+/// middle of an install leaves the only copy of the system half updated.
+pub fn in_place_pacman(syu_args: &[String]) -> Vec<Step> {
+    let step = |first: &str| {
+        let mut a = vec![super::PACMAN.to_owned(), first.to_owned()];
+        a.extend(syu_args.iter().filter(|x| *x != "-Syu").cloned());
+        Step::Run(a)
+    };
+    vec![step("-Syuw"), step("-Su")]
 }
 
 /// What wol-admind answers when Update Now could not be made, for the Software Update page
@@ -517,7 +528,7 @@ https://example.org/x.pkg.tar.zst --cachedir /c");
 -t {st}/1 -- {{}} +"
         ));
         let pacman = at(&format!(
-            "unshare --mount --propagation private wol update chroot {r} -- /usr/bin/pacman -U \
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {r} -- /usr/bin/pacman -U \
 --noconfirm /var/tmp/wolos-pkg/0/k.pkg.tar.zst /var/tmp/wolos-pkg/1/h.pkg.tar.zst \
 https://example.org/x.pkg.tar.zst --cachedir /c"
         ));
@@ -593,11 +604,13 @@ https://example.org/x.pkg.tar.zst --cachedir /c"
         assert_eq!(t[snap + 3], format!("write {w}/etc/wolos/slot"));
         assert_eq!(t[snap + 4], super::super::ETC_SETTLE);
         let pacman = at(&format!(
-            "unshare --mount --propagation private wol update chroot {w} -- /usr/bin/pacman -S vim"
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {w} -- /usr/bin/pacman -S vim"
         ));
         assert_eq!(
             t[pacman + 1],
-            format!("unshare --mount --propagation private wol update chroot {w} -- mkinitcpio -P")
+            format!(
+                "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {w} -- mkinitcpio -P"
+            )
         );
         let seal = at(&format!("wol seal apply {w} /efi/wolos-b/verity.new"));
         let mv = at(&format!("mv {w} {r}"));
@@ -627,7 +640,7 @@ https://example.org/x.pkg.tar.zst --cachedir /c"
         let snap = at(&format!("btrfs subvolume snapshot {r} {w}"));
         assert_eq!(t[snap + 1], format!("wol layers fold {w}"));
         at(&format!(
-            "unshare --mount --propagation private wol update chroot {w} -- /usr/bin/pacman -S git"
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {w} -- /usr/bin/pacman -S git"
         ));
         let del =
             at("find /run/wolos/top -maxdepth 1 -name @wolos-b -exec btrfs subvolume delete {} +");
@@ -692,9 +705,13 @@ https://example.org/x.pkg.tar.zst --cachedir /c"
             .position(|x| x.starts_with("wol seal apply"))
             .unwrap();
         assert!(snap < seal && seal < del, "{t:?}");
-        assert!(t.contains(
-            &"unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm".into()
-        ));
+        assert!(
+            t.contains(
+                &"unshare --mount --propagation private --fork --kill-child=SIGKILL \
+                wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm"
+                    .into()
+            )
+        );
         assert!(
             t.iter().all(|x| !x.contains("@wolos-a")),
             "the restore point is never written: {t:?}"
@@ -716,7 +733,13 @@ https://example.org/x.pkg.tar.zst --cachedir /c"
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert_eq!(one, ["/usr/bin/pacman -Syu --noconfirm --ignore=gimp"]);
+        assert_eq!(
+            one,
+            [
+                "/usr/bin/pacman -Syuw --noconfirm --ignore=gimp",
+                "/usr/bin/pacman -Su --noconfirm --ignore=gimp"
+            ]
+        );
         assert!(
             !SLOT_FAILED.contains("wolos-"),
             "no slot name for the person (QA-STORE-6)"

@@ -144,11 +144,11 @@ fn an_install_is_a_live_layer_without_a_restart() {
     );
     // QA-STORE-58: the chroot and pacman in a mount namespace of their own.
     assert!(
-        l.iter().any(
-            |x| x.starts_with("unshare --mount --propagation private sh -c ")
-                && x.contains("\narch-chroot /run/wolos/layer-root /usr/bin/pacman \"$@\"")
-                && x.ends_with(" wol-layer /var/lib/pacman -S vim")
-        ),
+        l.iter().any(|x| x.starts_with(
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL sh -c "
+        ) && x
+            .contains("\narch-chroot /run/wolos/layer-root /usr/bin/pacman \"$@\"")
+            && x.ends_with(" wol-layer /var/lib/pacman -S vim")),
         "{l:?}"
     );
     assert!(
@@ -193,7 +193,13 @@ fn the_kernel_goes_to_the_pending_slot() {
         l.contains(&"btrfs subvolume snapshot / /run/wolos/top/@wolos-tx".into()),
         "{l:?}"
     );
-    assert!(l.contains(&"unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -S nvidia".into()));
+    assert!(
+        l.contains(
+            &"unshare --mount --propagation private --fork --kill-child=SIGKILL \
+        wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -S nvidia"
+                .into()
+        )
+    );
     assert!(l.contains(&"mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b".into()));
     assert!(l.contains(&"bootctl set-default ".into()));
     assert!(!l.contains(&"systemd-sysext refresh".into()));
@@ -424,6 +430,53 @@ fn a_good_boot_removes_a_layer_pacman_never_finished() {
     assert!(busy.execs.is_empty(), "{:?}", busy.execs);
 }
 
+/// A layer's extension-release path (a finished layer has it).
+fn released(layer: &str) -> PathBuf {
+    PathBuf::from(wol_core::update::layers::release_file(layer))
+}
+
+/// QA-A9-CORE-2: a layer pacman committed in (record) but whose extension-release is missing (the
+/// cut between the two writes of `finish`) gets its release from `wol layers clear`, under the
+/// update lock, and one refresh merges it. Held lock (a change runs): nothing is written.
+#[test]
+fn a_good_boot_finishes_a_layer_cut_between_its_record_and_its_release() {
+    let ls = "wolos-layer-0001\nwolos-layer-0002\n";
+    let release = released;
+    let boot = || FakeEnv {
+        root: true,
+        files: vec![
+            (record("wolos-layer-0001"), "{}\n".into()),
+            (record("wolos-layer-0002"), "{}\n".into()),
+            (release("wolos-layer-0001"), "ID=_any\n".into()),
+        ],
+        captures: vec![("ls -1 /var/lib/extensions".into(), ls.into())],
+        ..Default::default()
+    };
+    let mut env = boot();
+    assert_eq!(run("layers clear", &mut env), 0, "{}", env.err);
+    assert_eq!(
+        env.written,
+        [(
+            release("wolos-layer-0002"),
+            wol_core::update::layers::extension_release()
+        )]
+    );
+    let l = lines(&env);
+    assert_eq!(
+        l,
+        ["systemctl reload-or-restart systemd-sysext.service"],
+        "{l:?}"
+    );
+    let mut busy = boot();
+    busy.locks
+        .lock()
+        .unwrap()
+        .push(PathBuf::from("/run/wolos/update.lock"));
+    assert_eq!(run("layers clear", &mut busy), 0, "{}", busy.err);
+    assert!(busy.written.is_empty(), "{:?}", busy.written);
+    assert!(busy.execs.is_empty(), "{:?}", busy.execs);
+}
+
 /// audit8 stability2 #2: one change to a slot or a layer at a time. A second `wol update apply`
 /// or pacman while the first holds the lock is refused before it runs anything.
 #[test]
@@ -519,6 +572,8 @@ fn the_booted_slot_clears_the_layers_it_already_holds() {
             ),
             (record("wolos-layer-0001"), "{}\n".into()),
             (record("wolos-layer-0002"), "{}\n".into()),
+            (released("wolos-layer-0001"), "ID=_any\n".into()),
+            (released("wolos-layer-0002"), "ID=_any\n".into()),
         ],
         captures: vec![(
             "ls -1 /var/lib/extensions".into(),
@@ -562,6 +617,7 @@ fn clear_never_writes_under_etc() {
             .into_iter()
             .map(|(p, t)| (PathBuf::from(p), t.to_owned()))
             .chain([(record("wolos-layer-0002"), "{}\n".to_owned())])
+            .chain([(released("wolos-layer-0002"), "ID=_any\n".to_owned())])
             .collect(),
         captures: vec![(
             "ls -1 /var/lib/extensions".into(),
@@ -1134,4 +1190,82 @@ fn a_killed_download_leaves_no_scratch_folder_after_a_restart() {
                 == ["R", &format!("/var/tmp/{name}.*")]),
         "tmpfiles.d/wolos.conf has no `R /var/tmp/{name}.*`"
     );
+}
+
+/// Set a `user.*` extended attribute (needs no privilege; `security.capability` would need root).
+fn set_xattr(path: &std::path::Path, name: &str, value: &[u8]) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    let p = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let n = std::ffi::CString::new(name).unwrap();
+    // SAFETY: both strings are NUL-terminated and live for the call; the value pointer and length match.
+    unsafe {
+        libc::lsetxattr(
+            p.as_ptr(),
+            n.as_ptr(),
+            value.as_ptr().cast(),
+            value.len(),
+            0,
+        ) == 0
+    }
+}
+
+fn get_xattr(path: &std::path::Path, name: &str) -> Option<Vec<u8>> {
+    use std::os::unix::ffi::OsStrExt;
+    let p = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+    let n = std::ffi::CString::new(name).unwrap();
+    let mut buf = [0u8; 64];
+    // SAFETY: as above; `buf` is 64 writable bytes.
+    let r = unsafe { libc::lgetxattr(p.as_ptr(), n.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) };
+    (r >= 0).then(|| buf[..r as usize].to_vec())
+}
+
+/// QA-A9-CORE-1 (RC-20): a program a person installed with `wol pkg` that is setuid, or carries a
+/// file capability or any xattr, is the same program after the fold. `fs::copy` + `lchown` made
+/// it a plain 0755 file ("must be setuid root", "Operation not permitted") with fold exiting 0.
+/// Hard links stay one inode.
+#[test]
+fn fold_keeps_set_id_bits_xattrs_and_hard_links() {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let base = scratch("fold-meta");
+    let (root, layers, db) = (base.join("slot"), base.join("layers"), base.join("db"));
+    let l1 = layers.join("wolos-layer-0001");
+    std::fs::create_dir_all(l1.join("usr/bin")).unwrap();
+    let suid = l1.join("usr/bin/helper");
+    std::fs::write(&suid, "helper").unwrap();
+    std::fs::set_permissions(&suid, std::fs::Permissions::from_mode(0o4755)).unwrap();
+    let sgid = l1.join("usr/bin/grpr");
+    std::fs::write(&sgid, "grpr").unwrap();
+    std::fs::set_permissions(&sgid, std::fs::Permissions::from_mode(0o2755)).unwrap();
+    if !set_xattr(&suid, "user.wolos", b"1") {
+        eprintln!("skip: {} has no user xattrs", base.display());
+        return;
+    }
+    std::fs::hard_link(&suid, l1.join("usr/bin/helper-link")).unwrap();
+    std::fs::create_dir_all(l1.join("opt/app")).unwrap();
+    std::fs::write(l1.join("opt/app/bin"), "x").unwrap();
+    std::fs::set_permissions(l1.join("opt/app"), std::fs::Permissions::from_mode(0o750)).unwrap();
+    std::fs::write(
+        l1.join("wolos-layer.json"),
+        r#"{"installed":["helper-1-1"],"removed":[]}"#,
+    )
+    .unwrap();
+    std::fs::create_dir_all(&db).unwrap();
+    std::fs::create_dir_all(root.join("usr/bin")).unwrap();
+    fold(&root, &layers, &db);
+    let out = root.join("usr/bin/helper");
+    assert_eq!(std::fs::metadata(&out).unwrap().mode() & 0o7777, 0o4755);
+    assert_eq!(
+        std::fs::metadata(root.join("usr/bin/grpr")).unwrap().mode() & 0o7777,
+        0o2755
+    );
+    assert_eq!(get_xattr(&out, "user.wolos").as_deref(), Some(&b"1"[..]));
+    let link = std::fs::metadata(root.join("usr/bin/helper-link")).unwrap();
+    assert_eq!(link.ino(), std::fs::metadata(&out).unwrap().ino());
+    assert_eq!(link.nlink(), 2);
+    // A directory the layer made keeps its mode too.
+    assert_eq!(
+        std::fs::metadata(root.join("opt/app")).unwrap().mode() & 0o7777,
+        0o750
+    );
+    let _ = std::fs::remove_dir_all(&base);
 }

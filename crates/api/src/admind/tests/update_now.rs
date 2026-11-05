@@ -33,7 +33,7 @@ fn update_now_keeps_a_restore_point_first() {
     assert!(seal < swap, "{ran:?}");
     // After the fold, the slot's own /etc overlay line (ADR 0044, 0.12.1), then pacman.
     let pacman = format!(
-        "unshare --mount --propagation private wol update chroot {b} -- /usr/bin/pacman -Syu --noconfirm"
+        "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {b} -- /usr/bin/pacman -Syu --noconfirm"
     );
     let at = ran
         .iter()
@@ -65,7 +65,10 @@ fn update_now_keeps_a_restore_point_first() {
     let r = req(AdminAction::PkgUpgrade, &["firefox", "gimp"]);
     handle(&encode(&r, b""), ROOT, &Shared::default(), &held);
     assert!(held.ran.borrow().iter().any(|a| a.join(" ")
-        == format!("unshare --mount --propagation private wol update chroot {b} -- /usr/bin/pacman -Syu --noconfirm --ignore=firefox,gimp")));
+        == format!(
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL \
+            wol update chroot {b} -- /usr/bin/pacman -Syu --noconfirm --ignore=firefox,gimp"
+        )));
     let wifi = Fake::default();
     let r = req(AdminAction::WifiPower, &["wlan0", "off"]);
     handle(&encode(&r, b""), ROOT, &Shared::default(), &wifi);
@@ -135,7 +138,14 @@ fn update_now_on_one_copy_updates_in_place() {
     );
     assert_eq!(said, None);
     let ran: Vec<String> = os.ran.borrow().iter().map(|a| a.join(" ")).collect();
-    assert_eq!(ran, ["/usr/bin/pacman -Syu --noconfirm --ignore=gimp"]);
+    // QA-A9-CORE-3: the download (a deadline may kill it) and the install (SIGINT only) are two steps.
+    assert_eq!(
+        ran,
+        [
+            "/usr/bin/pacman -Syuw --noconfirm --ignore=gimp",
+            "/usr/bin/pacman -Su --noconfirm --ignore=gimp"
+        ]
+    );
     assert!(os.log.borrow()[0].contains("one copy of WolOS, no restore point"));
     assert!(os.captured.borrow().is_empty(), "no slot is looked for");
     let failing = Fake {

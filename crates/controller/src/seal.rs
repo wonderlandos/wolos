@@ -298,11 +298,6 @@ pub(crate) fn image_damaged(env: &mut dyn Env, slot: &str) -> bool {
     got.as_deref() != Some(want.as_str())
 }
 
-/// [`fallback_entry`] found one.
-pub(crate) fn may_fall_back_to(env: &mut dyn Env, other: &str) -> bool {
-    fallback_entry(env, other).is_some()
-}
-
 /// `wol seal check` (early boot): compare the running slot with what was sealed; on a mismatch
 /// boot the other slot and leave a message for the person.
 pub fn check(env: &mut dyn Env) -> i32 {
@@ -424,8 +419,12 @@ fn check_at(env: &mut dyn Env, slot: &str, expected: &str, root: &Path) -> i32 {
     // did not start, or the person picked this one). Restarting again would loop (QA-STORE-51).
     let again = env.read_file(&failed_mark(VERITY_MARK, slot)).is_some();
     let other = update::other_slot(slot).unwrap_or("");
-    let other_ok = !again && may_fall_back_to(env, other);
-    let fb = seal::fallback(slot, other_ok);
+    let entry = if again {
+        None
+    } else {
+        fallback_entry(env, other)
+    };
+    let fb = seal::fallback(slot, entry.as_deref());
     let _ = env.write_file(&failed_mark(VERITY_MARK, slot), "failed\n");
     let msg = seal::notice(slot, &v, matches!(fb, seal::Fallback::Boot { .. }));
     let _ = env.write_file(Path::new(seal::NOTICE), &msg);

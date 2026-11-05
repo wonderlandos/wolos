@@ -298,8 +298,8 @@ brackets; `cargo test` runs in the `test` job).
   crate (code only: comments, strings and char literals stripped by a lexer; `src/` with the
   binaries, `tests/`, `benches/`, `examples/`, `build.rs`) and fails when a count goes above its
   `BASELINE` row (that table is the record and its comment gives the reason for every raise;
-  the rows: wol-abi 513, wolkit 314, wopkg 104, realtime 49, xguard 65, controller 61, api 33,
-  core 14, xguard-clam 13, shared 19, shell 20, proxy 3, wol-lua 3, webengine 178, atlas 1, federate 0, wolcrypt 0, wolkeyring 1, audio 0, aurlaws 0, wolsem 0, wol-tor 0, wolkit-render 0, wolkit-web 0, atlas-fed 0).
+  the rows: wol-abi 513, wolkit 314, wopkg 104, realtime 49, xguard 65, controller 68, api 33,
+  core 16, xguard-clam 13, shared 19, shell 20, proxy 3, wol-lua 3, webengine 178, atlas 1, federate 0, wolcrypt 0, wolkeyring 1, audio 0, aurlaws 0, wolsem 0, wol-tor 0, wolkit-render 0, wolkit-web 0, atlas-fed 0).
   Controller went 56 -> 58 for `wolos-mm` (ADR 0061: `prctl(PR_SET_MEMORY_MERGE)` before an exec, `pidfd_open` and
   `process_madvise`; std wraps none). It went 52 -> 56 for the administrator password prompt on a terminal (`src/secret.rs`): std has
   no termios, so `tcgetattr`, `tcsetattr`, one `sigaction` swap and `_exit` in that handler. A raise
@@ -354,7 +354,7 @@ with its proof: the class rule or its own regression test, red before the fix an
 4. **RC-23** No surface has a fixed size larger than the smallest supported logical screen, 640x400 at any scale: a size is the constant clamped to the screen less its insets, content scrolls when it is longer, a popover flips to stay inside the window, the compositor scale is automatic, and the golden matrix renders every surface at 640x400, 1366x768, 1920x1080 and 3840x2160 at 1x and 2x with no layout issue. **CI** RH-231, RH-232.
 5. **RC-16** A document names only what the tree has: on-screen names come from the copy catalog, verbs from the command tree, paths from the repository and the image; a feature the lead has not decided is marked planned, not described as present. **CI** RH-161, RH-162.
 6. **RC-14** The integration branch always descends from the last release tag and from every merged wave; a fix counts as fixed only when its commit is an ancestor of the integration branch and the release gate passes, and a decision record's status follows the merge, not a worker's report. **CI** RH-141, RH-142 (a submodule pin is a commit some ref of its repository still reaches).
-7. **RC-22** Every process the session depends on is supervised (restart on failure with no start limit, or a WolOS supervisor with back-off) and every wait has one named deadline that both ends read; a spawn returns its error and the caller backs off; a panic in a worker never leaves state frozen. **CI** RH-221, RH-222, RH-223.
+7. **RC-22** Every process the session depends on is supervised (restart on failure with no start limit, or a WolOS supervisor with back-off) and every wait has one named deadline that both ends read; a spawn returns its error and the caller backs off; a panic in a worker never leaves state frozen; a timeout ends the whole process group of the step, never one pid (`system::stop_tree`: SIGINT first, SIGKILL after a grace, a package transaction a long one, an install in place none; QA-A9-CORE-3, tests `a_timeout_ends_the_whole_process_group`, `the_group_is_interrupted_before_it_is_killed`). **CI** RH-221, RH-222, RH-223.
 8. **RC-19** Code that reads or writes system paths says which view it needs (sealed base, merged, layer root, writable state) and gets it from one helper; writable state lives under `/var/lib/wolos` or `/run`; the mounts of a transaction live in a private mount namespace and are undone; a measurement runs against the unmerged base. **CI** RH-191, RH-192.
 9. **RC-07** A view is driven by one live model: an event source, or a poll that updates the model and redraws only when the shape changed; a widget the person touched holds its value until the host confirms it, and a page reads its facts again when it is shown. **CI** RH-071.
 10. **RC-02** In-flight state is keyed by its request: a queue for approvals, a generation number for asynchronous results, an exclusive lock on a named file for every transaction on a shared resource; never one optional slot in a window or a daemon that a second request overwrites. **CI** RH-021.
@@ -363,6 +363,7 @@ with its proof: the class rule or its own regression test, red before the fix an
 13. **RC-30** Input from outside the process has a named size before it is read: a stream is copied through `.take(N)`, a decoder (gzip, deflate, zstd, xz) is built only where its output is capped, a download of unknown size gets a ceiling. **CI** RH-301.
 14. **RC-34** A wait the person is put on is the person's to lengthen: a one-shot timer in the shell reads `kit::patience` (Settings > Accessibility > Timeouts, "Give me more time"), or says in a `// fixed wait:` comment why nobody is reading while it runs. **CI** RH-341.
 15. **RC-45** A file a tool writes is the tool's and a test says when it fell behind its input: a committed `Cargo.lock` lists every dependency its manifests name. **CI** RH-451.
+16. **RC-20** A step does not report success after dropping what it was asked to keep: what pacman installed is copied with its owner, set-id bits, file capability and other extended attributes, and hard links (`copy_tree`, `cp -a`), never with `fs::copy`; a copy that cannot keep an attribute fails the step. **CI** RH-201.
 
 ## 10. Origins of the 0.13 bugs
 
@@ -394,14 +395,14 @@ count is the number of fixed findings (or fixed sites, marked "sites") of the cl
 Classes the fixes shared that already had a rule when the day began; the new fixes are under
 them and the ratchets did not rise: RC-03 (17: RH-031, RH-032), RC-13 (8: RH-131), RC-16 (7:
 RH-161, RH-162, RU-091, RU-092 and `check-manual`), RC-22 (6: RH-221..223), RC-02 (4: RH-021),
-RC-19 (2: RH-191, RH-192), RC-07 (2: RH-071), RC-23 (2: RH-231, RH-232).
+RC-19 (2: RH-191, RH-192), RC-20 (RH-201, since FIX-A9-CORE), RC-07 (2: RH-071), RC-23 (2: RH-231, RH-232).
 
 Classes with two or more fixes and **no mechanical rule yet** (the reason is the missing form, not
 the missing will; each keeps its per-finding tests and the journeys named in ADR 0051):
 RC-31 policy by path or self-declared name, helper gate bypassed (10: a fail-closed default is a
 decision in each `match`, and `_ =>` arms are RR-024 in `shared` only); RC-33 the image lacks what the
 code depends on (9: wants a "every program a unit or launcher runs is in a package" join across three
-repositories); RC-20 success reported on failure (6); RC-08 object lifetime past re-realise (6);
+repositories); RC-08 object lifetime past re-realise (6);
 RC-38 error arms with no test that feeds them (6, shadow coverage); RC-43 account and session
 policy decided per file (3); RC-05 developer text reaches the person (3, RU-004/RU-005 catch the
 literals, not the ones built at run time); RC-26, RC-25, RC-27, RC-04, RC-44 (2 each).

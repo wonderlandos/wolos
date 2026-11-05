@@ -334,9 +334,8 @@ arch-chroot {CHROOT} {PACMAN} \"$@\" || exit\n\
 pub fn begin(n: u32, args: &[String], db: &str) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
     let w = format!("{WORK_DIR}/{}", name(n));
-    let mut private: Vec<String> = ["unshare", "--mount", "--propagation", "private", "sh", "-c"]
-        .map(String::from)
-        .to_vec();
+    let mut private = super::private_namespace();
+    private.extend(["sh", "-c"].map(String::from));
     private.push(chroot_script(n));
     private.push("wol-layer".into());
     private.push(db.to_owned());
@@ -361,7 +360,7 @@ pub fn begin(n: u32, args: &[String], db: &str) -> Vec<Step> {
 /// Steps after pacman succeeded (the chroot went with [`begin`]'s namespace): keep the record, make the layer an extension (its
 /// extension-release, written last: QA-STORE-45), merge it. pacman has committed by now, so a
 /// failure here never removes the layer (its files and database entries are the change): the
-/// caller stops, and the next good boot finishes it (`boot-ok` writes a missing
+/// caller stops, and the next good boot finishes it (`wol layers clear` writes a missing
 /// extension-release of a layer that has its record) and merges it.
 pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
     let l = format!("{DIR}/{}", name(n));
@@ -381,10 +380,28 @@ pub fn finish(n: u32, rec: &Record) -> Vec<Step> {
 
 /// A layer's extension-release file.
 pub fn release_path(n: u32) -> String {
-    format!(
-        "{DIR}/{0}/usr/lib/extension-release.d/extension-release.{0}",
-        name(n)
-    )
+    release_file(&name(n))
+}
+
+/// The extension-release file of the layer called `layer` (a name of [`DIR`]).
+pub fn release_file(layer: &str) -> String {
+    format!("{DIR}/{layer}/usr/lib/extension-release.d/extension-release.{layer}")
+}
+
+/// Layers in `ls` of [`DIR`] that committed (they have their [`RECORD`]) but whose
+/// extension-release is missing: [`finish`] writes the record first and the release after, so a
+/// cut at that point left a layer systemd-sysext refuses. `wol layers clear` writes the release
+/// (QA-STORE-45; it was boot-ok's shell loop, which shared its guard with [`unfinished`]).
+pub fn unreleased(
+    ls: &str,
+    has_record: impl Fn(&str) -> bool,
+    has_release: impl Fn(&str) -> bool,
+) -> Vec<String> {
+    ls.lines()
+        .map(str::trim)
+        .filter(|n| is_layer_name(n) && has_record(n) && !has_release(n))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// Whether `/proc/self/mountinfo` text shows something mounted at or under [`CHROOT`]: a run
@@ -838,7 +855,7 @@ extension-release.wolos-layer-0003"
             .collect();
         assert!(!b.iter().any(|s| s.starts_with("sh ")), "{b:?}");
         assert!(
-            b[1].starts_with("unshare --mount --propagation private ")
+            b[1].starts_with("unshare --mount --propagation private --fork --kill-child=SIGKILL ")
                 && b[1].contains(&format!("\nmount --rbind / {CHROOT}\n")),
             "{b:?}"
         );
@@ -869,8 +886,18 @@ extension-release.wolos-layer-0003"
             .iter()
             .find(|a| a.iter().any(|x| x.contains("--rbind")))
             .expect("a chroot step");
-        assert_eq!(ns[..4], ["unshare", "--mount", "--propagation", "private"]);
-        let script = &ns[6];
+        assert_eq!(
+            ns[..6],
+            [
+                "unshare",
+                "--mount",
+                "--propagation",
+                "private",
+                "--fork",
+                "--kill-child=SIGKILL"
+            ]
+        );
+        let script = &ns[8];
         let bind = script.find("mount --rbind /").unwrap();
         let chroot = script.find("arch-chroot").unwrap();
         let query = script
@@ -884,7 +911,7 @@ extension-release.wolos-layer-0003"
             .unwrap();
         assert!(parsed.success(), "{script}");
         // The live DBPath and pacman's arguments are arguments, never spliced into the program.
-        assert_eq!(ns[7..], ["wol-layer", "/usr/lib/pacman", "-S", "vim"]);
+        assert_eq!(ns[9..], ["wol-layer", "/usr/lib/pacman", "-S", "vim"]);
         assert_eq!(
             after_path(3),
             "/var/lib/wolos/layers/wolos-layer-0003/after"
@@ -947,6 +974,19 @@ extension-release.wolos-layer-0003"
             unmount_chroot().join(" "),
             "umount -R /run/wolos/layer-root"
         );
+    }
+
+    #[test]
+    fn a_committed_layer_without_its_release_is_unreleased() {
+        let ls = "wolos-layer-0001\nwolos-layer-0002\nwolos-layer-0003\njunk\n";
+        // 0001 whole, 0002 cut after its record, 0003 never committed.
+        let got = unreleased(ls, |n| n != "wolos-layer-0003", |n| n == "wolos-layer-0001");
+        assert_eq!(got, ["wolos-layer-0002"]);
+        assert_eq!(
+            release_file("wolos-layer-0002"),
+            "/var/lib/extensions/wolos-layer-0002/usr/lib/extension-release.d/extension-release.wolos-layer-0002"
+        );
+        assert_eq!(release_path(2), release_file("wolos-layer-0002"));
     }
 
     #[test]

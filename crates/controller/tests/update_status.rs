@@ -335,6 +335,38 @@ fn an_interrupted_update_is_reported() {
     assert!(v["interrupted"].is_null());
 }
 
+/// QA-A9-CORE-4: the mark names the slot that is running (power was cut between the new boot entry
+/// and the mark's removal; the slot booted and was blessed): `wol update status` says nothing.
+#[test]
+fn a_mark_of_the_running_slot_is_not_reported() {
+    let mark = (
+        PathBuf::from(wol_core::update::BUILDING),
+        "wolos-b 2026/11/02\n".to_owned(),
+    );
+    let cmdline = |slot: &str| {
+        (
+            PathBuf::from("/proc/cmdline"),
+            format!("root=LABEL=wolos rootflags=subvol=@{slot},compress=zstd rw"),
+        )
+    };
+    let mut up = FakeEnv {
+        files: vec![mark.clone(), cmdline("wolos-b"), file("checked", "5\n")],
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("update status --json", &mut up), 0);
+    let v: serde_json::Value = serde_json::from_str(up.out.trim()).unwrap();
+    assert!(v["interrupted"].is_null(), "{}", up.out);
+    assert!(!up.out.contains("interrupted before"), "{}", up.out);
+    // Running the other slot, the same mark is a real cut-off build.
+    let mut other = FakeEnv {
+        files: vec![mark, cmdline("wolos-a"), file("checked", "5\n")],
+        ..FakeEnv::default()
+    };
+    assert_eq!(run("update status --json", &mut other), 0);
+    let v: serde_json::Value = serde_json::from_str(other.out.trim()).unwrap();
+    assert_eq!(v["interrupted"], "wolos-b", "{}", other.out);
+}
+
 /// QA-STORE-2 (frozen for the Store, C1): `wol update install --json` says which WolOS release
 /// came with the update (the signed one the check found, newer than the running one), null when
 /// none.

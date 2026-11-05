@@ -8,7 +8,7 @@
 //! builder and the capture helpers live in `wol_core::privileged` (so wol-login and xguard use the
 //! same ones, R2C-16) and are re-exported here.
 use std::time::Duration;
-pub use wol_core::privileged::{PATH, capture, capture_input, privileged_command};
+pub use wol_core::privileged::{PATH, capture, capture_grace, capture_input, privileged_command};
 
 /// wold's [`wol_core::system::Host`] (audit S14): reads files as `wol_core::system::PosixHost`
 /// does, and runs every command through [`capture`], so facts and device probes get the cleared

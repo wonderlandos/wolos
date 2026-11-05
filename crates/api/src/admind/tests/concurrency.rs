@@ -272,10 +272,11 @@ fn a_queued_command_on_the_cache_rechecks_it_when_its_turn_comes() {
         }
         os.open();
         assert_eq!(install.join().unwrap(), AdminReply::Ok);
+        // A one-copy Update Now is two pacman steps (-Syuw, -Su; QA-A9-CORE-3).
         let (want, ran) = if case == "still valid" {
-            (AdminReply::Ok, 2)
+            (AdminReply::Ok, 4)
         } else {
-            (AdminReply::NeedsAuth, 1)
+            (AdminReply::NeedsAuth, 2)
         };
         assert_eq!(queued.join().unwrap(), want, "{case}");
         assert_eq!(os.slow_calls(), ran, "{case}: pacman runs");
@@ -306,7 +307,8 @@ fn system_lane_commands_run_one_at_a_time() {
     os.open();
     assert_eq!(first.join().unwrap(), AdminReply::Ok);
     assert_eq!(second.join().unwrap(), AdminReply::Ok);
-    assert_eq!(os.slow_calls(), 2);
+    // The upgrade is two pacman steps (-Syuw, -Su; QA-A9-CORE-3), the refresh one.
+    assert_eq!(os.slow_calls(), 3);
 }
 
 /// Two password checks for one account (two sessions of ann) run one after the other, so

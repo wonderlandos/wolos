@@ -32,6 +32,7 @@ The ten classes that close the most findings, weighted by severity and by how ma
 | RC-30 | Input from outside the process has a named size before it is read (`io::copy` through `.take`, decoders capped). | RH-301 `rules_rc_30_bounded_input.rs` | unit `rc_30_counter_counts_what_it_says` (STANDARDS-7), unit `a_decompression_bomb_is_refused` (wopkg) | 28 (C0 H4 M13 L11) | C2, C4, A4, B4, B6 |
 | RC-34 | A wait on the person is read through `patience` or says why it is fixed. | RH-341 `rules_rc_34_patience.rs` | unit `rc_34_counter_counts_what_it_says` (STANDARDS-7), shell test `timeouts` (WD-SETTINGS) | 8 (C0 H1 M4 L3) | C3, C7, C10 |
 | RC-45 | A committed lock lists what its manifests name (a generated file is checked against its input). | RH-451 `rules_rc_45_generated_in_step.rs` | RP-056 (recipes), RC-071 (workflows) in their repositories | 1 (found 2026-11-04) | STANDARDS-7 |
+| RC-20 | What was installed is copied with its owner, set-id bits, capabilities, xattrs and hard links; a step that cannot keep one fails. | RH-201 `rules_rc_20_installed_metadata.rs` | unit `fold_keeps_set_id_bits_xattrs_and_hard_links` (FIX-A9-CORE) | 6 (found: QA-A9-CORE-1) | FIX-A9-CORE |
 
 The other 34 classes keep the shape of the report: a standard sentence, an enforcement and an owner brief, written into the brief's frozen row before the worker starts, so the worker builds the shared helper and not a local fix.
 

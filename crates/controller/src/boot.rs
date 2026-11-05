@@ -222,7 +222,7 @@ pub fn check(env: &mut dyn Env) -> i32 {
     // The same rule as `wol seal check`: only to a slot that has an entry and failed neither
     // check, so two slots under the floor stop here instead of restarting into each other.
     let other = update::other_slot(slot).unwrap_or("");
-    let fb = seal::fallback(slot, crate::seal::may_fall_back_to(env, other));
+    let fb = seal::fallback(slot, crate::seal::fallback_entry(env, other).as_deref());
     let _ = env.write_file(&mark, "older than the floor\n");
     let msg = if matches!(fb, seal::Fallback::Boot { .. }) {
         format!(

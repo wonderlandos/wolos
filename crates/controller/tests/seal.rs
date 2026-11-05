@@ -617,7 +617,9 @@ fn tampered_b(extra: &[(&str, &str)]) -> FakeEnv {
 const A_ENTRY: &str = "title WolOS\nversion 1-x\nuki /EFI/wolos/wolos-a.efi\n";
 
 /// QA-SYS-12: the other slot's entry half way through its tries (`+1-2`) is still a slot to
-/// start; the seal check falls back to it instead of staying on the broken one.
+/// start; the seal check falls back to it instead of staying on the broken one. QA-A9-CORE-5: the
+/// default it sets is that entry's file name with the counter (sd-boot's entry id, systemd v257
+/// boot.c: `entry->id = file`, matched by `efi_fnmatch(LoaderEntryDefault, id)`), so it matches.
 #[test]
 fn accepts_counted_entries() {
     let mut env = tampered_b(&[
@@ -628,7 +630,7 @@ fn accepts_counted_entries() {
     let ran: Vec<String> = env.execs.iter().map(|a| a.join(" ")).collect();
     assert_eq!(
         ran,
-        ["bootctl set-default wolos-a.conf", "systemctl reboot"],
+        ["bootctl set-default wolos-a+1-2.conf", "systemctl reboot"],
         "{}",
         env.err
     );
@@ -637,7 +639,8 @@ fn accepts_counted_entries() {
 /// QA-STORE-51 / BOOT2-2: the fallback goes only to an entry that was found and can start: its
 /// image is on the ESP, its tries are not used up, and this slot did not already fall back once
 /// (its own mark from an earlier boot: the other one did not start, so restarting loops). The
-/// default it sets is the entry's id, which never carries the counter.
+/// default it sets is the entry's id: its file name, counter included (QA-A9-CORE-5; this test
+/// once claimed the id never carries the counter, and the default then matched nothing).
 #[test]
 fn set_default_entry_found() {
     let mut found = tampered_b(&[
@@ -647,7 +650,7 @@ fn set_default_entry_found() {
     assert_eq!(run("seal check", &mut found), 1);
     assert_eq!(
         found.execs.first().map(|a| a.join(" ")).as_deref(),
-        Some("bootctl set-default wolos-a.conf")
+        Some("bootctl set-default wolos-a+3.conf")
     );
     for (why, extra) in [
         (

@@ -252,9 +252,7 @@ pub fn plan_in_place(date: Option<&str>) -> Option<Vec<Step>> {
         return None;
     }
     let mut steps = repo_date_steps(date, "");
-    steps.push(Step::Run(
-        [PACMAN, "-Syu", "--noconfirm"].map(String::from).to_vec(),
-    ));
+    steps.extend(pkg::in_place_pacman(&["--noconfirm".to_owned()]));
     Some(steps)
 }
 
@@ -527,20 +525,30 @@ fn esp_sync_step(root: &str, slot: &str, b: &Build) -> Step {
     Step::Run(a.into_iter().map(str::to_owned).collect())
 }
 
-/// `unshare --mount --propagation private wol update chroot WORK -- CMD...`: CMD in the copy at
-/// WORK, every mount it needs private to that one process.
-pub fn in_copy(work: &str, cmd: &[&str]) -> Step {
-    let mut a: Vec<String> = [
+/// `unshare --mount --propagation private --fork --kill-child=SIGKILL`: the start of every
+/// transaction that mounts. The mounts are private to the one process; `--fork` makes the work a
+/// child of `unshare` and `--kill-child` has the kernel kill that child (parent-death signal) if
+/// `unshare` is killed, so a SIGKILL of the step's direct child (the 1800 s cap) never leaves
+/// arch-chroot and pacman running on, orphaned, with the scratch copy still mounted
+/// (QA-A9-CORE-3, RC-22).
+pub fn private_namespace() -> Vec<String> {
+    [
         "unshare",
         "--mount",
         "--propagation",
         "private",
-        "wol",
-        "update",
-        "chroot",
+        "--fork",
+        "--kill-child=SIGKILL",
     ]
     .map(String::from)
-    .to_vec();
+    .to_vec()
+}
+
+/// `unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot WORK --
+/// CMD...`: CMD in the copy at WORK, every mount it needs private to that one process.
+pub fn in_copy(work: &str, cmd: &[&str]) -> Step {
+    let mut a = private_namespace();
+    a.extend(["wol", "update", "chroot"].map(String::from));
     a.push(work.to_owned());
     a.push("--".to_owned());
     a.extend(cmd.iter().map(|c| (*c).to_owned()));
@@ -556,10 +564,17 @@ pub const BUILDING: &str = "/var/lib/wolos/update-building";
 pub const CACHE: &str = "/var/cache/pacman/pkg";
 
 /// The slot an update was building when it was cut off: [`BUILDING`]'s text while no build holds
-/// [`LOCK`] (`lock_held`). None when nothing was cut off or a build is running now.
-pub fn interrupted(building: Option<&str>, lock_held: bool) -> Option<&str> {
+/// [`LOCK`] (`lock_held`). None when nothing was cut off or a build is running now, or when the
+/// mark names `running` (the slot that is up): power was lost after the boot entry was written and
+/// before the mark was removed, and the slot booted, so that update did finish (QA-A9-CORE-4;
+/// boot-ok removes the mark when it blesses the slot).
+pub fn interrupted<'a>(
+    building: Option<&'a str>,
+    lock_held: bool,
+    running: Option<&str>,
+) -> Option<&'a str> {
     let slot = building?.split_whitespace().next()?;
-    (!lock_held && is_valid_be(slot)).then_some(slot)
+    (!lock_held && is_valid_be(slot) && running != Some(slot)).then_some(slot)
 }
 
 /// `find TOP -maxdepth 1 -name NAME -exec ARGV {} TERM`: ARGV on the subvolume `@NAME` only when
@@ -867,12 +882,24 @@ pub mod be {
         Vec::new()
     }
 
-    pub fn activate_argv(name: &str) -> Vec<String> {
-        vec![
-            "bootctl".into(),
-            "set-default".into(),
-            format!("{name}.conf"),
-        ]
+    /// `bootctl set-default ENTRY`: `entry` is the boot entry's file name as it is in
+    /// `loader/entries`, counter included (`wolos-a+3.conf`): sd-boot matches it against that name
+    /// (QA-A9-CORE-5). See [`entry_file`].
+    pub fn activate_argv(entry: &str) -> Vec<String> {
+        vec!["bootctl".into(), "set-default".into(), entry.into()]
+    }
+
+    /// Where the boot entries are (on the ESP, [`super::ESP`]).
+    pub fn entries_dir() -> String {
+        format!("{}/loader/entries", super::ESP)
+    }
+
+    /// The entry file of slot `name` in `listing` (`ls -1` of [`entries_dir`]): the blessed
+    /// `<name>.conf` or the counted `<name>+N.conf`. When the listing has none (unreadable, or its
+    /// tries are used up) the plain `<name>.conf`, which is the entry id a blessed slot has.
+    pub fn entry_file(name: &str, listing: Option<&str>) -> String {
+        let names: Vec<&str> = listing.unwrap_or_default().lines().map(str::trim).collect();
+        crate::seal::entry_of(name, &names).map_or_else(|| format!("{name}.conf"), str::to_owned)
     }
 
     pub fn destroy_argv(name: &str) -> Vec<String> {
@@ -957,6 +984,30 @@ mod tests {
         assert!(!pkg.contains("current"), "{pkg}");
     }
 
+    /// QA-A9-CORE-3: every transaction that mounts starts in `unshare ... --fork
+    /// --kill-child=SIGKILL`, so a SIGKILL of `unshare` (the step's deadline) takes the work down
+    /// with it instead of leaving arch-chroot and pacman orphaned with the scratch copy mounted.
+    #[test]
+    fn the_private_namespace_kills_its_child_with_it() {
+        let want = [
+            "unshare",
+            "--mount",
+            "--propagation",
+            "private",
+            "--fork",
+            "--kill-child=SIGKILL",
+        ];
+        assert_eq!(private_namespace(), want);
+        let Step::Run(a) = in_copy("/w", &["mkinitcpio", "-P"]) else {
+            panic!("a run step")
+        };
+        assert_eq!(a[..6], want);
+        assert_eq!(
+            a[6..],
+            ["wol", "update", "chroot", "/w", "--", "mkinitcpio", "-P"]
+        );
+    }
+
     #[test]
     fn one_copy_updates_in_place_with_no_snapshot_and_no_seal() {
         let steps: Vec<String> = plan_in_place(Some("2026/11/01"))
@@ -964,13 +1015,17 @@ mod tests {
             .iter()
             .map(ToString::to_string)
             .collect();
-        assert!(steps[0].starts_with("sed") && steps.last().unwrap().contains("pacman -Syu"));
+        assert!(steps[0].starts_with("sed"));
+        // QA-A9-CORE-3: the download (killable) and the install (never SIGKILLed) are two steps.
+        let n = steps.len();
+        assert_eq!(steps[n - 2], "/usr/bin/pacman -Syuw --noconfirm");
+        assert_eq!(steps[n - 1], "/usr/bin/pacman -Su --noconfirm");
         assert!(
             !steps
                 .iter()
                 .any(|s| s.contains("btrfs") || s.contains("seal"))
         );
-        assert_eq!(plan_in_place(None).unwrap().len(), 1);
+        assert_eq!(plan_in_place(None).unwrap().len(), 2);
         assert!(plan_in_place(Some("soon")).is_none());
     }
 
@@ -1061,7 +1116,7 @@ s#subvol=/?@wolos-[ab]([ ,]|$)#subvol=@wolos-b\\1# {{}} +"
                 // RH-192: each in a mount namespace of its own (`wol update chroot` binds the copy
                 // and the shared cache there); nothing is left mounted, not even after a cut.
                 &format!(
-                    "unshare --mount --propagation private wol update chroot {tx} -- \
+                    "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {tx} -- \
 /usr/bin/pacman -Syu --noconfirm"
                 ),
                 &format!(
@@ -1069,7 +1124,7 @@ s#subvol=/?@wolos-[ab]([ ,]|$)#subvol=@wolos-b\\1# {{}} +"
 {tx}/etc/pacman.d/wolos-mirrorlist ;"
                 ),
                 &format!(
-                    "unshare --mount --propagation private wol update chroot {tx} -- mkinitcpio -P"
+                    "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {tx} -- mkinitcpio -P"
                 ),
                 &format!("systemctl --root={tx} preset-all --preset-mode=enable-only"),
                 "mkdir -p /efi/wolos-b",
@@ -1146,7 +1201,9 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         // nothing; pacman and mkinitcpio each run under `unshare` in `wol update chroot`, which
         // binds the copy (and the shared cache) in that namespace only.
         let work = "/run/wolos/top/@wolos-tx";
-        let private = format!("unshare --mount --propagation private wol update chroot {work} -- ");
+        let private = format!(
+            "unshare --mount --propagation private --fork --kill-child=SIGKILL wol update chroot {work} -- "
+        );
         for from in [Base::Running { replace: true }, Base::Pending] {
             let s: Vec<String> = plan_from("wolos-b", from, None, None, &[])
                 .unwrap()
@@ -1367,7 +1424,7 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
         let gen_ = be::parse(&BOOTCTL.replace("2026/11/02", "7-2026.11.02"));
         assert_eq!(gen_[1].created, "2026.11.02");
         assert_eq!(
-            be::activate_argv("wolos-a").join(" "),
+            be::activate_argv(&be::entry_file("wolos-a", None)).join(" "),
             "bootctl set-default wolos-a.conf"
         );
         assert_eq!(

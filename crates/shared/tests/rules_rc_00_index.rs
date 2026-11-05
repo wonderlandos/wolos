@@ -24,6 +24,7 @@ const CLASSES: &[(&str, &[&str])] = &[
     ("RC-30", &["RH-301"]),
     ("RC-34", &["RH-341"]),
     ("RC-45", &["RH-451"]),
+    ("RC-20", &["RH-201"]),
 ];
 
 const ADR: &str = "docs/adr/0051-house-in-order.md";

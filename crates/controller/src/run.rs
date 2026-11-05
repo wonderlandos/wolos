@@ -1337,7 +1337,9 @@ fn base_verify(env: &mut dyn Env, json: bool) -> i32 {
 fn update_interrupted(env: &mut dyn Env) -> Option<String> {
     use wol_core::update as up;
     let mark = env.read_file(Path::new(up::BUILDING))?;
-    up::interrupted(Some(&mark), env.lock_held(Path::new(up::LOCK))).map(str::to_owned)
+    let cmdline = env.read_file(Path::new("/proc/cmdline"));
+    let running = cmdline.as_deref().and_then(up::running_slot);
+    up::interrupted(Some(&mark), env.lock_held(Path::new(up::LOCK)), running).map(str::to_owned)
 }
 
 /// `wol update status`: `{"checked":null,..}` / "not checked yet" before the first check.

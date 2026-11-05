@@ -61,7 +61,7 @@ fn path(d: &Path) -> String {
 }
 
 /// boot-ok in `d`: `procs` are the program names running (their /proc/<pid>/comm), `cmdline`
-/// the kernel's; wold is active, sleep, wol, mountpoint and systemd-sysext are fakes.
+/// the kernel's; wold is active, sleep, wol and systemd-sysext are fakes.
 fn boot_ok(d: &Path, procs: &[&str], cmdline: &str) -> Output {
     let proc_dir = d.join("proc");
     let _ = fs::remove_dir_all(&proc_dir);
@@ -84,9 +84,6 @@ fn boot_ok(d: &Path, procs: &[&str], cmdline: &str) -> Output {
     }
     fake(d, "sleep", "");
     fake(d, "wol", "");
-    if !d.join("bin/mountpoint").exists() {
-        fake(d, "mountpoint", "exit 1");
-    }
     fake(d, "systemd-sysext", "");
     Command::new("sh")
         .arg(lib("boot-ok"))
@@ -94,9 +91,6 @@ fn boot_ok(d: &Path, procs: &[&str], cmdline: &str) -> Output {
         .env("WOLOS_PROC", &proc_dir)
         .env("WOLOS_CMDLINE_FILE", d.join("cmdline"))
         .env("WOLOS_MARKS", d.join("marks"))
-        .env("WOLOS_LAYERS", d.join("ext"))
-        .env("WOLOS_LAYERS_WORK", d.join("work"))
-        .env("WOLOS_LAYER_CHROOT", d.join("chroot"))
         .env("WOLOS_ESP", d.join("esp"))
         .env("WOLOS_SLOTS", d.join("run/slots.json"))
         .output()
@@ -208,50 +202,65 @@ fn boot_ok_requires_seal_check() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
-/// QA-STORE-45: a layer cut off before pacman committed (no record) is removed with its work
-/// directory; one cut off after (record, no extension-release) is finished; then one refresh.
+/// QA-A9-CORE-2 (RC-13, RC-02): the cleanup of a layer pacman never finished is `wol layers clear`'s
+/// alone, under the update lock (its tests in tests/pkg.rs). boot-ok used to `rm -rf` a layer
+/// without its record behind a `mountpoint -q` guard that is false for ever (the layer chroot lives
+/// in a private mount namespace): a `wol pkg` running at that moment lost its layer. boot-ok
+/// touches no layer, whatever its state, and leaves the one call.
 #[test]
-fn record_less_layer_removed() {
+fn boot_ok_leaves_every_layer_to_wol_layers_clear() {
     let d = dir("layers");
     let ext = d.join("ext");
-    let rel = |n: &str| {
-        ext.join(n)
-            .join(format!("usr/lib/extension-release.d/extension-release.{n}"))
-    };
     for n in ["wolos-layer-0001", "wolos-layer-0002", "wolos-layer-0003"] {
         fs::create_dir_all(ext.join(n).join("usr/bin")).unwrap();
         fs::create_dir_all(d.join("work").join(n)).unwrap();
     }
-    // 0001: complete. 0002: cut off mid-pacman. 0003: committed, finish cut off.
+    // 0002: no record (a change may be running in it). 0003: record, no extension-release.
     fs::write(ext.join("wolos-layer-0001/wolos-layer.json"), "{}\n").unwrap();
-    fs::create_dir_all(rel("wolos-layer-0001").parent().unwrap()).unwrap();
-    fs::write(rel("wolos-layer-0001"), "ID=_any\n").unwrap();
     fs::write(ext.join("wolos-layer-0003/wolos-layer.json"), "{}\n").unwrap();
     let o = boot_ok(&d, &["wol-loginwindow"], "rootflags=subvol=@wolos-a");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert!(ext.join("wolos-layer-0001").is_dir());
+    for n in ["wolos-layer-0001", "wolos-layer-0002", "wolos-layer-0003"] {
+        assert!(ext.join(n).is_dir(), "{n} removed by boot-ok");
+        assert!(
+            d.join("work").join(n).is_dir(),
+            "{n} work removed by boot-ok"
+        );
+    }
     assert!(
-        !ext.join("wolos-layer-0002").exists(),
-        "record-less layer stays"
-    );
-    assert!(!d.join("work/wolos-layer-0002").exists());
-    assert_eq!(
-        fs::read_to_string(rel("wolos-layer-0003")).unwrap(),
-        wol_core::update::layers::extension_release()
+        !ext.join("wolos-layer-0003/usr/lib/extension-release.d")
+            .exists(),
+        "boot-ok wrote a release itself"
     );
     let l = log(&d);
-    let refresh = "systemctl reload-or-restart systemd-sysext.service";
-    assert_eq!(l.matches(refresh).count(), 1, "{l}");
-    assert!(l.find(refresh) < l.find("wol layers clear"), "{l}");
-    // A `wol pkg` running (its chroot mounted): nothing is touched.
-    let d2 = dir("layers-busy");
-    fs::create_dir_all(d2.join("ext/wolos-layer-0004/usr")).unwrap();
-    fake(&d2, "mountpoint", "exit 0");
-    let o = boot_ok(&d2, &["wol-shell"], "");
+    assert_eq!(l.matches("wol layers clear").count(), 1, "{l}");
+    assert!(!l.contains("systemctl reload-or-restart"), "{l}");
+    // The script has no `mountpoint` guard to be blind with.
+    let t = fs::read_to_string(lib("boot-ok")).unwrap();
+    assert!(
+        !t.contains("mountpoint -q"),
+        "boot-ok still guards with mountpoint"
+    );
+}
+
+/// QA-A9-CORE-4: power cut after the new entry was written and before `update-building` went. The
+/// new slot boots and is blessed, so its mark goes; the mark of a build of the other slot stays.
+#[test]
+fn boot_ok_clears_the_mark_of_the_slot_it_blessed() {
+    let d = dir("build-mark");
+    fs::create_dir_all(d.join("marks")).unwrap();
+    fs::write(d.join("marks/update-building"), "wolos-b 2026/11/04\n").unwrap();
+    let o = boot_ok(&d, &["wol-loginwindow"], "rootflags=subvol=@wolos-b ro");
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(!d.join("marks/update-building").exists());
+    let d2 = dir("build-mark-other");
+    fs::create_dir_all(d2.join("marks")).unwrap();
+    fs::write(d2.join("marks/update-building"), "wolos-a 2026/11/04\n").unwrap();
+    let o = boot_ok(&d2, &["wol-loginwindow"], "rootflags=subvol=@wolos-b ro");
     assert!(o.status.success());
     assert!(
-        d2.join("ext/wolos-layer-0004").is_dir(),
-        "a running install is left alone"
+        d2.join("marks/update-building").exists(),
+        "a build of the other slot lost its mark"
     );
 }
 

@@ -209,7 +209,11 @@ fn shipped_resolved_dropin_leaves_dns_over_tls_to_settings() {
 }
 
 /// QA-A7-13: the folder the airplane list lives in is made by tmpfiles.d, open to every account,
-/// and is the one the code names.
+/// and is the one the code names. QA-A9-CORE-7: open to the accounts (the `seat` group every
+/// account made by WolOS is in, `settings::users::ACCOUNT_GROUPS`), not to every uid with 0777: a
+/// world-writable system directory without the sticky bit lets any account or service delete or
+/// replace the list another wrote. Not sticky either: the list is one shared file the next person
+/// replaces, which a sticky directory would refuse.
 #[test]
 fn the_airplane_list_folder_is_made_for_every_account() {
     let t = std::fs::read_to_string(
@@ -220,9 +224,9 @@ fn the_airplane_list_folder_is_made_for_every_account() {
     let want = [
         "d",
         wol_core::netconf::AIRPLANE_SHARED_DIR,
-        "0777",
+        "2775",
         "root",
-        "root",
+        "seat",
         "-",
     ];
     assert!(
@@ -231,4 +235,18 @@ fn the_airplane_list_folder_is_made_for_every_account() {
         "tmpfiles.d/wolos.conf lacks `{}`",
         want.join(" ")
     );
+    assert!(
+        wol_core::settings::users::ACCOUNT_GROUPS
+            .split(',')
+            .any(|g| g == "seat"),
+        "every account is in the group the folder is open to"
+    );
+    // No `d` line of the file is writable by everyone.
+    for l in t.lines().filter(|l| !l.trim_start().starts_with('#')) {
+        let f: Vec<&str> = l.split_whitespace().collect();
+        if let ["d" | "D", path, mode, ..] = f[..] {
+            let m = u32::from_str_radix(mode.trim_start_matches('0'), 8).unwrap_or(0);
+            assert_eq!(m & 0o002, 0, "{path}: {mode} is writable by every uid");
+        }
+    }
 }

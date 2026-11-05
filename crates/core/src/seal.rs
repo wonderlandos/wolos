@@ -322,12 +322,19 @@ pub enum Fallback {
     Stay,
 }
 
-/// `other_ok`: the other slot exists and has not failed this check itself (no restart loop).
-pub fn fallback(running: &str, other_ok: bool) -> Fallback {
-    match crate::update::other_slot(running) {
-        Some(o) if other_ok => Fallback::Boot {
+/// `other_entry`: the file name of the other slot's boot entry in `loader/entries` (found by
+/// [`entry_of`] in the listing: `wolos-a.conf` or a counted `wolos-a+3.conf`), None when the other
+/// slot has none, or has failed this check itself (no restart loop).
+/// sd-boot's entry id is the file name with its counter and `LoaderEntryDefault` must equal it
+/// (`efi_fnmatch`); `bootctl set-default` accepts any text and writes it. A default rebuilt from
+/// the slot name (`wolos-a.conf`) matched no entry while the slot was counted, so the machine
+/// restarted into the same bad slot (QA-A9-CORE-5). The name comes from the listing, never from
+/// the slot name.
+pub fn fallback(running: &str, other_entry: Option<&str>) -> Fallback {
+    match (crate::update::other_slot(running), other_entry) {
+        (Some(o), Some(entry)) if entry_of(o, &[entry]).is_some() => Fallback::Boot {
             argv: vec![
-                vec!["bootctl".into(), "set-default".into(), format!("{o}.conf")],
+                crate::update::be::activate_argv(entry),
                 vec!["systemctl".into(), "reboot".into()],
             ],
         },
@@ -435,13 +442,34 @@ mod tests {
 
     #[test]
     fn a_bad_slot_boots_the_other_unless_that_is_bad_too() {
-        let Fallback::Boot { argv } = fallback("wolos-b", true) else {
+        let Fallback::Boot { argv } = fallback("wolos-b", Some("wolos-a.conf")) else {
             panic!()
         };
         assert_eq!(argv[0].join(" "), "bootctl set-default wolos-a.conf");
         assert_eq!(argv[1].join(" "), "systemctl reboot");
-        assert_eq!(fallback("wolos-b", false), Fallback::Stay);
-        assert_eq!(fallback("x", true), Fallback::Stay);
+        assert_eq!(fallback("wolos-b", None), Fallback::Stay);
+        assert_eq!(fallback("x", Some("wolos-a.conf")), Fallback::Stay);
+        // An entry that is not the other slot's (or not an entry at all) is never handed to bootctl.
+        for bad in [
+            "wolos-b.conf",
+            "wolos-a+0.conf",
+            "../wolos-a.conf",
+            "wolos-a",
+        ] {
+            assert_eq!(fallback("wolos-b", Some(bad)), Fallback::Stay, "{bad}");
+        }
+    }
+
+    /// QA-A9-CORE-5: sd-boot's entry id carries the counter, so the default names the counted
+    /// file: `wolos-a.conf` matched no entry while boot-rearm had counted the slot.
+    #[test]
+    fn the_fallback_names_the_counted_entry() {
+        for entry in ["wolos-a+3.conf", "wolos-a+2-1.conf"] {
+            let Fallback::Boot { argv } = fallback("wolos-b", Some(entry)) else {
+                panic!("{entry}")
+            };
+            assert_eq!(argv[0].join(" "), format!("bootctl set-default {entry}"));
+        }
     }
 
     /// QA-SYS-12: a half-counted entry is still the other slot's entry; one with no tries left
