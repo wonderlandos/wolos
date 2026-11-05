@@ -232,7 +232,7 @@ const HARDENED: &[(&str, &[&str])] = &[
             "PrivateNetwork=yes",
             "ProtectHome=yes",
             "ProtectSystem=full",
-            "ReadWritePaths=/efi",
+            "ReadWritePaths=/efi/loader /efi/EFI/wolos -/efi/wolos-a -/efi/wolos-b",
             "RestrictAddressFamilies=AF_UNIX",
         ],
     ),
@@ -1399,6 +1399,54 @@ fn shutdown_rearm_unit() {
             .lines()
             .any(|l| l == "enable wolos-boot-rearm.service")
     );
+}
+
+/// FIX-BOOT-REARM (0.13.0): `ProtectSystem=` (true, full, strict) mounts the boot loader directories
+/// (/boot, /efi) read-only, and on systemd 262 `ReadWritePaths=/efi` does not lift it for /efi itself:
+/// the unit's /efi stayed `ro` and boot-rearm's `cp` failed ("Read-only file system") at every
+/// shutdown, so the next start was never counted (fb13-a VM journal). A unit that writes the ESP
+/// under ProtectSystem names the folders it writes (each its own read-write bind, which works); the
+/// rearm (and the esp-sync it runs for a damaged image) writes the entries, the images and the
+/// slot's records.
+#[test]
+fn protect_system_never_hides_the_esp_a_unit_writes() {
+    let dir = siblings::root().join("files/usr/lib/systemd/system");
+    for e in std::fs::read_dir(&dir).unwrap().flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".service") {
+            continue;
+        }
+        let u = unit_lines(&name);
+        if !u
+            .iter()
+            .any(|l| l.starts_with("ProtectSystem=") && l != "ProtectSystem=no")
+        {
+            continue;
+        }
+        for l in u.iter().filter(|l| l.starts_with("ReadWritePaths=")) {
+            for p in l["ReadWritePaths=".len()..].split_whitespace() {
+                let q = p.trim_start_matches(['-', '+']).trim_end_matches('/');
+                assert!(
+                    q != "/efi" && q != "/boot",
+                    "{name}: {p} stays read-only under ProtectSystem; name the folders under it"
+                );
+            }
+        }
+    }
+    let u = unit_lines("wolos-boot-rearm.service");
+    let rw: Vec<&str> = u
+        .iter()
+        .filter_map(|l| l.strip_prefix("ReadWritePaths="))
+        .flat_map(str::split_whitespace)
+        .collect();
+    for want in [
+        "/efi/loader",
+        "/efi/EFI/wolos",
+        "-/efi/wolos-a",
+        "-/efi/wolos-b",
+    ] {
+        assert!(rw.contains(&want), "wolos-boot-rearm writes {want}: {rw:?}");
+    }
 }
 
 /// Audit8 stability2 #5: a oneshot has no start timeout of its own, so a stalled fetch would hold
