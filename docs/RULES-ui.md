@@ -144,12 +144,36 @@ Each component spec in `design/components/` lists its rules; the Kit tests and `
 | RU-111 | Switch | Do not | Do not use a switch to start an action such as Install or Restart; use a button. | manual |
 | RU-112 | Switch | Do | A change that leaves the process uses the pending switch: it waits, then shows the confirmed state (RC-01). | `RH-011` |
 | RU-113 | Switch | Do | A switch in a row is named by the row title and described by its subtitle for assistive technology. | `kit_components` |
+| RU-120 | Button | Do | A surface has one primary button; the other actions are default or plain. | manual |
+| RU-121 | Button | Do not | Do not use a destructive button for an action that loses nothing. | manual |
+| RU-122 | Button | Do | A button whose action runs waits and shows a spinner beside it; it never stays pressable. | `kit_actions` |
+| RU-123 | Button | Do | A button is named by its own label, and a button without words is an icon button. | `kit_actions` |
+| RU-124 | Button | Do | An outlined button stands beside a primary button as the second choice; it is never the only button of a surface. | manual |
+| RU-130 | Icon button | Do | An icon button has a tooltip, and the tooltip is its accessible name. | `kit_actions` |
+| RU-131 | Icon button | Do not | Do not use an icon button for an action the glyph cannot say; use a button with words. | manual |
+| RU-132 | Icon button | Do | A toolbar holds at most five actions; the rest go in a menu button. | manual |
 | RU-133 | Split button | Do | The menu under a split button holds variations of the main action, never unrelated commands. | manual |
 | RU-134 | Split button | Do | The arrow of a split button is named for assistive technology. | `kit_groups` |
 | RU-135 | Button group | Do | A button group has two to five buttons; for exactly one choice from several use the segmented control. | manual |
 | RU-136 | Button group | Do | A button group is named for assistive technology, and every glyph button in it has a tooltip. | `kit_groups` |
 | RU-137 | Floating toolbar | Do | A floating toolbar holds two to five actions, every one with a tooltip, and at most one primary. | `kit_groups` |
 | RU-138 | Floating toolbar | Do not | Do not float a toolbar over text a person is reading or typing; keep it for images, maps and canvases. | manual |
+| RU-140 | Segmented control | Do | A segmented control holds two to four options and applies the pick at once. | `kit_actions` |
+| RU-141 | Segmented control | Do not | Do not use a segmented control for more than four options or for options that start actions; use a dropdown or buttons. | manual |
+| RU-142 | Segmented control | Do | A segmented control in a row is named by the row title for assistive technology. | `kit_actions` |
+| RU-150 | Slider | Do | A slider reports its value once, after the knob settles, not on every pixel. | `kit_actions` |
+| RU-151 | Slider | Do | A slider row names its ends in words and its title names the setting. | manual |
+| RU-152 | Slider | Do not | Do not use a slider for a choice among a few named options; use a segmented control. | manual |
+| RU-160 | Stepper | Do | A button that would leave the range waits instead of doing nothing. | `kit_actions` |
+| RU-161 | Stepper | Do not | Do not use a stepper for a range of more than about 30 steps; use a slider. | manual |
+| RU-162 | Stepper | Do | A stepper exposes its value, minimum and maximum to assistive technology. | manual |
+| RU-170 | Dropdown | Do | A dropdown reports its pick once and applies it at once. | `kit_actions` |
+| RU-171 | Dropdown | Do | A list of more than about twelve options has a search field. | manual |
+| RU-172 | Dropdown | Do | A change that leaves the process uses the pending dropdown, which waits and puts the confirmed choice back on failure (RC-01). | manual |
+| RU-173 | Dropdown | Do not | Do not use a dropdown for two or three options that fit on screen; use a segmented control. | manual |
+| RU-180 | Menu button | Do | A menu button with no actions is not built. | `kit_actions` |
+| RU-181 | Menu button | Do | A menu button has a tooltip and opens with Space and Enter. | `kit_actions` |
+| RU-182 | Menu button | Do not | Do not hide the one action people need most behind a menu button. | manual |
 | RU-190 | Checkbox | Do | Use a checkbox for an option among several that can be on together; for one setting that applies at once use a switch. | manual |
 | RU-191 | Checkbox | Do | A checkbox carries its label and the label toggles it too. | `kit_choice` |
 | RU-192 | Checkbox | Do not | Do not phrase a checkbox label as a negative (Do not show); say what is true when it is on. | manual |
@@ -160,10 +184,25 @@ Each component spec in `design/components/` lists its rules; the Kit tests and `
 | RU-197 | Chip | Do | A filter chip shows a check when it is on, so the state is not colour alone. | `kit_choice` |
 | RU-198 | Chip | Do | An input chip's remove button is named Remove followed by what it removes. | `kit_choice` |
 | RU-199 | Chip | Do not | Do not put more than eight chips in a set; use a dropdown or a search field. | manual |
+| RU-210 | Text field | Do | A text field commits once on Enter or when it loses the keyboard with a changed text, never on every key. | `kit_input` |
+| RU-211 | Text field | Do | A commit that can fail or be cancelled uses the pending field, which waits and lets Enter commit the same text again (QA-SET-12). | `kit_input` |
+| RU-212 | Text field | Do | A text field in a row is named by the row title for assistive technology. | `kit_input` |
+| RU-213 | Text field | Do not | Do not use a placeholder as the only label of a field. | manual |
 | RU-214 | Date input | Do | A date field says the shape it wants and marks a day that does not exist as invalid for assistive technology, not by colour alone. | `kit_groups` |
 | RU-215 | Date input | Do | A date field always comes with the calendar button, so a far date is a click away. | `kit_groups` |
 | RU-216 | Date range picker | Do | Every day button is named by its full date for assistive technology, not by its number alone. | `kit_calendar` |
 | RU-217 | Date range picker | Do | A range picker starts a new range at the third click and never keeps a half range once the second end is picked. | `kit_calendar` |
+| RU-220 | Password field | Do | A password field never shows what was typed unless the person asks (peek). | `kit_input` |
+| RU-221 | Password field | Do | The Caps Lock note says so in words under the field, not only with an icon. | `kit_input` |
+| RU-222 | Password field | Do not | Do not put a secret in a text field, a log, a tooltip or a golden. | manual |
+| RU-230 | Search field | Do | A search field is the rightmost item of the toolbar. | manual |
+| RU-231 | Search field | Do | A search field shows results as the person types and keeps the typed text when they leave. | manual |
+| RU-232 | Search field | Do | A search field has a name for assistive technology. | `kit_input` |
+| RU-240 | Shortcut recorder | Do | A recorder pauses the other shortcuts while it listens and resumes them when it stops. | manual |
+| RU-241 | Shortcut recorder | Do | A recorder that loses the keyboard stops without a change. | `kit_input` |
+| RU-242 | Shortcut recorder | Do | A combination that another command has is marked with the warning outline and offers to swap. | manual |
+| RU-250 | Colour well | Do | A colour is also shown as text (the tooltip), never by the disc alone. | `kit_input` |
+| RU-251 | Colour well | Do | The palette reports a valid colour only; a mistyped hex changes nothing. | manual |
 | RU-260 | Text area | Do | A text area is at least three lines (84 px) tall and grows to the content up to its page. | `kit_calendar` |
 | RU-261 | Text area | Do not | Do not use a text area for one line; use a text field. | manual |
 | RU-270 | Date picker | Do | Every day button is named by its full date for assistive technology, not by its number alone. | `kit_calendar` |
@@ -213,12 +252,44 @@ Each component spec in `design/components/` lists its rules; the Kit tests and `
 | RU-461 | Section header | Do not | Do not put more than one action in a section header. | manual |
 | RU-470 | Carousel | Do | A carousel can be moved with its buttons and the keyboard, never only by dragging. | `kit_collection` |
 | RU-471 | Carousel | Do not | Do not advance a carousel by itself. | manual |
+| RU-500 | Toast | Do | A toast replaces the previous toast and leaves after six seconds, longer when Give me more time is set. | `kit_comms` |
+| RU-501 | Toast | Do not | Do not put a decision or an error that needs reading in a toast; use a notice or a sheet. | manual |
+| RU-502 | Toast | Do | A toast has at most one action, and using it hides the toast. | `kit_comms` |
+| RU-510 | Notice | Do | A notice sits next to what it is about, not at the top of the window. | manual |
+| RU-511 | Notice | Do | A notice is one sentence and its buttons are verbs. | manual |
+| RU-512 | Notice | Do not | Do not use a notice for something that only needs a toast. | manual |
+| RU-520 | Badge | Do | A badge is one word or a count, twelve characters at most. | `kit_comms` |
+| RU-521 | Badge | Do not | Do not carry meaning by the tone alone; the word says it too. | manual |
+| RU-522 | Badge | Do not | Do not make a badge a button. | manual |
 | RU-530 | Skeleton | Do | A skeleton is busy and named for assistive technology by what is loading. | `kit_collection` |
 | RU-531 | Skeleton | Do | A skeleton shows only after 150 ms of waiting and has the shape of what will come. | manual |
 | RU-535 | On-screen display | Do | The on-screen display never takes the keyboard from the app in front. | manual |
 | RU-536 | On-screen display | Do | The level is a bar and a glyph, never colour alone. | `kit_sheets` |
+| RU-540 | Spinner | Do | A spinner shows only while work runs and is hidden and still otherwise. | `kit_comms` |
+| RU-541 | Spinner | Do not | Do not show a spinner for work whose progress is known; use a progress bar. | manual |
+| RU-542 | Spinner | Do | Work longer than a second shows a spinner, and longer than ten seconds says what runs. | manual |
+| RU-550 | Progress bar | Do | A progress bar that knows its fraction shows it; one that does not is indeterminate. | `kit_comms` |
+| RU-551 | Progress bar | Do not | Do not move a bar backwards. | manual |
+| RU-552 | Progress bar | Do | A progress bar has a name and exposes its value to assistive technology. | `kit_comms` |
+| RU-560 | Progress ring | Do | A ring with a known value shows it from the top, clockwise. | manual |
+| RU-561 | Progress ring | Do | A ring exposes its value and a name to assistive technology. | manual |
+| RU-570 | Empty state | Do | An empty page says what to do next, in one line and at most one action. | `kit_comms` |
+| RU-571 | Empty state | Do not | Do not leave a page blank when there is nothing to show. | manual |
+| RU-572 | Avatar | Do | An avatar is square, so it draws a circle. | `kit_comms` |
+| RU-573 | Avatar | Do | The same name always gets the same tone. | `kit_comms` |
+| RU-574 | Avatar | Do | An avatar is named by the person's full name for assistive technology, not by its initials. | manual |
+| RU-575 | Tile | Do | A tile shows one action at a time: the button or the progress, never both. | `kit_comms` |
+| RU-576 | Tile | Do | An app that does not come from WolOS's packages says where from. | `kit_comms` |
+| RU-580 | Error line | Do | An error line says what to do in one sentence and is drawn in the danger colour. | `kit_comms` |
+| RU-581 | Error line | Do not | Do not show an error line before the person has done something. | manual |
+| RU-590 | Tooltip | Do | A tooltip is a name of at most three words in Title Case with no full stop. | `kit_comms` |
+| RU-591 | Tooltip | Do not | Do not hide information in a tooltip that a person needs to act; tooltips name, they do not explain. | manual |
 | RU-592 | Rich tooltip | Do | A rich tooltip holds at most one action and never the only way to do something. | manual |
 | RU-593 | Rich tooltip | Do not | Do not put a rich tooltip on a control that has a plain tooltip; one or the other. | manual |
+| RU-600 | Meter | Do | A meter is clamped to the whole: a share above 100 % draws full. | `kit_comms` |
+| RU-601 | Meter | Do not | Do not carry meaning by the tone alone; the value is in words beside it. | manual |
+| RU-602 | Gauge | Do | A gauge shows its value in words as well as in the ring. | `kit_comms` |
+| RU-603 | Gauge | Do | A gauge exposes its caption and value to assistive technology. | manual |
 | RU-610 | Table | Do | Number columns are right-aligned in tabular figures. | `kit_collection` |
 | RU-611 | Table | Do | A table row is 32 px at standard density and follows the density. | `kit_collection` |
 | RU-612 | Table | Do not | Do not put more than one control in a table cell. | manual |
@@ -231,15 +302,36 @@ Each component spec in `design/components/` lists its rules; the Kit tests and `
 - RU-104 (Floating action button): A surface has at most one floating action button, and only when its toolbar does not hold that action.
 - RU-110 (Switch): A switch applies its change at once; no Save or Apply button follows it.
 - RU-111 (Switch): Do not use a switch to start an action such as Install or Restart; use a button.
+- RU-120 (Button): A surface has one primary button; the other actions are default or plain.
+- RU-121 (Button): Do not use a destructive button for an action that loses nothing.
+- RU-124 (Button): An outlined button stands beside a primary button as the second choice; it is never the only button of a surface.
+- RU-131 (Icon button): Do not use an icon button for an action the glyph cannot say; use a button with words.
+- RU-132 (Icon button): A toolbar holds at most five actions; the rest go in a menu button.
 - RU-133 (Split button): The menu under a split button holds variations of the main action, never unrelated commands.
 - RU-135 (Button group): A button group has two to five buttons; for exactly one choice from several use the segmented control.
 - RU-138 (Floating toolbar): Do not float a toolbar over text a person is reading or typing; keep it for images, maps and canvases.
+- RU-141 (Segmented control): Do not use a segmented control for more than four options or for options that start actions; use a dropdown or buttons.
+- RU-151 (Slider): A slider row names its ends in words and its title names the setting.
+- RU-152 (Slider): Do not use a slider for a choice among a few named options; use a segmented control.
+- RU-161 (Stepper): Do not use a stepper for a range of more than about 30 steps; use a slider.
+- RU-162 (Stepper): A stepper exposes its value, minimum and maximum to assistive technology.
+- RU-171 (Dropdown): A list of more than about twelve options has a search field.
+- RU-172 (Dropdown): A change that leaves the process uses the pending dropdown, which waits and puts the confirmed choice back on failure (RC-01).
+- RU-173 (Dropdown): Do not use a dropdown for two or three options that fit on screen; use a segmented control.
+- RU-182 (Menu button): Do not hide the one action people need most behind a menu button.
 - RU-190 (Checkbox): Use a checkbox for an option among several that can be on together; for one setting that applies at once use a switch.
 - RU-192 (Checkbox): Do not phrase a checkbox label as a negative (Do not show); say what is true when it is on.
 - RU-193 (Radio group): Use a radio group for two to six exclusive options a person compares; use a dropdown for more.
 - RU-195 (Radio group): Do not use a radio group to start actions; each option is a state.
 - RU-196 (Chip): Chips appear in a set, 8 px apart, about the content above or below them; never as the main action of a surface.
 - RU-199 (Chip): Do not put more than eight chips in a set; use a dropdown or a search field.
+- RU-213 (Text field): Do not use a placeholder as the only label of a field.
+- RU-222 (Password field): Do not put a secret in a text field, a log, a tooltip or a golden.
+- RU-230 (Search field): A search field is the rightmost item of the toolbar.
+- RU-231 (Search field): A search field shows results as the person types and keeps the typed text when they leave.
+- RU-240 (Shortcut recorder): A recorder pauses the other shortcuts while it listens and resumes them when it stops.
+- RU-242 (Shortcut recorder): A combination that another command has is marked with the warning outline and offers to swap.
+- RU-251 (Colour well): The palette reports a valid colour only; a mistyped hex changes nothing.
 - RU-261 (Text area): Do not use a text area for one line; use a text field.
 - RU-272 (Date picker): Do not make a person scroll month by month to a far date; offer a text field for typing it as well.
 - RU-291 (Search view): Do not open a search view on its own; it opens from the search field a person typed in.
@@ -262,10 +354,27 @@ Each component spec in `design/components/` lists its rules; the Kit tests and `
 - RU-450 (Split view): Under the narrow breakpoint a split view shows one pane at a time with a way back, like the AppWindow sidebar.
 - RU-461 (Section header): Do not put more than one action in a section header.
 - RU-471 (Carousel): Do not advance a carousel by itself.
+- RU-501 (Toast): Do not put a decision or an error that needs reading in a toast; use a notice or a sheet.
+- RU-510 (Notice): A notice sits next to what it is about, not at the top of the window.
+- RU-511 (Notice): A notice is one sentence and its buttons are verbs.
+- RU-512 (Notice): Do not use a notice for something that only needs a toast.
+- RU-521 (Badge): Do not carry meaning by the tone alone; the word says it too.
+- RU-522 (Badge): Do not make a badge a button.
 - RU-531 (Skeleton): A skeleton shows only after 150 ms of waiting and has the shape of what will come.
 - RU-535 (On-screen display): The on-screen display never takes the keyboard from the app in front.
+- RU-541 (Spinner): Do not show a spinner for work whose progress is known; use a progress bar.
+- RU-542 (Spinner): Work longer than a second shows a spinner, and longer than ten seconds says what runs.
+- RU-551 (Progress bar): Do not move a bar backwards.
+- RU-560 (Progress ring): A ring with a known value shows it from the top, clockwise.
+- RU-561 (Progress ring): A ring exposes its value and a name to assistive technology.
+- RU-571 (Empty state): Do not leave a page blank when there is nothing to show.
+- RU-574 (Avatar): An avatar is named by the person's full name for assistive technology, not by its initials.
+- RU-581 (Error line): Do not show an error line before the person has done something.
+- RU-591 (Tooltip): Do not hide information in a tooltip that a person needs to act; tooltips name, they do not explain.
 - RU-592 (Rich tooltip): A rich tooltip holds at most one action and never the only way to do something.
 - RU-593 (Rich tooltip): Do not put a rich tooltip on a control that has a plain tooltip; one or the other.
+- RU-601 (Meter): Do not carry meaning by the tone alone; the value is in words beside it.
+- RU-603 (Gauge): A gauge exposes its caption and value to assistive technology.
 - RU-612 (Table): Do not put more than one control in a table cell.
 - RU-620 (Tree): Right and Left open and close the focused row of a tree.
 
