@@ -135,7 +135,7 @@ for k in "$R"/boot/vmlinuz-*; do
     # entry is on the disk: a cut damages at most one of the two.
     sync -f "$ESP/"
     c=${name#"$slot"}; c=${c%.conf}
-    fb=$slot-fallback$c.conf
+    fb="$slot-fallback$c.conf"
     {
       echo "title $title (fallback entry)"
       echo "sort-key wolos.fallback"

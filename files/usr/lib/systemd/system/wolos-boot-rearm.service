@@ -22,7 +22,11 @@ RestrictSUIDSGID=yes
 PrivateNetwork=yes
 ProtectHome=yes
 ProtectSystem=full
-ReadWritePaths=/efi
+# ProtectSystem= mounts /efi read-only and on systemd 262 `ReadWritePaths=/efi` does not lift it for
+# /efi itself (boot-rearm's cp failed with "Read-only file system" at every shutdown: the next start
+# was never counted). Each folder it and esp-sync write is its own read-write bind; a slot folder
+# that is not there yet is skipped.
+ReadWritePaths=/efi/loader /efi/EFI/wolos -/efi/wolos-a -/efi/wolos-b
 RestrictAddressFamilies=AF_UNIX
 
 [Install]
