@@ -49,8 +49,15 @@ module Wolkit
       end
     end
 
-    # Several lines of text. Enter starts a new line at the caret (replacing a selection); the text
-    # wraps at the width. `lines` sets the height.
+    # Several lines of text: the engine's text field with `white-space: pre-wrap`, which makes it
+    # a text area (`crates/wolkit/src/text/area.rs`). Enter starts a new line at the caret (and
+    # replaces a selection), the text wraps at the width, Up and Down keep their column, Home and
+    # End go to the ends of the line on screen, the field scrolls to the caret and the wheel
+    # scrolls it, and a click, a drag, a double click (word) and a triple click (paragraph) place
+    # the caret and select. Ctrl+Enter submits (`on_submit`). `lines` sets the height.
+    #
+    # The Kit backend (a shell hosting the window in GTK) still draws one line: its wire has no
+    # text area (`shared::view::Node::TextField`), so there Enter does nothing.
     class TextArea < Component
       LINE = 20
 
@@ -59,30 +66,19 @@ module Wolkit
       prop placeholder : String = ""
       prop lines : Int32 = 4
       prop max_length : Int32 = 0
+      prop on_submit : Proc(String, Nil)? = nil
 
       def view
-        source = @value
-        field = text_field source, label: @label, placeholder: @placeholder, white_space: :pre_wrap,
+        field = text_field @value, label: @label, placeholder: @placeholder, white_space: :pre_wrap,
           min_height: @lines * LINE + 12, align_self: :stretch, max_length: (@max_length > 0 ? @max_length : 65_536)
-        mount = Mount.current
-        mount.on(field, Wire::Event::TEXT_SUBMIT) do |event|
-          source.value = TextArea.newline(event.text, event.caret, event.anchor) unless mount.stale_text?(event)
-          nil
+        if handler = @on_submit
+          mount = Mount.current
+          mount.on(field, Wire::Event::TEXT_SUBMIT) do |event|
+            handler.call(event.text) unless mount.stale_text?(event)
+            nil
+          end
         end
-      end
-
-      # `text` with a line break at the caret, replacing the selection between `caret` and `anchor`
-      # (byte offsets, as the engine reports them).
-      def self.newline(text : String, caret : Int32, anchor : Int32) : String
-        bytes = text.to_slice
-        from = caret.clamp(0, bytes.size)
-        to = anchor.clamp(0, bytes.size)
-        from, to = to, from if to < from
-        String.build do |io|
-          io.write(bytes[0, from])
-          io << '\n'
-          io.write(bytes[to, bytes.size - to])
-        end
+        field
       end
     end
 

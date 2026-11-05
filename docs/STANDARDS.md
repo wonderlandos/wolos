@@ -306,7 +306,7 @@ brackets; `cargo test` runs in the `test` job).
   table (**CI** [test] `standards_quotes_the_baseline`). (C, R2C-19, audit8)
 - **Fuzzing**: every decoder of outside input has a target in `fuzz/fuzz_targets/` (`ipc_decode`,
   `events`, `job_request`, `approval`, `hypr_ipc`, `wopkg_parsers`, `plugins_toml`,
-  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`, `wolkit_image`, `webpolicy`). **CI** [fuzz]
+  `lua_loader`, `package_call`, `core_parsers`, `wolplug_verify`, `plugin_index`, `wolkit_patch`, `wolkit_wsb`, `wolkit_wolcss`, `wolkit_image`, `wolkit_text`, `webpolicy`). **CI** [fuzz]
   runs each target 60 s on pinned nightly; [test] `tools/ci/fuzz-replay.sh` replays
   `fuzz/regressions/<target>/` on stable, and `crates/shared/tests/fuzz_list.rs` fails when a
   target has no `[[bin]]`, no seeds, no matrix row or no name in this list. A new decoder without

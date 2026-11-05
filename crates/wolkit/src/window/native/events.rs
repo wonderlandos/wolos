@@ -895,6 +895,8 @@ impl Backend for NativeWindow {
             let r = edit::focus_changed(w, &mut self.input);
             self.request(w, s, r);
         }
+        // A patch may have replaced the text of the field being edited.
+        edit::refresh(w, &mut self.input);
         self.sync_ime(w);
         self.sync_glass(w);
         self.sync_menus(w);

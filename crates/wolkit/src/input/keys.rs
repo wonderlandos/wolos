@@ -168,7 +168,12 @@ pub fn key(w: &mut WindowCore, s: &mut Sink, st: &mut InputState, k: KeyPress) -
             return r;
         }
         if matches!(keysym, sym::RETURN | sym::KP_ENTER) {
-            edit::submit(w, s, st);
+            // In a text area Enter breaks the line and Ctrl+Enter submits.
+            if edit::is_multiline(st) && mods & MOD_CTRL == 0 {
+                edit::type_text(w, s, st, "\n");
+            } else {
+                edit::submit(w, s, st);
+            }
             return Request::None;
         }
         let plain = mods & (MOD_CTRL | MOD_ALT | MOD_SUPER) == 0;

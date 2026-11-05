@@ -7,8 +7,8 @@
 
 use super::super::route::{disabled, receiver};
 use super::super::{
-    KeyInput, MOD_SHIFT, POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL, POINTER_UP,
-    PointerInput, Sink, WindowCore, pipeline,
+    KeyInput, MOD_CTRL, MOD_SHIFT, POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL,
+    POINTER_UP, PointerInput, Sink, WindowCore, pipeline,
 };
 use crate::error::{Error, Result};
 use crate::event::kind as ev;
@@ -338,6 +338,19 @@ pub fn key(w: &mut WindowCore, s: &mut Sink, k: KeyInput) -> Result<()> {
     match (w.scene.kind(f), k.keysym) {
         (Kind::Button, KEY_RETURN | KEY_SPACE) => click(w, s, f, 0.0, 0.0, 0, k.mods),
         (Kind::Toggle, KEY_RETURN | KEY_SPACE) => toggle(w, s, f),
+        // In a text area (`white-space: pre-wrap`) Enter breaks the line; the headless backend
+        // only appends (it has no caret), the native one edits at the caret (`input::edit`).
+        (Kind::TextInput, KEY_RETURN)
+            if w.styles.get(w.scene.computed(f)).text.white_space
+                == crate::style::value::WhiteSpace::PreWrap
+                && k.mods & MOD_CTRL == 0 =>
+        {
+            let mut text = w.scene.text(f).to_owned();
+            text.push('\n');
+            if text.len() <= crate::scene::patch::MAX_STRING {
+                edit(w, s, f, text);
+            }
+        }
         (Kind::TextInput, KEY_RETURN) => {
             if let Some(r) = receiver(&w.scene, f, ev::TEXT_SUBMIT) {
                 let text = w.scene.text(f).to_owned();
