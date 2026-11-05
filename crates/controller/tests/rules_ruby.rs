@@ -58,7 +58,9 @@ const CENSUS: &[(&str, &str)] = &[
 /// (`tools/bench/discord/*.py`, six; `tools/bench/js-runtime-x/*.py`, two: DevTools websocket and
 /// smaps readers), and `tools/theme/atlas-gtk3-sample.py` draws a GTK 3 sample through python-gi
 /// (ATLAS-THEME), a binding Ruby does not have here.
-const B_PYTHON: &[(&str, usize)] = &[("tools", 11)];
+// tools 13 = 11 + the Atlas Drive benchmark (ADR 0063): tools/bench/atlas-drive/bench.py runs both
+// tools interleaved and chart.py draws docs/bench/atlas-drive.png with matplotlib (no Rust plotting).
+const B_PYTHON: &[(&str, usize)] = &[("tools", 13)];
 /// Scanner fixtures (wrong on purpose; never part of the scope).
 const FIXTURES: &str = "crates/controller/tests/fixtures/ruby/";
 /// The folders whose Ruby is checked.

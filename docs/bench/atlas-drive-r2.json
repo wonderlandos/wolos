@@ -1,0 +1,3026 @@
+{
+ "runs": 10,
+ "pages": {
+  "app": "http://127.0.0.1:8091/app.html",
+  "wolos": "http://127.0.0.1:8092/index.html",
+  "hub": "http://127.0.0.1:8093/hub/index.html",
+  "heavy": "http://127.0.0.1:8091/wiki.html",
+  "fed": "fed://home.fed/",
+  "chrome": "chrome://version/"
+ },
+ "pw_version": "1.64.1",
+ "raw": {
+  "drive": [
+   {
+    "browser_rss_mb": 1650,
+    "click_locator_ms": [
+     20.83,
+     16.51,
+     16.27,
+     16.91,
+     16.04,
+     23.72,
+     12.06,
+     14.13,
+     14.53,
+     32.27
+    ],
+    "click_ms": [
+     29.23,
+     8.09,
+     6.02,
+     7.34,
+     6.77,
+     10.22,
+     7.64,
+     9.01,
+     7.35,
+     14.37
+    ],
+    "clicks100_ms": 861.8,
+    "cold_ms": 1544.51,
+    "driver_rss_after_idle_mb": 6.5,
+    "driver_rss_mb": 6.3,
+    "goto_warm_ms": 174.99,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 602.98,
+      "snap_1000_ms": 8.63,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 6.8,
+      "snap_ms": 35.74,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 8.07
+     },
+     "chrome": {
+      "goto_ms": 167.01,
+      "snap_1000_ms": 21.2,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 8.03,
+      "snap_ms": 26.72,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 9.44
+     },
+     "fed": {
+      "goto_ms": 1045.49,
+      "snap_1000_ms": 11.39,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 9.74,
+      "snap_ms": 32.33,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 72.92
+     },
+     "heavy": {
+      "goto_ms": 738.38,
+      "snap_1000_ms": 249.75,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 236.03,
+      "snap_ms": 274.44,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 245.86
+     },
+     "hub": {
+      "goto_ms": 3773.9,
+      "goto_retried": 1,
+      "snap_1000_ms": 58.1,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 54.08,
+      "snap_ms": 26.2,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 14.66
+     },
+     "wolos": {
+      "goto_ms": 575.29,
+      "snap_1000_ms": 19.18,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 1360,
+      "snap_io_ms": 26.26,
+      "snap_ms": 31.01,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 15.33
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 119.32,
+    "task": {
+     "calls": 2,
+     "ms": 318.93,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 149.2,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 47.44
+   },
+   {
+    "browser_rss_mb": 1641,
+    "click_locator_ms": [
+     18.63,
+     17.71,
+     15.59,
+     14.51,
+     13.69,
+     15.44,
+     17.51,
+     22.2,
+     15.01,
+     30.48
+    ],
+    "click_ms": [
+     25.67,
+     12.09,
+     9.66,
+     7.12,
+     8.87,
+     7.43,
+     9.38,
+     7.44,
+     9.46,
+     7.05
+    ],
+    "clicks100_ms": 847.16,
+    "cold_ms": 1491.03,
+    "driver_rss_after_idle_mb": 6.6,
+    "driver_rss_mb": 6.4,
+    "goto_warm_ms": 132.86,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 658.44,
+      "snap_1000_ms": 7.86,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 7.21,
+      "snap_ms": 32.49,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 6.62
+     },
+     "chrome": {
+      "goto_ms": 167.76,
+      "snap_1000_ms": 13.94,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 9.44,
+      "snap_ms": 33.28,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 11.99
+     },
+     "fed": {
+      "goto_ms": 805.58,
+      "snap_1000_ms": 21.45,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 8.55,
+      "snap_ms": 35.77,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 52.66
+     },
+     "heavy": {
+      "goto_ms": 777.7,
+      "snap_1000_ms": 242.37,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 246.78,
+      "snap_ms": 288.24,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 216.69
+     },
+     "hub": {
+      "goto_ms": 3568.38,
+      "goto_retried": 1,
+      "snap_1000_ms": 61.58,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 413,
+      "snap_io_ms": 20.15,
+      "snap_ms": 35.33,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 13.42
+     },
+     "wolos": {
+      "goto_ms": 495.13,
+      "snap_1000_ms": 34.12,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 1360,
+      "snap_io_ms": 19.6,
+      "snap_ms": 64.04,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 15.71
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 115.6,
+    "task": {
+     "calls": 2,
+     "ms": 345.62,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 159.46,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 53.85
+   },
+   {
+    "browser_rss_mb": 1650,
+    "click_locator_ms": [
+     16.61,
+     27.59,
+     12.63,
+     15.08,
+     15.65,
+     15.6,
+     16.26,
+     23.37,
+     13.69,
+     34.43
+    ],
+    "click_ms": [
+     23.49,
+     10.57,
+     18.88,
+     9.26,
+     7.82,
+     8.32,
+     10.63,
+     7.71,
+     9.94,
+     9.42
+    ],
+    "clicks100_ms": 852.95,
+    "cold_ms": 1518.42,
+    "driver_rss_after_idle_mb": 6.6,
+    "driver_rss_mb": 6.2,
+    "goto_warm_ms": 148.43,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 611.81,
+      "snap_1000_ms": 11.61,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 12.71,
+      "snap_ms": 30.78,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 16.24
+     },
+     "chrome": {
+      "goto_ms": 178.12,
+      "snap_1000_ms": 10.9,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 8.25,
+      "snap_ms": 24.89,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 9.47
+     },
+     "fed": {
+      "goto_ms": 847.79,
+      "snap_1000_ms": 11.73,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 8.96,
+      "snap_ms": 27.79,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 63.03
+     },
+     "heavy": {
+      "goto_ms": 732.3,
+      "snap_1000_ms": 264.49,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 261.28,
+      "snap_ms": 297.65,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 236.89
+     },
+     "hub": {
+      "goto_ms": 3820.81,
+      "goto_retried": 1,
+      "snap_1000_ms": 70.41,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 51.3,
+      "snap_ms": 30.02,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 11.12
+     },
+     "wolos": {
+      "goto_ms": 553.49,
+      "snap_1000_ms": 35.37,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 1360,
+      "snap_io_ms": 22.57,
+      "snap_ms": 62.7,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 17.79
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 105.92,
+    "task": {
+     "calls": 2,
+     "ms": 354.87,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 167.98,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 44.32
+   },
+   {
+    "browser_rss_mb": 1647,
+    "click_locator_ms": [
+     16.83,
+     16.42,
+     26.52,
+     16.04,
+     15.73,
+     15.23,
+     15.43,
+     16.37,
+     23.27,
+     27.66
+    ],
+    "click_ms": [
+     21.99,
+     10.27,
+     6.87,
+     8.63,
+     9.1,
+     19.5,
+     9.62,
+     7.17,
+     11.07,
+     9.98
+    ],
+    "clicks100_ms": 845.97,
+    "cold_ms": 1446.99,
+    "driver_rss_after_idle_mb": 6.2,
+    "driver_rss_mb": 6.2,
+    "goto_warm_ms": 135.48,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 625.91,
+      "snap_1000_ms": 10.25,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 8.73,
+      "snap_ms": 32.74,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 6.72
+     },
+     "chrome": {
+      "goto_ms": 178.55,
+      "snap_1000_ms": 11.24,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 7.58,
+      "snap_ms": 37.88,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 9.38
+     },
+     "fed": {
+      "goto_ms": 819.01,
+      "snap_1000_ms": 17.88,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 9.5,
+      "snap_ms": 46.22,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 58.67
+     },
+     "heavy": {
+      "goto_ms": 806.19,
+      "snap_1000_ms": 288.63,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 248.24,
+      "snap_ms": 304.94,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 231.36
+     },
+     "hub": {
+      "goto_ms": 3575.1,
+      "goto_retried": 1,
+      "snap_1000_ms": 46.66,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 56.45,
+      "snap_ms": 26.51,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 11.81
+     },
+     "wolos": {
+      "goto_ms": 489.08,
+      "snap_1000_ms": 21.91,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 937,
+      "snap_io_ms": 60.67,
+      "snap_ms": 41.99,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 60.72
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 127.5,
+    "task": {
+     "calls": 2,
+     "ms": 355.72,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 178.47,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 52.72
+   },
+   {
+    "browser_rss_mb": 1647,
+    "click_locator_ms": [
+     23.38,
+     14.63,
+     16.17,
+     14.73,
+     14.85,
+     16.09,
+     25.27,
+     14.23,
+     14.89,
+     30.36
+    ],
+    "click_ms": [
+     31.87,
+     5.91,
+     8.3,
+     9.06,
+     7.66,
+     5.82,
+     5.87,
+     7.48,
+     7.07,
+     9.32
+    ],
+    "clicks100_ms": 872.71,
+    "cold_ms": 1444.26,
+    "driver_rss_after_idle_mb": 6.1,
+    "driver_rss_mb": 6.1,
+    "goto_warm_ms": 189.29,
+    "idle_wakeups_per_s": 0.2,
+    "pages": {
+     "app": {
+      "goto_ms": 569.71,
+      "snap_1000_ms": 7.23,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 12.99,
+      "snap_ms": 29.58,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 13.81
+     },
+     "chrome": {
+      "goto_ms": 164.56,
+      "snap_1000_ms": 10.18,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 8.36,
+      "snap_ms": 23.55,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 8.51
+     },
+     "fed": {
+      "goto_ms": 833.91,
+      "snap_1000_ms": 12.3,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 8.84,
+      "snap_ms": 27.14,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 68.12
+     },
+     "heavy": {
+      "goto_ms": 865.22,
+      "snap_1000_ms": 269.31,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 257.72,
+      "snap_ms": 326.54,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 217.12
+     },
+     "hub": {
+      "goto_ms": 3507.08,
+      "goto_retried": 1,
+      "snap_1000_ms": 68.26,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 65.99,
+      "snap_ms": 44.8,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 15.01
+     },
+     "wolos": {
+      "goto_ms": 449.02,
+      "snap_1000_ms": 22.83,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 1360,
+      "snap_io_ms": 18.68,
+      "snap_ms": 55.63,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 16.09
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 129.93,
+    "task": {
+     "calls": 2,
+     "ms": 361.2,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 180.29,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 47.51
+   },
+   {
+    "browser_rss_mb": 1641,
+    "click_locator_ms": [
+     13.33,
+     14.28,
+     14.6,
+     16.6,
+     19.46,
+     12.37,
+     16.15,
+     16.67,
+     15.44,
+     16.04
+    ],
+    "click_ms": [
+     27.39,
+     12.64,
+     7.61,
+     9.24,
+     7.39,
+     10.29,
+     5.78,
+     12.23,
+     5.79,
+     5.38
+    ],
+    "clicks100_ms": 821.15,
+    "cold_ms": 1440.3,
+    "driver_rss_after_idle_mb": 6.5,
+    "driver_rss_mb": 6.1,
+    "goto_warm_ms": 156.89,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 580.39,
+      "snap_1000_ms": 18.33,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 23.88,
+      "snap_ms": 29.25,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 19.53
+     },
+     "chrome": {
+      "goto_ms": 195.72,
+      "snap_1000_ms": 9.07,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 7.13,
+      "snap_ms": 28.28,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 8.09
+     },
+     "fed": {
+      "goto_ms": 823.03,
+      "snap_1000_ms": 14.57,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 14.7,
+      "snap_ms": 27.46,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 51.13
+     },
+     "heavy": {
+      "goto_ms": 677.76,
+      "snap_1000_ms": 256.53,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 242.55,
+      "snap_ms": 282.09,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 208.63
+     },
+     "hub": {
+      "goto_ms": 3541.97,
+      "goto_retried": 1,
+      "snap_1000_ms": 12.59,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 63.39,
+      "snap_ms": 26.1,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 52.86
+     },
+     "wolos": {
+      "goto_ms": 448.96,
+      "snap_1000_ms": 48.83,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 937,
+      "snap_io_ms": 37.9,
+      "snap_ms": 42.44,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 19.61
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 103.96,
+    "task": {
+     "calls": 2,
+     "ms": 336.03,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 163.18,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 44.63
+   },
+   {
+    "browser_rss_mb": 1649,
+    "click_locator_ms": [
+     18.03,
+     20.54,
+     16.17,
+     16.08,
+     17.01,
+     16.71,
+     16.25,
+     16.01,
+     15.84,
+     31.36
+    ],
+    "click_ms": [
+     30.76,
+     9.49,
+     13.01,
+     8.64,
+     10.61,
+     11.38,
+     8.69,
+     10.29,
+     7.88,
+     10.35
+    ],
+    "clicks100_ms": 795.72,
+    "cold_ms": 1509.45,
+    "driver_rss_after_idle_mb": 30.8,
+    "driver_rss_mb": 30.8,
+    "goto_warm_ms": 167.01,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 569.43,
+      "snap_1000_ms": 15.77,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 18.55,
+      "snap_ms": 33.48,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 19.13
+     },
+     "chrome": {
+      "goto_ms": 194.17,
+      "snap_1000_ms": 10.66,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 7.38,
+      "snap_ms": 26.06,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 9.09
+     },
+     "fed": {
+      "goto_ms": 828.17,
+      "snap_1000_ms": 11.96,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 10.33,
+      "snap_ms": 34.38,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 43.53
+     },
+     "heavy": {
+      "goto_ms": 809.68,
+      "snap_1000_ms": 256.04,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 233.12,
+      "snap_ms": 284.29,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 221.3
+     },
+     "hub": {
+      "goto_ms": 3496.92,
+      "goto_retried": 1,
+      "snap_1000_ms": 55.86,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 55.29,
+      "snap_ms": 27.39,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 11.77
+     },
+     "wolos": {
+      "goto_ms": 475.89,
+      "snap_1000_ms": 53.59,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 937,
+      "snap_io_ms": 54.8,
+      "snap_ms": 39.17,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 22.09
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 86.05,
+    "task": {
+     "calls": 2,
+     "ms": 342.14,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 166.32,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 44.9
+   },
+   {
+    "browser_rss_mb": 1649,
+    "click_locator_ms": [
+     12.12,
+     13.64,
+     13.54,
+     15.3,
+     14.02,
+     16.26,
+     15.87,
+     16.14,
+     22.37,
+     27.56
+    ],
+    "click_ms": [
+     24.38,
+     11.06,
+     5.24,
+     7.55,
+     6.5,
+     8.63,
+     7.08,
+     9.53,
+     7.02,
+     8.12
+    ],
+    "clicks100_ms": 448.89,
+    "cold_ms": 1414.86,
+    "driver_rss_after_idle_mb": 6.6,
+    "driver_rss_mb": 6.1,
+    "goto_warm_ms": 112.94,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 609.18,
+      "snap_1000_ms": 9.98,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 6.54,
+      "snap_ms": 38.17,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 8.58
+     },
+     "chrome": {
+      "goto_ms": 112.41,
+      "snap_1000_ms": 7.69,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 6.03,
+      "snap_ms": 23.14,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 7.23
+     },
+     "fed": {
+      "goto_ms": 808.86,
+      "snap_1000_ms": 9.79,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 7.59,
+      "snap_ms": 25.18,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 54.41
+     },
+     "heavy": {
+      "goto_ms": 698.4,
+      "snap_1000_ms": 240.38,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 237.88,
+      "snap_ms": 248.84,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 199.42
+     },
+     "hub": {
+      "goto_ms": 3506.06,
+      "goto_retried": 1,
+      "snap_1000_ms": 43.11,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 39.77,
+      "snap_ms": 26.13,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 12.29
+     },
+     "wolos": {
+      "goto_ms": 575.57,
+      "snap_1000_ms": 18.45,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 1360,
+      "snap_io_ms": 23.19,
+      "snap_ms": 33.19,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 14.93
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 93.69,
+    "task": {
+     "calls": 2,
+     "ms": 345.25,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 140.66,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 42.3
+   },
+   {
+    "browser_rss_mb": 1645,
+    "click_locator_ms": [
+     13.53,
+     10.13,
+     10.1,
+     8.46,
+     9.34,
+     7.79,
+     8.68,
+     8.3,
+     9.43,
+     9.83
+    ],
+    "click_ms": [
+     13.29,
+     3.95,
+     6.12,
+     4.36,
+     3.91,
+     4.89,
+     5.06,
+     4.49,
+     4.07,
+     7.06
+    ],
+    "clicks100_ms": 496.83,
+    "cold_ms": 1207.86,
+    "driver_rss_after_idle_mb": 6.6,
+    "driver_rss_mb": 6.4,
+    "goto_warm_ms": 93.13,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 479.49,
+      "snap_1000_ms": 7.84,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 3.43,
+      "snap_ms": 35.69,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 5.19
+     },
+     "chrome": {
+      "goto_ms": 116.23,
+      "snap_1000_ms": 7.54,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 6.9,
+      "snap_ms": 20.93,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 6.09
+     },
+     "fed": {
+      "goto_ms": 815.25,
+      "snap_1000_ms": 8.26,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 5.81,
+      "snap_ms": 34.45,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 38.59
+     },
+     "heavy": {
+      "goto_ms": 696.99,
+      "snap_1000_ms": 239.36,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 212.74,
+      "snap_ms": 217.25,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 202.33
+     },
+     "hub": {
+      "goto_ms": 3011.03,
+      "goto_retried": 1,
+      "snap_1000_ms": 44.67,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 49.46,
+      "snap_ms": 26.17,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 11.51
+     },
+     "wolos": {
+      "goto_ms": 365.36,
+      "snap_1000_ms": 9.5,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 937,
+      "snap_io_ms": 65.74,
+      "snap_ms": 56.49,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 56.89
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 97.88,
+    "task": {
+     "calls": 2,
+     "ms": 310.73,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 144.66,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 41.58
+   },
+   {
+    "browser_rss_mb": 1653,
+    "click_locator_ms": [
+     4.34,
+     6.29,
+     10.81,
+     10.16,
+     10.08,
+     10.9,
+     9.55,
+     9.42,
+     6.78,
+     19.14
+    ],
+    "click_ms": [
+     8.23,
+     1.87,
+     1.57,
+     1.51,
+     1.4,
+     1.46,
+     1.37,
+     1.34,
+     3.65,
+     1.61
+    ],
+    "clicks100_ms": 250.0,
+    "cold_ms": 1193.17,
+    "driver_rss_after_idle_mb": 6.5,
+    "driver_rss_mb": 6.0,
+    "goto_warm_ms": 142.8,
+    "idle_wakeups_per_s": 0.1,
+    "pages": {
+     "app": {
+      "goto_ms": 481.55,
+      "snap_1000_ms": 7.2,
+      "snap_bytes": 518,
+      "snap_io_bytes": 390,
+      "snap_io_ms": 4.53,
+      "snap_ms": 36.11,
+      "snap_tokens": 130,
+      "snap_unsafe_ms": 8.34
+     },
+     "chrome": {
+      "goto_ms": 126.88,
+      "snap_1000_ms": 10.56,
+      "snap_bytes": 1689,
+      "snap_io_bytes": 182,
+      "snap_io_ms": 6.26,
+      "snap_ms": 27.52,
+      "snap_tokens": 423,
+      "snap_unsafe_ms": 6.94
+     },
+     "fed": {
+      "goto_ms": 789.12,
+      "snap_1000_ms": 9.15,
+      "snap_bytes": 313,
+      "snap_io_bytes": 261,
+      "snap_io_ms": 6.73,
+      "snap_ms": 22.73,
+      "snap_tokens": 79,
+      "snap_unsafe_ms": 44.66
+     },
+     "heavy": {
+      "goto_ms": 518.75,
+      "snap_1000_ms": 227.84,
+      "snap_bytes": 58778,
+      "snap_io_bytes": 11597,
+      "snap_io_ms": 208.75,
+      "snap_ms": 230.84,
+      "snap_tokens": 14695,
+      "snap_unsafe_ms": 196.77
+     },
+     "hub": {
+      "goto_ms": 2817.95,
+      "goto_retried": 1,
+      "snap_1000_ms": 46.68,
+      "snap_bytes": 3018,
+      "snap_io_bytes": 356,
+      "snap_io_ms": 46.0,
+      "snap_ms": 27.68,
+      "snap_tokens": 755,
+      "snap_unsafe_ms": 10.91
+     },
+     "wolos": {
+      "goto_ms": 375.36,
+      "snap_1000_ms": 21.69,
+      "snap_bytes": 5648,
+      "snap_io_bytes": 1360,
+      "snap_io_ms": 16.57,
+      "snap_ms": 27.71,
+      "snap_tokens": 1412,
+      "snap_unsafe_ms": 12.88
+     }
+    },
+    "shot_bytes": 27605,
+    "shot_ms": 92.16,
+    "task": {
+     "calls": 2,
+     "ms": 322.8,
+     "toast_seen": true,
+     "tokens": 283
+    },
+    "task_known": {
+     "calls": 1,
+     "ms": 141.89,
+     "quiet": true,
+     "toast_seen": true,
+     "tokens": 5
+    },
+    "warm_first_ms": 40.83
+   }
+  ],
+  "pw": [
+   {
+    "cold_ms": 1996.42,
+    "pages": {
+     "app": {
+      "goto_ms": 596.99,
+      "aria_ms": 175.32,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 7.79,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 3930.95,
+      "aria_ms": 235.33,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 8.7,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 307.83,
+      "aria_ms": 232.75,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 8.27,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 791.15,
+      "aria_ms": 863.84,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 75.34,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 813.21,
+      "aria_ms": 166.27,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 6.55,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 167.02,
+      "aria_ms": 115.03,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 6.59,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 166.1,
+    "click_ms": [
+     135.05,
+     59,
+     63.11,
+     67.77,
+     72.92,
+     58.99,
+     66.15,
+     63.67,
+     70.18,
+     68.67
+    ],
+    "click_locator_ms": [
+     70.65,
+     60.39,
+     63.91,
+     76.06,
+     57.74,
+     66.44,
+     72.33,
+     62.86,
+     66.56,
+     71.27
+    ],
+    "clicks100_ms": 6399.28,
+    "shot_ms": 187.43,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 414.45,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 350.24,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1934,
+    "driver_rss_mb": 180.6,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 61.57
+   },
+   {
+    "cold_ms": 2125.01,
+    "pages": {
+     "app": {
+      "goto_ms": 543.66,
+      "aria_ms": 162.65,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 5.31,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 4235.16,
+      "aria_ms": 293.38,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 8.8,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 292.26,
+      "aria_ms": 270.55,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 8.85,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 756.59,
+      "aria_ms": 942.21,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 87.57,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 847.12,
+      "aria_ms": 164.36,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 15.1,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 206.44,
+      "aria_ms": 109.05,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 6.22,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 155.96,
+    "click_ms": [
+     141.11,
+     54.25,
+     65.74,
+     68.45,
+     66.48,
+     75.11,
+     60.2,
+     65.05,
+     66.33,
+     67.91
+    ],
+    "click_locator_ms": [
+     81.08,
+     72.11,
+     60.86,
+     65.6,
+     70.74,
+     63.05,
+     66.76,
+     71.95,
+     61.53,
+     66.23
+    ],
+    "clicks100_ms": 6483.58,
+    "shot_ms": 197.42,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 336.12,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 379.25,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1992,
+    "driver_rss_mb": 182.5,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 45.04
+   },
+   {
+    "cold_ms": 1994.85,
+    "pages": {
+     "app": {
+      "goto_ms": 507.97,
+      "aria_ms": 180.87,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 8.29,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 4313.33,
+      "aria_ms": 292.91,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 8.81,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 279.43,
+      "aria_ms": 238.15,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 11.43,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 773.42,
+      "aria_ms": 880.91,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 70.53,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 793.43,
+      "aria_ms": 162.48,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 32.33,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 177.7,
+      "aria_ms": 102.37,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 11.48,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 151.77,
+    "click_ms": [
+     199.68,
+     44.2,
+     63.05,
+     72.65,
+     61,
+     67.76,
+     70.87,
+     60.16,
+     66.74,
+     69.99
+    ],
+    "click_locator_ms": [
+     64.17,
+     66.41,
+     69.55,
+     64,
+     67.41,
+     67.99,
+     64.17,
+     66.05,
+     72.27,
+     62.39
+    ],
+    "clicks100_ms": 6520.44,
+    "shot_ms": 181.02,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 422.13,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 351.54,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1939,
+    "driver_rss_mb": 181.6,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 50.97
+   },
+   {
+    "cold_ms": 2110.16,
+    "pages": {
+     "app": {
+      "goto_ms": 537.28,
+      "aria_ms": 205.26,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.86,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 4301.04,
+      "aria_ms": 246.7,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 8.27,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 343.9,
+      "aria_ms": 246.23,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 7.84,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 831.38,
+      "aria_ms": 967.65,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 89.25,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 836.08,
+      "aria_ms": 171.13,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 20.96,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 181.8,
+      "aria_ms": 115.57,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 6.3,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 157.97,
+    "click_ms": [
+     178.6,
+     58.8,
+     74.12,
+     59.46,
+     65.69,
+     74.8,
+     57.32,
+     68.9,
+     74.34,
+     59.32
+    ],
+    "click_locator_ms": [
+     60.75,
+     77.47,
+     60.67,
+     65.15,
+     75.09,
+     58.25,
+     67.63,
+     74.97,
+     57.37,
+     67.5
+    ],
+    "clicks100_ms": 6648.82,
+    "shot_ms": 216.68,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 439.01,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 373.12,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1998,
+    "driver_rss_mb": 181.6,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 44.24
+   },
+   {
+    "cold_ms": 1946.92,
+    "pages": {
+     "app": {
+      "goto_ms": 571.79,
+      "aria_ms": 190.49,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 5.95,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 562.04,
+      "aria_ms": 259.85,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 9.94,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 856.89,
+      "aria_ms": 922.98,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 80.31,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 821.52,
+      "aria_ms": 148.19,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 9.66,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 168.18,
+      "aria_ms": 120.33,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.31,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 128.07,
+    "click_ms": [
+     140.14,
+     52.18,
+     63.81,
+     74.69,
+     57.11,
+     68.29,
+     73.33,
+     60.3,
+     70.22,
+     70.88
+    ],
+    "click_locator_ms": [
+     58.51,
+     64.12,
+     75.13,
+     61.77,
+     65.85,
+     72.6,
+     60.36,
+     66.79,
+     71.91,
+     58.63
+    ],
+    "clicks100_ms": 6382.35,
+    "shot_ms": 163.66,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 400.02,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 370.84,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1985,
+    "driver_rss_mb": 180.1,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 57.96
+   },
+   {
+    "cold_ms": 1953.55,
+    "pages": {
+     "app": {
+      "goto_ms": 560.83,
+      "aria_ms": 161.69,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 5.97,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 4040.8,
+      "aria_ms": 224.73,
+      "aria_bytes": 4228,
+      "aria_tokens": 1057,
+      "content_ms": 49.51,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 308.77,
+      "aria_ms": 229.12,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 15.65,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 759.35,
+      "aria_ms": 860.73,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 89.01,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 1043.3,
+      "aria_ms": 152.36,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 7.26,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 174.61,
+      "aria_ms": 151.41,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.24,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 155.75,
+    "click_ms": [
+     177.19,
+     69.59,
+     60.49,
+     65.3,
+     67.2,
+     62.66,
+     69.49,
+     71.16,
+     62.66,
+     67.29
+    ],
+    "click_locator_ms": [
+     70.46,
+     62.07,
+     66.74,
+     71.33,
+     58.48,
+     54.07,
+     71.56,
+     60.71,
+     64.61,
+     75.74
+    ],
+    "clicks100_ms": 6310.19,
+    "shot_ms": 212.04,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 413.62,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 347.05,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1997,
+    "driver_rss_mb": 159.5,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 58.37
+   },
+   {
+    "cold_ms": 2000.16,
+    "pages": {
+     "app": {
+      "goto_ms": 513.79,
+      "aria_ms": 166.64,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.57,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 615.44,
+      "aria_ms": 224.68,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 10.97,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 1129.42,
+      "aria_ms": 863.64,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 84.71,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 820.88,
+      "aria_ms": 150.92,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 11.11,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 162.45,
+      "aria_ms": 110.67,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.74,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 174.73,
+    "click_ms": [
+     195.52,
+     60.85,
+     67.68,
+     65.27,
+     69.01,
+     63.53,
+     66.36,
+     68.4,
+     66.79,
+     65.47
+    ],
+    "click_locator_ms": [
+     63.01,
+     67.91,
+     67.55,
+     65.35,
+     67.66,
+     65.68,
+     68,
+     67.26,
+     63.81,
+     68.57
+    ],
+    "clicks100_ms": 6178,
+    "shot_ms": 164.72,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 406.74,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 328.43,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1993,
+    "driver_rss_mb": 160.5,
+    "idle_wakeups_per_s": 0.3,
+    "warm_first_ms": 44.66
+   },
+   {
+    "cold_ms": 1636.69,
+    "pages": {
+     "app": {
+      "goto_ms": 449.1,
+      "aria_ms": 131.29,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 4.89,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 424,
+      "aria_ms": 173.48,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 11.8,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 895.99,
+      "aria_ms": 762.7,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 65.07,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 799.35,
+      "aria_ms": 120.12,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 5.6,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 124.87,
+      "aria_ms": 93.65,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 4.94,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 98.77,
+    "click_ms": [
+     123.19,
+     46.17,
+     48.83,
+     45.79,
+     50.26,
+     48.74,
+     75.23,
+     41.38,
+     50.82,
+     48.92
+    ],
+    "click_locator_ms": [
+     66.22,
+     50.23,
+     49.88,
+     59.2,
+     66.97,
+     49.88,
+     50.16,
+     68.82,
+     36.76,
+     51.15
+    ],
+    "clicks100_ms": 5159.17,
+    "shot_ms": 165.54,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 391.22,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 314.11,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1937,
+    "driver_rss_mb": 160.3,
+    "idle_wakeups_per_s": 0.2,
+    "warm_first_ms": 43.24
+   },
+   {
+    "cold_ms": 1597.1,
+    "pages": {
+     "app": {
+      "goto_ms": 557.17,
+      "aria_ms": 154.75,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 6.55,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 3265.45,
+      "aria_ms": 206.42,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 7.72,
+      "content_bytes": 29780,
+      "content_tokens": 7445
+     },
+     "hub": {
+      "goto_ms": 194.19,
+      "aria_ms": 184.54,
+      "aria_bytes": 4238,
+      "aria_tokens": 1060,
+      "content_ms": 6.78,
+      "content_bytes": 29842,
+      "content_tokens": 7461
+     },
+     "heavy": {
+      "goto_ms": 687.95,
+      "aria_ms": 716.23,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 84.34,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 793.21,
+      "aria_ms": 136.45,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 7.59,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 135.56,
+      "aria_ms": 79.58,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 4.58,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 106.96,
+    "click_ms": [
+     118.35,
+     60.42,
+     48.23,
+     51.91,
+     50.56,
+     50.24,
+     68.61,
+     66.81,
+     69.45,
+     65.85
+    ],
+    "click_locator_ms": [
+     62.84,
+     68.79,
+     66.31,
+     64.41,
+     65.94,
+     66.92,
+     66.44,
+     66.45,
+     50.03,
+     66.96
+    ],
+    "clicks100_ms": 5383.01,
+    "shot_ms": 164.08,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 390.24,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 334.93,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 2002,
+    "driver_rss_mb": 182.2,
+    "idle_wakeups_per_s": 0.7,
+    "warm_first_ms": 42.7
+   },
+   {
+    "cold_ms": 1615.37,
+    "pages": {
+     "app": {
+      "goto_ms": 443.53,
+      "aria_ms": 140.47,
+      "aria_bytes": 744,
+      "aria_tokens": 186,
+      "content_ms": 4.91,
+      "content_bytes": 2133,
+      "content_tokens": 534
+     },
+     "wolos": {
+      "goto_ms": 502.22,
+      "aria_ms": 139.91,
+      "aria_bytes": 10715,
+      "aria_tokens": 2679,
+      "content_ms": 11.9,
+      "content_bytes": 52348,
+      "content_tokens": 13087
+     },
+     "hub": {
+      "error": "page.goto: net::ERR_ABORTED at http://127.0.0.1:8093/hub/index.html"
+     },
+     "heavy": {
+      "goto_ms": 899.68,
+      "aria_ms": 723.05,
+      "aria_bytes": 468534,
+      "aria_tokens": 117134,
+      "content_ms": 79.64,
+      "content_bytes": 575433,
+      "content_tokens": 143859
+     },
+     "fed": {
+      "goto_ms": 813.65,
+      "aria_ms": 139.57,
+      "aria_bytes": 1867,
+      "aria_tokens": 467,
+      "content_ms": 9.47,
+      "content_bytes": 3266,
+      "content_tokens": 817
+     },
+     "chrome": {
+      "goto_ms": 144.77,
+      "aria_ms": 102.95,
+      "aria_bytes": 3143,
+      "aria_tokens": 786,
+      "content_ms": 5.42,
+      "content_bytes": 9374,
+      "content_tokens": 2344
+     }
+    },
+    "goto_warm_ms": 122.89,
+    "click_ms": [
+     129.8,
+     61.32,
+     66.25,
+     65.42,
+     68.07,
+     66.46,
+     64.32,
+     52.8,
+     73.57,
+     61.89
+    ],
+    "click_locator_ms": [
+     64.74,
+     66.53,
+     66.68,
+     66.6,
+     66.42,
+     67.11,
+     66.11,
+     66.4,
+     66.82,
+     64.62
+    ],
+    "clicks100_ms": 5935.14,
+    "shot_ms": 179.48,
+    "shot_bytes": 32722,
+    "task": {
+     "ms": 400.79,
+     "tokens": 385,
+     "toast_seen": true,
+     "calls": 4
+    },
+    "task_known": {
+     "ms": 327.15,
+     "tokens": 6,
+     "toast_seen": true,
+     "calls": 3
+    },
+    "browser_rss_mb": 1984,
+    "driver_rss_mb": 180.9,
+    "idle_wakeups_per_s": 0.2,
+    "warm_first_ms": 47.3
+   }
+  ]
+ },
+ "summary": {
+  "drive": {
+   "app.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "app.goto_clean_ms": {
+    "median": 591.68,
+    "min": 479.49,
+    "max": 658.44,
+    "n": 10
+   },
+   "app.goto_ms": {
+    "median": 591.68,
+    "min": 479.49,
+    "max": 658.44,
+    "n": 10
+   },
+   "app.snap_1000_ms": {
+    "median": 9.3,
+    "min": 7.2,
+    "max": 18.33,
+    "n": 10
+   },
+   "app.snap_bytes": {
+    "median": 518.0,
+    "min": 518,
+    "max": 518,
+    "n": 10
+   },
+   "app.snap_io_bytes": {
+    "median": 390.0,
+    "min": 390,
+    "max": 390,
+    "n": 10
+   },
+   "app.snap_io_ms": {
+    "median": 7.97,
+    "min": 3.43,
+    "max": 23.88,
+    "n": 10
+   },
+   "app.snap_ms": {
+    "median": 33.11,
+    "min": 29.25,
+    "max": 38.17,
+    "n": 10
+   },
+   "app.snap_tokens": {
+    "median": 130.0,
+    "min": 130,
+    "max": 130,
+    "n": 10
+   },
+   "app.snap_unsafe_ms": {
+    "median": 8.46,
+    "min": 5.19,
+    "max": 19.53,
+    "n": 10
+   },
+   "browser_rss_mb": {
+    "median": 1648.0,
+    "min": 1641,
+    "max": 1653,
+    "n": 10
+   },
+   "chrome.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "chrome.goto_clean_ms": {
+    "median": 167.38,
+    "min": 112.41,
+    "max": 195.72,
+    "n": 10
+   },
+   "chrome.goto_ms": {
+    "median": 167.38,
+    "min": 112.41,
+    "max": 195.72,
+    "n": 10
+   },
+   "chrome.snap_1000_ms": {
+    "median": 10.61,
+    "min": 7.54,
+    "max": 21.2,
+    "n": 10
+   },
+   "chrome.snap_bytes": {
+    "median": 1689.0,
+    "min": 1689,
+    "max": 1689,
+    "n": 10
+   },
+   "chrome.snap_io_bytes": {
+    "median": 182.0,
+    "min": 182,
+    "max": 182,
+    "n": 10
+   },
+   "chrome.snap_io_ms": {
+    "median": 7.48,
+    "min": 6.03,
+    "max": 9.44,
+    "n": 10
+   },
+   "chrome.snap_ms": {
+    "median": 26.39,
+    "min": 20.93,
+    "max": 37.88,
+    "n": 10
+   },
+   "chrome.snap_tokens": {
+    "median": 423.0,
+    "min": 423,
+    "max": 423,
+    "n": 10
+   },
+   "chrome.snap_unsafe_ms": {
+    "median": 8.8,
+    "min": 6.09,
+    "max": 11.99,
+    "n": 10
+   },
+   "click_locator_ms": {
+    "median": 15.85,
+    "min": 9.38,
+    "max": 16.55,
+    "n": 10
+   },
+   "click_ms": {
+    "median": 8.14,
+    "min": 1.54,
+    "max": 10.32,
+    "n": 10
+   },
+   "clicks100_ms": {
+    "median": 833.56,
+    "min": 250.0,
+    "max": 872.71,
+    "n": 10
+   },
+   "cold_ms": {
+    "median": 1445.62,
+    "min": 1193.17,
+    "max": 1544.51,
+    "n": 10
+   },
+   "driver_rss_mb": {
+    "median": 6.2,
+    "min": 6.0,
+    "max": 30.8,
+    "n": 10
+   },
+   "fed.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "fed.goto_clean_ms": {
+    "median": 821.02,
+    "min": 789.12,
+    "max": 1045.49,
+    "n": 10
+   },
+   "fed.goto_ms": {
+    "median": 821.02,
+    "min": 789.12,
+    "max": 1045.49,
+    "n": 10
+   },
+   "fed.snap_1000_ms": {
+    "median": 11.85,
+    "min": 8.26,
+    "max": 21.45,
+    "n": 10
+   },
+   "fed.snap_bytes": {
+    "median": 313.0,
+    "min": 313,
+    "max": 313,
+    "n": 10
+   },
+   "fed.snap_io_bytes": {
+    "median": 261.0,
+    "min": 261,
+    "max": 261,
+    "n": 10
+   },
+   "fed.snap_io_ms": {
+    "median": 8.9,
+    "min": 5.81,
+    "max": 14.7,
+    "n": 10
+   },
+   "fed.snap_ms": {
+    "median": 30.06,
+    "min": 22.73,
+    "max": 46.22,
+    "n": 10
+   },
+   "fed.snap_tokens": {
+    "median": 79.0,
+    "min": 79,
+    "max": 79,
+    "n": 10
+   },
+   "fed.snap_unsafe_ms": {
+    "median": 53.53,
+    "min": 38.59,
+    "max": 72.92,
+    "n": 10
+   },
+   "goto_warm_ms": {
+    "median": 145.62,
+    "min": 93.13,
+    "max": 189.29,
+    "n": 10
+   },
+   "heavy.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "heavy.goto_clean_ms": {
+    "median": 735.34,
+    "min": 518.75,
+    "max": 865.22,
+    "n": 10
+   },
+   "heavy.goto_ms": {
+    "median": 735.34,
+    "min": 518.75,
+    "max": 865.22,
+    "n": 10
+   },
+   "heavy.snap_1000_ms": {
+    "median": 252.9,
+    "min": 227.84,
+    "max": 288.63,
+    "n": 10
+   },
+   "heavy.snap_bytes": {
+    "median": 58778.0,
+    "min": 58778,
+    "max": 58778,
+    "n": 10
+   },
+   "heavy.snap_io_bytes": {
+    "median": 11597.0,
+    "min": 11597,
+    "max": 11597,
+    "n": 10
+   },
+   "heavy.snap_io_ms": {
+    "median": 240.22,
+    "min": 208.75,
+    "max": 261.28,
+    "n": 10
+   },
+   "heavy.snap_ms": {
+    "median": 283.19,
+    "min": 217.25,
+    "max": 326.54,
+    "n": 10
+   },
+   "heavy.snap_tokens": {
+    "median": 14695.0,
+    "min": 14695,
+    "max": 14695,
+    "n": 10
+   },
+   "heavy.snap_unsafe_ms": {
+    "median": 216.91,
+    "min": 196.77,
+    "max": 245.86,
+    "n": 10
+   },
+   "hub.goto_aborted": {
+    "median": 1.0,
+    "min": 1,
+    "max": 1,
+    "n": 10
+   },
+   "hub.goto_ms": {
+    "median": 3524.52,
+    "min": 2817.95,
+    "max": 3820.81,
+    "n": 10
+   },
+   "hub.goto_retried": {
+    "median": 1.0,
+    "min": 1,
+    "max": 1,
+    "n": 10
+   },
+   "hub.snap_1000_ms": {
+    "median": 51.27,
+    "min": 12.59,
+    "max": 70.41,
+    "n": 10
+   },
+   "hub.snap_bytes": {
+    "median": 3018.0,
+    "min": 3018,
+    "max": 3018,
+    "n": 10
+   },
+   "hub.snap_io_bytes": {
+    "median": 356.0,
+    "min": 356,
+    "max": 413,
+    "n": 10
+   },
+   "hub.snap_io_ms": {
+    "median": 52.69,
+    "min": 20.15,
+    "max": 65.99,
+    "n": 10
+   },
+   "hub.snap_ms": {
+    "median": 26.95,
+    "min": 26.1,
+    "max": 44.8,
+    "n": 10
+   },
+   "hub.snap_tokens": {
+    "median": 755.0,
+    "min": 755,
+    "max": 755,
+    "n": 10
+   },
+   "hub.snap_unsafe_ms": {
+    "median": 12.05,
+    "min": 10.91,
+    "max": 52.86,
+    "n": 10
+   },
+   "idle_wakeups_per_s": {
+    "median": 0.1,
+    "min": 0.1,
+    "max": 0.2,
+    "n": 10
+   },
+   "shot_bytes": {
+    "median": 27605.0,
+    "min": 27605,
+    "max": 27605,
+    "n": 10
+   },
+   "shot_ms": {
+    "median": 104.94,
+    "min": 86.05,
+    "max": 129.93,
+    "n": 10
+   },
+   "task_known_ms": {
+    "median": 161.32,
+    "min": 140.66,
+    "max": 180.29,
+    "n": 10
+   },
+   "task_known_tokens": {
+    "median": 5.0,
+    "min": 5,
+    "max": 5,
+    "n": 10
+   },
+   "task_ms": {
+    "median": 343.69,
+    "min": 310.73,
+    "max": 361.2,
+    "n": 10
+   },
+   "task_toast_seen": {
+    "median": 1.0,
+    "min": 1,
+    "max": 1,
+    "n": 10
+   },
+   "task_tokens": {
+    "median": 283.0,
+    "min": 283,
+    "max": 283,
+    "n": 10
+   },
+   "warm_first_ms": {
+    "median": 44.77,
+    "min": 40.83,
+    "max": 53.85,
+    "n": 10
+   },
+   "wolos.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "wolos.goto_clean_ms": {
+    "median": 482.49,
+    "min": 365.36,
+    "max": 575.57,
+    "n": 10
+   },
+   "wolos.goto_ms": {
+    "median": 482.49,
+    "min": 365.36,
+    "max": 575.57,
+    "n": 10
+   },
+   "wolos.snap_1000_ms": {
+    "median": 22.37,
+    "min": 9.5,
+    "max": 53.59,
+    "n": 10
+   },
+   "wolos.snap_bytes": {
+    "median": 5648.0,
+    "min": 5648,
+    "max": 5648,
+    "n": 10
+   },
+   "wolos.snap_io_bytes": {
+    "median": 1360.0,
+    "min": 937,
+    "max": 1360,
+    "n": 10
+   },
+   "wolos.snap_io_ms": {
+    "median": 24.73,
+    "min": 16.57,
+    "max": 65.74,
+    "n": 10
+   },
+   "wolos.snap_ms": {
+    "median": 42.22,
+    "min": 27.71,
+    "max": 64.04,
+    "n": 10
+   },
+   "wolos.snap_tokens": {
+    "median": 1412.0,
+    "min": 1412,
+    "max": 1412,
+    "n": 10
+   },
+   "wolos.snap_unsafe_ms": {
+    "median": 16.94,
+    "min": 12.88,
+    "max": 60.72,
+    "n": 10
+   }
+  },
+  "pw": {
+   "app.aria_bytes": {
+    "median": 744.0,
+    "min": 744,
+    "max": 744,
+    "n": 10
+   },
+   "app.aria_ms": {
+    "median": 164.64,
+    "min": 131.29,
+    "max": 205.26,
+    "n": 10
+   },
+   "app.aria_tokens": {
+    "median": 186.0,
+    "min": 186,
+    "max": 186,
+    "n": 10
+   },
+   "app.content_bytes": {
+    "median": 2133.0,
+    "min": 2133,
+    "max": 2133,
+    "n": 10
+   },
+   "app.content_ms": {
+    "median": 6.26,
+    "min": 4.89,
+    "max": 8.29,
+    "n": 10
+   },
+   "app.content_tokens": {
+    "median": 534.0,
+    "min": 534,
+    "max": 534,
+    "n": 10
+   },
+   "app.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "app.goto_clean_ms": {
+    "median": 540.47,
+    "min": 443.53,
+    "max": 596.99,
+    "n": 10
+   },
+   "app.goto_ms": {
+    "median": 540.47,
+    "min": 443.53,
+    "max": 596.99,
+    "n": 10
+   },
+   "browser_rss_mb": {
+    "median": 1988.5,
+    "min": 1934,
+    "max": 2002,
+    "n": 10
+   },
+   "chrome.aria_bytes": {
+    "median": 3143.0,
+    "min": 3143,
+    "max": 3143,
+    "n": 10
+   },
+   "chrome.aria_ms": {
+    "median": 109.86,
+    "min": 79.58,
+    "max": 151.41,
+    "n": 10
+   },
+   "chrome.aria_tokens": {
+    "median": 786.0,
+    "min": 786,
+    "max": 786,
+    "n": 10
+   },
+   "chrome.content_bytes": {
+    "median": 9374.0,
+    "min": 9374,
+    "max": 9374,
+    "n": 10
+   },
+   "chrome.content_ms": {
+    "median": 5.58,
+    "min": 4.58,
+    "max": 11.48,
+    "n": 10
+   },
+   "chrome.content_tokens": {
+    "median": 2344.0,
+    "min": 2344,
+    "max": 2344,
+    "n": 10
+   },
+   "chrome.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "chrome.goto_clean_ms": {
+    "median": 167.6,
+    "min": 124.87,
+    "max": 206.44,
+    "n": 10
+   },
+   "chrome.goto_ms": {
+    "median": 167.6,
+    "min": 124.87,
+    "max": 206.44,
+    "n": 10
+   },
+   "click_locator_ms": {
+    "median": 66.35,
+    "min": 50.69,
+    "max": 67.41,
+    "n": 10
+   },
+   "click_ms": {
+    "median": 66.77,
+    "min": 48.88,
+    "max": 69.25,
+    "n": 10
+   },
+   "clicks100_ms": {
+    "median": 6346.27,
+    "min": 5159.17,
+    "max": 6648.82,
+    "n": 10
+   },
+   "cold_ms": {
+    "median": 1974.2,
+    "min": 1597.1,
+    "max": 2125.01,
+    "n": 10
+   },
+   "driver_rss_mb": {
+    "median": 180.75,
+    "min": 159.5,
+    "max": 182.5,
+    "n": 10
+   },
+   "fed.aria_bytes": {
+    "median": 1867.0,
+    "min": 1867,
+    "max": 1867,
+    "n": 10
+   },
+   "fed.aria_ms": {
+    "median": 151.64,
+    "min": 120.12,
+    "max": 171.13,
+    "n": 10
+   },
+   "fed.aria_tokens": {
+    "median": 467.0,
+    "min": 467,
+    "max": 467,
+    "n": 10
+   },
+   "fed.content_bytes": {
+    "median": 3266.0,
+    "min": 3266,
+    "max": 3266,
+    "n": 10
+   },
+   "fed.content_ms": {
+    "median": 9.57,
+    "min": 5.6,
+    "max": 32.33,
+    "n": 10
+   },
+   "fed.content_tokens": {
+    "median": 817.0,
+    "min": 817,
+    "max": 817,
+    "n": 10
+   },
+   "fed.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "fed.goto_clean_ms": {
+    "median": 817.26,
+    "min": 793.21,
+    "max": 1043.3,
+    "n": 10
+   },
+   "fed.goto_ms": {
+    "median": 817.26,
+    "min": 793.21,
+    "max": 1043.3,
+    "n": 10
+   },
+   "goto_warm_ms": {
+    "median": 153.76,
+    "min": 98.77,
+    "max": 174.73,
+    "n": 10
+   },
+   "heavy.aria_bytes": {
+    "median": 468534.0,
+    "min": 468534,
+    "max": 468534,
+    "n": 10
+   },
+   "heavy.aria_ms": {
+    "median": 863.74,
+    "min": 716.23,
+    "max": 967.65,
+    "n": 10
+   },
+   "heavy.aria_tokens": {
+    "median": 117134.0,
+    "min": 117134,
+    "max": 117134,
+    "n": 10
+   },
+   "heavy.content_bytes": {
+    "median": 575433.0,
+    "min": 575433,
+    "max": 575433,
+    "n": 10
+   },
+   "heavy.content_ms": {
+    "median": 82.33,
+    "min": 65.07,
+    "max": 89.25,
+    "n": 10
+   },
+   "heavy.content_tokens": {
+    "median": 143859.0,
+    "min": 143859,
+    "max": 143859,
+    "n": 10
+   },
+   "heavy.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "heavy.goto_clean_ms": {
+    "median": 811.26,
+    "min": 687.95,
+    "max": 1129.42,
+    "n": 10
+   },
+   "heavy.goto_ms": {
+    "median": 811.26,
+    "min": 687.95,
+    "max": 1129.42,
+    "n": 10
+   },
+   "hub.aria_bytes": {
+    "median": 4238.0,
+    "min": 4238,
+    "max": 4238,
+    "n": 6
+   },
+   "hub.aria_ms": {
+    "median": 235.45,
+    "min": 184.54,
+    "max": 270.55,
+    "n": 6
+   },
+   "hub.aria_tokens": {
+    "median": 1060.0,
+    "min": 1060,
+    "max": 1060,
+    "n": 6
+   },
+   "hub.content_bytes": {
+    "median": 29842.0,
+    "min": 29842,
+    "max": 29842,
+    "n": 6
+   },
+   "hub.content_ms": {
+    "median": 8.56,
+    "min": 6.78,
+    "max": 15.65,
+    "n": 6
+   },
+   "hub.content_tokens": {
+    "median": 7461.0,
+    "min": 7461,
+    "max": 7461,
+    "n": 6
+   },
+   "hub.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 1,
+    "n": 10
+   },
+   "hub.goto_clean_ms": {
+    "median": 300.04,
+    "min": 194.19,
+    "max": 343.9,
+    "n": 6
+   },
+   "hub.goto_ms": {
+    "median": 300.04,
+    "min": 194.19,
+    "max": 343.9,
+    "n": 6
+   },
+   "idle_wakeups_per_s": {
+    "median": 0.3,
+    "min": 0.2,
+    "max": 0.7,
+    "n": 10
+   },
+   "shot_bytes": {
+    "median": 32722.0,
+    "min": 32722,
+    "max": 32722,
+    "n": 10
+   },
+   "shot_ms": {
+    "median": 180.25,
+    "min": 163.66,
+    "max": 216.68,
+    "n": 10
+   },
+   "task_known_ms": {
+    "median": 348.64,
+    "min": 314.11,
+    "max": 379.25,
+    "n": 10
+   },
+   "task_known_tokens": {
+    "median": 6.0,
+    "min": 6,
+    "max": 6,
+    "n": 10
+   },
+   "task_ms": {
+    "median": 403.76,
+    "min": 336.12,
+    "max": 439.01,
+    "n": 10
+   },
+   "task_toast_seen": {
+    "median": 1.0,
+    "min": 1,
+    "max": 1,
+    "n": 10
+   },
+   "task_tokens": {
+    "median": 385.0,
+    "min": 385,
+    "max": 385,
+    "n": 10
+   },
+   "warm_first_ms": {
+    "median": 46.17,
+    "min": 42.7,
+    "max": 61.57,
+    "n": 10
+   },
+   "wolos.aria_bytes": {
+    "median": 4238.0,
+    "min": 4228,
+    "max": 10715,
+    "n": 10
+   },
+   "wolos.aria_ms": {
+    "median": 230.03,
+    "min": 139.91,
+    "max": 293.38,
+    "n": 10
+   },
+   "wolos.aria_tokens": {
+    "median": 1060.0,
+    "min": 1057,
+    "max": 2679,
+    "n": 10
+   },
+   "wolos.content_bytes": {
+    "median": 29780.0,
+    "min": 29780,
+    "max": 52348,
+    "n": 10
+   },
+   "wolos.content_ms": {
+    "median": 9.38,
+    "min": 7.72,
+    "max": 49.51,
+    "n": 10
+   },
+   "wolos.content_tokens": {
+    "median": 7445.0,
+    "min": 7445,
+    "max": 13087,
+    "n": 10
+   },
+   "wolos.goto_aborted": {
+    "median": 0.0,
+    "min": 0,
+    "max": 0,
+    "n": 10
+   },
+   "wolos.goto_clean_ms": {
+    "median": 3598.2,
+    "min": 424,
+    "max": 4313.33,
+    "n": 10
+   },
+   "wolos.goto_ms": {
+    "median": 3598.2,
+    "min": 424,
+    "max": 4313.33,
+    "n": 10
+   }
+  }
+ }
+}

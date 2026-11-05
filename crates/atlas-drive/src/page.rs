@@ -121,7 +121,7 @@ impl Page {
         let st = PState {
             url: url.into(),
             title: title.into(),
-            last_net: Instant::now().checked_sub(Duration::from_secs(2)),
+            last_net: Instant::now().checked_sub(crate::util::WAIT_2S),
             console: Some(Ring::new(CONSOLE_CAP)),
             failures: Some(Ring::new(FAILURE_CAP)),
             requests: Some(Ring::new(REQUEST_CAP)),
@@ -524,7 +524,9 @@ pub fn delta(page: &Page, was: &Mark) -> Value {
     if now.url != was.url {
         o.insert("url".into(), now.url.clone().into());
     }
-    if now.title != was.title {
+    // until the page names itself the browser's title is the address: not a title
+    let named = !now.title.is_empty() && !now.url.ends_with(&now.title);
+    if now.title != was.title && named {
         o.insert("title".into(), now.title.clone().into());
     }
     if now.nav_gen != was.nav_gen {

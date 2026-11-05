@@ -100,6 +100,64 @@ pub fn fake_browser() -> (Browser, Seen) {
                         json!({"quads":[[10.0,10.0,50.0,10.0,50.0,30.0,10.0,30.0]]}),
                     ));
                 }
+                "Page.createIsolatedWorld" => {
+                    send(reply(json!({"executionContextId": 7})));
+                }
+                "DOM.describeNode" => {
+                    let oid = v["params"]["objectId"].as_str().unwrap_or("O0");
+                    let bk: i64 = oid.trim_start_matches('O').parse().unwrap_or(0);
+                    send(reply(json!({"node": {"backendNodeId": bk + 100}})));
+                }
+                "Runtime.evaluate"
+                    if v["params"]["expression"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("__ad.els[") =>
+                {
+                    // the in-page mirror's element id to a remote object
+                    let expr = v["params"]["expression"].as_str().unwrap_or("");
+                    let n = expr.rsplit('[').next().unwrap_or("").trim_end_matches(']');
+                    send(reply(
+                        json!({"result": {"type": "object", "objectId": format!("O{n}")}}),
+                    ));
+                }
+                "Runtime.evaluate"
+                    if v["params"]["expression"]
+                        .as_str()
+                        .unwrap_or("")
+                        .contains("globalThis.__ad||") =>
+                {
+                    // the in-page mirror (pagejs::SNAP): the same page as ax_fixture, in rows of 8
+                    let rows = json!([
+                        0,
+                        -1,
+                        "RootWebArea",
+                        "Demo page",
+                        "",
+                        "",
+                        "",
+                        0,
+                        2,
+                        0,
+                        "heading",
+                        "Profile",
+                        "",
+                        "",
+                        "",
+                        1,
+                        3,
+                        0,
+                        "button",
+                        "Save",
+                        "",
+                        "",
+                        "",
+                        0
+                    ]);
+                    send(reply(
+                        json!({"result": {"type": "object", "value": {"rows": rows, "withheld": 0}}}),
+                    ));
+                }
                 "Runtime.evaluate" => {
                     let expr = v["params"]["expression"].as_str().unwrap_or("");
                     let val = if expr.contains("INJ=") {

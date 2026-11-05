@@ -183,6 +183,25 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+// Named waits (RH-222): every deadline a verb uses is one of these, so both ends of a wait read the same value.
+pub const WAIT_100MS: std::time::Duration = std::time::Duration::from_millis(100);
+pub const WAIT_10S: std::time::Duration = std::time::Duration::from_secs(10);
+pub const WAIT_120S: std::time::Duration = std::time::Duration::from_secs(120);
+pub const WAIT_1500MS: std::time::Duration = std::time::Duration::from_millis(1500);
+pub const WAIT_15S: std::time::Duration = std::time::Duration::from_secs(15);
+pub const WAIT_20MS: std::time::Duration = std::time::Duration::from_millis(20);
+pub const WAIT_20S: std::time::Duration = std::time::Duration::from_secs(20);
+pub const WAIT_2S: std::time::Duration = std::time::Duration::from_secs(2);
+pub const WAIT_3S: std::time::Duration = std::time::Duration::from_secs(3);
+pub const WAIT_40MS: std::time::Duration = std::time::Duration::from_millis(40);
+pub const WAIT_500MS: std::time::Duration = std::time::Duration::from_millis(500);
+pub const WAIT_50MS: std::time::Duration = std::time::Duration::from_millis(50);
+pub const WAIT_5S: std::time::Duration = std::time::Duration::from_secs(5);
+pub const WAIT_60MS: std::time::Duration = std::time::Duration::from_millis(60);
+pub const WAIT_60S: std::time::Duration = std::time::Duration::from_secs(60);
+pub const WAIT_80MS: std::time::Duration = std::time::Duration::from_millis(80);
+pub const WAIT_8S: std::time::Duration = std::time::Duration::from_secs(8);
+
 #[cfg(test)]
 mod tests {
     use super::*;

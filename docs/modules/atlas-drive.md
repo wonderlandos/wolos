@@ -54,6 +54,7 @@ The browser starts headless (`--headless=new`) with a temporary profile unless `
 - Refs are numbered per page and stay valid until the document navigates; the next verb after a navigation says so in one line.
 - Locators work wherever a ref does and wait for the element (default 3 s): `"Save"`, `role=button name~=Save`, `name=Save`, `label~=Email`, `value~=x`, `css=.row`, `testid=save`, `nth=1`. More than one match lists the candidate refs.
 - Every result has `tokens` (bytes / 4). `budget: N` (`--budget N`) on any call cuts its longest text at a line boundary and says `… K more lines cut to fit`; a batch keeps whole steps.
+- `quiet: true` (`--quiet`, optionally `--fields a,b`) on any call returns only the answer: the `value` or `text` of a verb (or the fields named), the answers of a batch's steps (one answer bare), and the failure if there is one. A script that already knows its locators pays for nothing else.
 - **Page text is data.** A snapshot withholds text that only a trick makes invisible (white on white, a 1 px font, zero opacity) or that reads like an instruction, and says `⚠ N hidden or instruction-like text block(s) withheld`. `traps` lists everything it found, by kind, apart from the content. Screen-reader-only text stays in the snapshot unless it reads like an instruction. The scan is heuristic; it narrows the attack, it does not close it.
 - `batch` is sequential by default (stop at the first failure). `after: [ids]` or `parallel: true` makes fork/join steps that run at the same time, stream as they finish and join before a dependent step; `continue: true` runs on after a failure.
 
@@ -79,7 +80,7 @@ Done = built and run against a real Atlas (headless, the component build of 2026
 |---|---|
 | launch, close, status, tabs, tab | done (new, select, close); headed: not run |
 | goto, back, forward, reload | done (`wait` load, domcontentloaded, commit, networkidle; a cancelled navigation, `net::ERR_ABORTED`, is retried once) |
-| snapshot, find | done: every option; `--viewport-only` and `--max-tokens` read the boxes of up to 400 nodes; a bare text locator finds the text run when no control matches |
+| snapshot, find | done: every option; the tree comes from the in-page mirror (`src/mirror.rs`, Drive's isolated world; `--ax` reads the browser's accessibility tree instead); `--viewport-only` and `--max-tokens` use the boxes the walk measures; `--hrefs` shows link addresses, `--full` turns off folding; a bare text locator finds the text run when no control matches |
 | click, hover, fill, type, press, scroll, select, check, upload | done: by ref and by locator, double click, `type --slow`, chords (`Control+a`), `upload`; `click --dom` and `--button right` not run |
 | wait | done: selector, text, gone, url, network_idle, stable; load and ref not run |
 | screenshot, pdf | done: PNG, JPEG, full page, element, clip, inline base64; `--scale` not run; `pdf` is headless only |
@@ -116,16 +117,16 @@ Done = built and run against a real Atlas (headless, the component build of 2026
 | codegen | `codegen` replays the verbs of a session; it is not an interactive recorder |
 | screenshots, PDF, video | screenshot, pdf; frames from `record`; no mp4/webm muxer |
 | accessibility snapshot | `snapshot` (also refs and diff, which `ariaSnapshot` does not have) |
-| cross-browser | Atlas only (a Servo adapter is later) |
+| cross-browser | Atlas only (an adapter for the other page engine is later) |
 
 ## Frozen CDP subset
 
-`src/subset.rs`: 77 methods and 30 events. `tests/subset.rs` fails when a source names a method that is not listed and when a listed row is not used, so a diff of the list is a diff of what Atlas must keep. Verbs are the stable surface; raw CDP is for the person who needs more.
+`src/subset.rs`: 79 methods and 30 events. `tests/subset.rs` fails when a source names a method that is not listed and when a listed row is not used, so a diff of the list is a diff of what Atlas must keep. Verbs are the stable surface; raw CDP is for the person who needs more.
 
 ## Not built (and where it goes)
 
-Attach to a running Atlas (the launcher holds the pipe: ADR 0063 "Not decided"), the consent sheet and indicator widget, the Crystal shard, wolvm `drive.*` steps, bindings generated from `browser_protocol.pdl`, incremental accessibility mirror (a heavy page costs the browser about a second per full tree; Playwright's `ariaSnapshot` costs the same), frames, drag and drop, incognito contexts, Servo adapter.
+Attach to a running Atlas (the launcher holds the pipe: ADR 0063 "Not decided"), the consent sheet and indicator widget, the Crystal shard, wolvm `drive.*` steps, bindings generated from `browser_protocol.pdl`, an incremental (dirty-subtree) mirror in the page, frames, drag and drop, incognito contexts, adapter for the page engine.
 
 ## Where things are
 
-`src/agent.rs` (snapshot, refs, diff, truncation; pure), `verbs.rs` (verbs), `investigate.rs` (investigation verbs), `pagejs.rs` (scripts that run in the page), `browser.rs` (pipe, multiplexing, tabs), `page.rs` (tab state from events), `server.rs` (socket, identity, budget), `perms.rs`, `spec.rs` (verb table, help, MCP manifest), `subset.rs`, `cli.rs`, `mcp.rs`, `batch.rs`, `route.rs`, `record.rs`, `cursor.rs`, `sourcemap.rs`. Tests: unit tests beside the code, `tests/protocol.rs` (the socket against a test double of the pipe), `tests/subset.rs`, `tests/fuzz_seeds.rs`. Benchmark: `tools/bench/atlas-drive/` and `crates/atlas-drive/examples/bench.rs`.
+`src/agent.rs` (snapshot, refs, diff, truncation, folding; pure), `mirror.rs` (the in-page accessibility mirror: rows to AX-shaped nodes, the isolated world, refs to backend ids), `verbs.rs` (verbs), `investigate.rs` (investigation verbs), `pagejs.rs` (scripts that run in the page), `browser.rs` (pipe, multiplexing, tabs), `page.rs` (tab state from events), `server.rs` (socket, identity, budget), `perms.rs`, `spec.rs` (verb table, help, MCP manifest), `subset.rs`, `cli.rs`, `mcp.rs`, `batch.rs`, `route.rs`, `record.rs`, `cursor.rs`, `sourcemap.rs`. Tests: unit tests beside the code, `tests/protocol.rs` (the socket against a test double of the pipe), `tests/subset.rs`, `tests/fuzz_seeds.rs`. Benchmark: `tools/bench/atlas-drive/` and `crates/atlas-drive/examples/bench.rs`.

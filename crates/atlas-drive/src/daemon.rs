@@ -118,7 +118,7 @@ impl Daemon {
         let b = self.browser()?;
         let p = match params.get("tab").and_then(Value::as_u64) {
             Some(i) => b.select(i as usize)?,
-            None => b.wait_first_page(std::time::Duration::from_secs(10))?,
+            None => b.wait_first_page(crate::util::WAIT_10S)?,
         };
         Ok((b, p))
     }

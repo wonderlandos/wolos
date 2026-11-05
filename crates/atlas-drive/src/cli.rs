@@ -10,6 +10,8 @@ const GENERIC: &[(&str, &str)] = &[
     ("then", "string"),
     ("then_budget", "integer"),
     ("nav_timeout", "integer"),
+    ("quiet", "boolean"),
+    ("fields", "string"),
 ];
 
 fn norm(k: &str) -> String {

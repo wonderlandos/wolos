@@ -140,7 +140,7 @@ impl Pending {
                     "raise --timeout",
                 );
             }
-            match self.rx.recv_timeout(left.min(Duration::from_millis(40))) {
+            match self.rx.recv_timeout(left.min(crate::util::WAIT_40MS)) {
                 Ok(r) => return reply_to_res(&self.method, r).map(Some),
                 Err(RecvTimeoutError::Timeout) => {
                     if stop() {
@@ -216,6 +216,11 @@ pub fn browser_args(c: &LaunchConfig, profile: &std::path::Path) -> Vec<String> 
         "--no-default-browser-check".into(),
         "--password-store=basic".into(),
         "--disable-background-networking".into(),
+        // A page left for another stays alive in the back/forward cache, in the same renderer when
+        // the site is the same: measured (docs/bench/atlas-drive.md, round 2) it kept the browser
+        // 20 % bigger and made every later click wait 4 times longer. A driven browser reloads
+        // on `back` instead (Playwright passes the same flag).
+        "--disable-back-forward-cache".into(),
     ];
     if c.headless {
         a.push("--headless=new".into());
@@ -345,11 +350,14 @@ impl Browser {
         });
         let me = Browser(inner.clone());
         let reader = me.clone();
-        std::thread::Builder::new()
+        let spawned = std::thread::Builder::new()
             .name("cdp-reader".into())
             .stack_size(1024 * 1024)
-            .spawn(move || reader.read_loop(r))
-            .expect("reader thread");
+            .spawn(move || reader.read_loop(r));
+        if spawned.is_err() {
+            // no reader, no browser: every verb now answers "the browser closed" instead of hanging
+            me.0.alive.store(false, Ordering::Relaxed);
+        }
         me
     }
 
@@ -365,7 +373,7 @@ impl Browser {
                 json!({"behavior":"allow","downloadPath":dir.display().to_string(),"eventsEnabled":true}),
             );
         }
-        self.wait_first_page(Duration::from_secs(20))?;
+        self.wait_first_page(crate::util::WAIT_20S)?;
         Ok(())
     }
 
@@ -543,7 +551,7 @@ impl Browser {
         let before = self.0.lock_tabs().list.len();
         let r = self.call(None, "Target.createTarget", json!({"url": url}))?;
         let tid = r["targetId"].as_str().unwrap_or("").to_string();
-        let end = Instant::now() + Duration::from_secs(10);
+        let end = Instant::now() + crate::util::WAIT_10S;
         let mut t = self.0.lock_tabs();
         loop {
             if let Some(i) = t.list.iter().position(|p| p.target_id == tid) {
@@ -577,7 +585,7 @@ impl Browser {
         };
         self.call(None, "Target.closeTarget", json!({"targetId": p.target_id}))?;
         // the destroyed event follows the reply: wait for it so the next verb does not pick the dead tab
-        let end = Instant::now() + Duration::from_secs(3);
+        let end = Instant::now() + crate::util::WAIT_3S;
         let mut t = self.0.lock_tabs();
         while t.list.iter().any(|x| x.target_id == p.target_id) {
             let left = end.saturating_duration_since(Instant::now());
@@ -605,7 +613,7 @@ impl Browser {
         if self.is_alive() {
             let _ = self
                 .send(None, "Browser.close", Value::Null)
-                .map(|p| p.wait(Duration::from_secs(3)));
+                .map(|p| p.wait(crate::util::WAIT_3S));
         }
         let child = self
             .0
@@ -614,13 +622,11 @@ impl Browser {
             .unwrap_or_else(PoisonError::into_inner)
             .take();
         if let Some(mut c) = child {
-            let end = Instant::now() + Duration::from_secs(3);
+            let end = Instant::now() + crate::util::WAIT_3S;
             loop {
                 match c.try_wait() {
                     Ok(Some(_)) => break,
-                    Ok(None) if Instant::now() < end => {
-                        std::thread::sleep(Duration::from_millis(20))
-                    }
+                    Ok(None) if Instant::now() < end => std::thread::sleep(crate::util::WAIT_20MS),
                     _ => {
                         let _ = c.kill();
                         let _ = c.wait();
@@ -886,6 +892,7 @@ mod tests {
         assert!(a.contains(&"--user-data-dir=/p".to_string()));
         assert_eq!(a.last().unwrap(), "about:blank");
         assert!(!a.contains(&"--enable-automation".to_string()));
+        assert!(a.contains(&"--disable-back-forward-cache".to_string()));
         let headed = LaunchConfig {
             headless: false,
             ..Default::default()

@@ -364,6 +364,45 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-081", "shared", 1),
     ("RR-081", "shell", 9),
     ("RR-081", "wopkg", 1),
+    // atlas-drive (ADR 0063, new crate wave3/atlas-drive; rows reviewed by ATLAS-DRIVE-2, round 2):
+    // main.rs is the CLI binary's own exit path (process::exit after printing the one-line error); the library never exits.
+    ("RR-001", "atlas-drive", 1),
+    // eprintln! only under ATLAS_DRIVE_TIMING=1 (verbs::trace_timing, browser read loop): an opt-in timing trace for the benchmark, off by default.
+    ("RR-004", "atlas-drive", 6),
+    // allow(clippy::too_many_arguments) on the agent line builder and the verb plumbing; reasons are beside each, to be named per RR-008 in round 3.
+    ("RR-008", "atlas-drive", 4),
+    // tests/support is shared by three test binaries; each uses a part (allow(dead_code) is the module-level norm for test support).
+    ("RR-010", "atlas-drive", 2),
+    // impl Drop for browser::Inner kills and reaps the browser child; the comment lands with the round-3 cleanup.
+    ("RR-013", "atlas-drive", 1),
+    // u64/usize/u32 casts of JSON numbers (CDP ids, ports, counts) bounded by the protocol; a checked conversion pass is round-3 work.
+    ("RR-017", "atlas-drive", 42),
+    // browser.rs launches Atlas through `sh -c exec` to move the pipe to fds 3 and 4 (no unsafe pre_exec under forbid(unsafe_code)); no user
+    // text reaches the shell.
+    ("RR-020", "atlas-drive", 1),
+    // ATLAS_DRIVE_* switches (CI, TIMING, AX, SERVE_ARGS, CONSENT_CMD) read in the daemon itself; moving them behind shared::env is round 3.
+    ("RR-027", "atlas-drive", 5),
+    // the default socket and state fall back to /tmp/atlas-drive when XDG_RUNTIME_DIR is unset (daemon::runtime_dir), as the CLI documents.
+    ("RR-032", "atlas-drive", 2),
+    // the per-connection worker thread of the MCP stdio loop; named in round 3.
+    ("RR-037", "atlas-drive", 1),
+    // the temporary browser profile (atlas-drive-<pid>-<ms> under the temp dir, created by Browser::launch) is removed with remove_dir_all on close.
+    ("RR-041", "atlas-drive", 1),
+    // four test names have two words; renamed in round 3.
+    ("RR-047", "atlas-drive", 4),
+    // one test checks only that a hostile tree does not panic (no assert by design).
+    ("RR-048", "atlas-drive", 1),
+    // protocol tests wait for the daemon's socket and the fake browser's thread with short sleeps; to move to readiness signals in round 3.
+    ("RR-049", "atlas-drive", 6),
+    // verbs.rs is the verb table body (2100+ lines); splitting it by verb family is round-3 work.
+    ("RR-056", "atlas-drive", 1),
+    // long verbs (snapshot, click, goto, network, record, js, emulate, render) keep their CDP sequence in one place; split in round 3.
+    ("RR-057", "atlas-drive", 8),
+    // page scripts in pagejs.rs are single-line JavaScript in raw strings (one string per in-page function) and long json! literals.
+    ("RR-058", "atlas-drive", 73),
+    // server.rs and client.rs read drive.sock without a read timeout: the daemon blocks in read by design (0 idle wakeups); MAX_CONNECTIONS
+    // bounds the threads.
+    ("RR-078", "atlas-drive", 2),
     ("RR-082", "xguard", 1),
 ];
 

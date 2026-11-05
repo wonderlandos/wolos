@@ -402,7 +402,7 @@ pub fn trace(ctx: &Ctx, p: &Value) -> Res<Value> {
                 b.unsubscribe(&sub);
                 return Err(e);
             }
-            let line = rx.recv_timeout(Duration::from_secs(60)).map_err(|_| {
+            let line = rx.recv_timeout(crate::util::WAIT_60S).map_err(|_| {
                 DriveError::new(
                     "trace",
                     "the browser did not finish the trace",
@@ -614,7 +614,7 @@ pub fn css(ctx: &Ctx, p: &Value) -> Res<Value> {
     b.subscribe(sub2.clone());
     let nid = node_id_of(&b, &page, bk);
     let en = exec(&b, &page, "CSS.enable", Value::Null, T);
-    std::thread::sleep(Duration::from_millis(60));
+    std::thread::sleep(crate::util::WAIT_60MS);
     b.unsubscribe(&sub2);
     nid.as_ref().map_err(|e| e.clone())?;
     en?;
@@ -856,7 +856,7 @@ fn ensure_debugger(b: &Browser, page: &Page) -> Res<()> {
     exec(b, page, "Debugger.enable", Value::Null, T)?;
     page.lock().debugger_on = true;
     // scriptParsed events for the existing scripts arrive right after the reply
-    std::thread::sleep(Duration::from_millis(80));
+    std::thread::sleep(crate::util::WAIT_80MS);
     Ok(())
 }
 
@@ -1119,7 +1119,7 @@ pub fn network(ctx: &Ctx, p: &Value) -> Res<Value> {
                         &page,
                         "Network.getResponseBody",
                         json!({"requestId": r.id}),
-                        Duration::from_secs(5),
+                        crate::util::WAIT_5S,
                     )
                 {
                     let t = x["body"].as_str().unwrap_or("");
@@ -1426,7 +1426,7 @@ pub fn js(ctx: &Ctx, p: &Value) -> Res<Value> {
             let mut text = String::new();
             let mut n = 0;
             for (url, pe) in pend {
-                if let Ok(r) = pe.wait(Duration::from_secs(10)) {
+                if let Ok(r) = pe.wait(crate::util::WAIT_10S) {
                     for m in r["result"].as_array().into_iter().flatten() {
                         if n < limit {
                             text.push_str(&format!(

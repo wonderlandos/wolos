@@ -20,16 +20,21 @@ def med(side, key):
 # (label, drive key, playwright key, unit)
 ROWS = [
     ("cold start to first command", "cold_ms", "cold_ms", "ms"),
-    ("goto + load (local app page)", "app.goto_ms", "app.goto_ms", "ms"),
+    ("first command, browser already running", "warm_first_ms", "warm_first_ms", "ms"),
+    ("goto + load (local app page, warm browser)", "goto_warm_ms", "goto_warm_ms", "ms"),
     ("click round trip (by ref / selector)", "click_ms", "click_ms", "ms"),
     ("100 sequential clicks", "clicks100_ms", "clicks100_ms", "ms"),
     ("full-page screenshot", "shot_ms", "shot_ms", "ms"),
-    ("snapshot time, small page", "hub.snap_ms", "hub.aria_ms", "ms"),
+    # round 2: the small page is the app page (round 1 used the hub page, whose first load the
+    # browser aborted for both tools in every round-2 run, so Playwright has no hub numbers)
+    ("snapshot time, small page (app)", "app.snap_ms", "app.aria_ms", "ms"),
     ("snapshot time, heavy page", "heavy.snap_ms", "heavy.aria_ms", "ms"),
-    ("snapshot size, hub page", "hub.snap_tokens", "hub.aria_tokens", "tokens"),
+    ("snapshot size, small page (app)", "app.snap_tokens", "app.aria_tokens", "tokens"),
     ("snapshot size, heavy page", "heavy.snap_tokens", "heavy.aria_tokens", "tokens"),
     ("agent task: tokens", "task_tokens", "task_tokens", "tokens"),
     ("agent task: time", "task_ms", "task_ms", "ms"),
+    ("agent task, known locators: tokens", "task_known_tokens", "task_known_tokens", "tokens"),
+    ("agent task, known locators: time", "task_known_ms", "task_known_ms", "ms"),
     ("driver process memory", "driver_rss_mb", "driver_rss_mb", "MB"),
     ("browser memory with driver attached", "browser_rss_mb", "browser_rss_mb", "MB"),
     ("driver idle wakeups", "idle_wakeups_per_s", "idle_wakeups_per_s", "/s"),
@@ -83,11 +88,10 @@ out.append("| Metric | Playwright median [min-max] | Atlas Drive median [min-max
 out.append("|---|---|---|---|")
 ALL = ROWS + [
     ("click round trip by locator", "click_locator_ms", "click_locator_ms", "ms"),
-    ("agent task with known locators: time", "task_known_ms", "task_known_ms", "ms"),
-    ("agent task with known locators: tokens", "task_known_tokens", "task_known_tokens", "tokens"),
 ]
 for page in ("app", "wolos", "hub", "heavy", "fed", "chrome"):
     ALL.append((f"goto + load: {page}", f"{page}.goto_ms", f"{page}.goto_ms", "ms"))
+    ALL.append((f"goto + load, runs the browser did not abort: {page}", f"{page}.goto_clean_ms", f"{page}.goto_clean_ms", "ms"))
     ALL.append((f"snapshot time: {page}", f"{page}.snap_ms", f"{page}.aria_ms", "ms"))
     ALL.append((f"snapshot tokens: {page}", f"{page}.snap_tokens", f"{page}.aria_tokens", "tokens"))
     ALL.append((f"snapshot time without the trap scan: {page}", f"{page}.snap_unsafe_ms", f"{page}.aria_ms", "ms"))
@@ -99,6 +103,9 @@ for label, dk, pk, unit in ALL:
     seen.add(label)
     d, p = D.get(dk), P.get(pk)
     if d is None or p is None or unit == "mixed":
+        continue
+    # the abort-free row only when the browser aborted a load on that page
+    if "did not abort" in label and d == D.get(dk.replace("goto_clean_ms", "goto_ms")) and p == P.get(pk.replace("goto_clean_ms", "goto_ms")):
         continue
     ratio = d["median"] / p["median"] if p["median"] else float("nan")
     out.append(f"| {label} ({unit}) | {cell(P, pk)} | {cell(D, dk)} | {ratio:.2f} |")

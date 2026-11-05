@@ -101,7 +101,7 @@ fn spawn_writer(b: Browser, rx: Receiver<String>, dir: PathBuf) -> JoinHandle<u6
         let mut n = 0u64;
         let mut index = std::fs::File::create(dir.join("frames.jsonl")).ok();
         // recv_timeout so the worker also ends when the sender stays alive in a dropped subscription
-        while let Ok(line) = rx.recv_timeout(std::time::Duration::from_millis(1500)) {
+        while let Ok(line) = rx.recv_timeout(crate::util::WAIT_1500MS) {
             let Ok(v) = serde_json::from_str::<Value>(&line) else {
                 continue;
             };

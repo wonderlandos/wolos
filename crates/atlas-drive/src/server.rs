@@ -125,6 +125,68 @@ pub fn finalize(mut v: Value, budget: Option<usize>) -> Value {
     v
 }
 
+/// `--quiet`: only the answer. A verb's result keeps its value or text (or `fields`, comma-separated
+/// or a list); `ok: true` and the change report go. A batch keeps the answers of the steps that have
+/// one, in order (`values`), and its failure if any. Scripts that already know their locators pay
+/// for what they asked, nothing else.
+pub fn terse(v: Value, fields: Option<&Value>) -> Value {
+    let wanted: Vec<String> = match fields {
+        Some(Value::String(s)) => s
+            .split(',')
+            .map(|f| f.trim().to_string())
+            .filter(|f| !f.is_empty())
+            .collect(),
+        Some(Value::Array(a)) => a
+            .iter()
+            .filter_map(Value::as_str)
+            .map(String::from)
+            .collect(),
+        _ => vec![],
+    };
+    let keep = |o: &serde_json::Map<String, Value>| -> Option<Value> {
+        if !wanted.is_empty() {
+            let m: serde_json::Map<String, Value> = o
+                .iter()
+                .filter(|(k, _)| wanted.iter().any(|w| w == *k))
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            return (!m.is_empty()).then_some(Value::Object(m));
+        }
+        ["value", "text", "view", "values"]
+            .iter()
+            .find_map(|k| o.get(*k).cloned())
+    };
+    let Value::Object(o) = v else { return v };
+    if let Some(Value::Array(steps)) = o.get("results") {
+        let mut values = vec![];
+        for st in steps {
+            if let Some(r) = st.get("r").and_then(Value::as_object)
+                && let Some(x) = keep(r)
+            {
+                values.push(x);
+            }
+        }
+        // one answer is the answer itself
+        let mut out = if values.len() == 1 && wanted.is_empty() {
+            json!({ "value": values.remove(0) })
+        } else {
+            json!({ "values": values })
+        };
+        if let Some(f) = o.get("failed") {
+            out["failed"] = f.clone();
+            if let Some(e) = steps.iter().find_map(|s| s.get("error")) {
+                out["error"] = e.clone();
+            }
+        }
+        return out;
+    }
+    match keep(&o) {
+        Some(x) if wanted.is_empty() => json!({ "value": x }),
+        Some(x) => x,
+        None => json!({}),
+    }
+}
+
 /// Deterministic truncation: cut the longest text field at a line boundary so the whole fits, and say so.
 pub fn fit_budget(v: &mut Value, budget: usize) {
     let total = tokens(v.to_string().len());
@@ -217,7 +279,7 @@ pub fn serve(listener: UnixListener, d: Arc<Daemon>, cfg: ServerCfg) -> std::io:
     });
     for conn in listener.incoming() {
         let Ok(conn) = conn else {
-            std::thread::sleep(Duration::from_millis(100));
+            std::thread::sleep(crate::util::WAIT_100MS);
             continue;
         };
         if shared.conns.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
@@ -439,7 +501,11 @@ fn handle(conn: UnixStream, sh: &Arc<Shared>) {
                         emit: &emit,
                     };
                     let r = call(&ctx, &verb, &params);
+                    let quiet = params.get("quiet").is_some_and(|q| q == true || q == "true");
                     let resp = match r {
+                        Ok(v) if quiet => {
+                            json!({"id": rid, "result": finalize(terse(v, params.get("fields")), budget)})
+                        }
                         Ok(v) => json!({"id": rid, "result": finalize(v, budget)}),
                         Err(e) => err_json(&rid, &e),
                     };
@@ -569,6 +635,27 @@ mod tests {
             vec!["act", "files", "network"]
         );
         assert!(scopes_needed("nope", &json!({}), &[]).is_empty());
+    }
+
+    #[test]
+    fn quiet_keeps_only_the_answer() {
+        let batch = json!({"ok": true, "results": [
+            {"id": "0", "verb": "fill", "ok": true, "r": {"ok": true, "focus": "input#email"}},
+            {"id": "1", "verb": "click", "ok": true, "r": {"ok": true, "clicked": "button \"Save\""}},
+            {"id": "2", "verb": "eval", "ok": true, "r": {"value": "Saved!"}}
+        ]});
+        assert_eq!(terse(batch, None), json!({"value": "Saved!"}));
+        let one = json!({"ok": true, "changed": {"url": "x"}, "text": "hi"});
+        assert_eq!(terse(one.clone(), None), json!({"value": "hi"}));
+        assert_eq!(
+            terse(one, Some(&json!("changed"))),
+            json!({"changed": {"url": "x"}})
+        );
+        let failed = json!({"ok": false, "failed": "1", "results": [{"id": "1", "verb": "click", "error": "not_found: x"}]});
+        assert_eq!(
+            terse(failed, None),
+            json!({"values": [], "failed": "1", "error": "not_found: x"})
+        );
     }
 
     #[test]

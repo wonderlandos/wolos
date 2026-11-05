@@ -79,8 +79,20 @@ fn serve(args: &[String]) -> ExitCode {
         .map(|p| p.join("drive"))
         .unwrap_or_else(|| PathBuf::from("/tmp/atlas-drive"));
     let d = daemon::Daemon::new(c, state_dir);
-    if launch && let Err(e) = d.browser() {
-        return die(&e.line());
+    if launch {
+        // pre-warm: the browser starts while the socket already answers; a verb that comes first
+        // waits for it on the daemon's browser lock (a failure is that verb's error)
+        let d2 = d.clone();
+        let started = std::thread::Builder::new()
+            .name("prewarm".into())
+            .spawn(move || {
+                if let Err(e) = d2.browser() {
+                    eprintln!("atlas-drive: {}", e.line());
+                }
+            });
+        if started.is_err() && d.browser().is_err() {
+            return die("serve: cannot start the browser");
+        }
     }
     let cfg = server::ServerCfg {
         grants_path: perms::config_path(),
@@ -127,7 +139,7 @@ fn connect(socket: &std::path::Path, spawn: bool) -> Result<Client, String> {
     cmd.spawn()
         .map_err(|e| format!("cannot start the daemon: {e}"))?;
     for _ in 0..100 {
-        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::thread::sleep(atlas_drive::util::WAIT_20MS);
         if let Ok(c) = Client::connect(socket) {
             return Ok(c);
         }
