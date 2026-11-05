@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+# The daily check's findings (update-check, $D) describe the installed packages they were read
+# against, but $D is in the shared /var while the packages are the slot's own (ADR 0016). After a
+# slot switch (an update, a rollback) or a layer change they describe another set: right after the
+# 0.12.0 -> 0.12.1 upgrade Software Update offered the ten packages the new slot already had
+# (QA-UPG-5).
+#   update-settle        (wolos-update-settle.service, every start, before any session): when the
+#                        findings' basis is not the running one, pkg, audit, kernels, checked and
+#                        basis go (findings of a check that recorded none are another slot's too).
+#                        The release manifest stays: it does not depend on the slot. Without
+#                        `checked` the next hourly update-check run checks.
+#   update-settle basis  the running basis: the names in the database's local/ folder (one per
+#                        installed package and version), as cksum. update-check records it.
+# Env (tests): WOLOS_UPDATES (/var/lib/wolos/updates), WOLOS_PACMAN_DB (pacman-conf DBPath).
+set -u
+D=${WOLOS_UPDATES:-/var/lib/wolos/updates}
+db=${WOLOS_PACMAN_DB:-$(pacman-conf DBPath 2>/dev/null || :)}
+db=${db:-/var/lib/pacman}
+db=${db%/}
+basis() { find "$db/local" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | LC_ALL=C sort | cksum; }
+if [ "${1:-}" = basis ]; then
+	basis
+	exit 0
+fi
+[ -f "$D/pkg" ] || exit 0
+[ "$(basis)" != "$(cat "$D/basis" 2>/dev/null)" ] || exit 0
+echo "update-settle: the last update check described other installed packages (another slot, or before a change): its findings are dropped until the next check" >&2
+rm -f "$D/pkg" "$D/audit" "$D/kernels" "$D/basis" "$D/checked"
+exit 0

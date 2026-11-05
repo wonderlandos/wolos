@@ -15,6 +15,7 @@ enable wolos-firstboot.service
 enable wolos-power.service
 enable wolos-mm.service
 enable wolos-update-check.timer
+enable wolos-update-settle.service
 enable wolos-update-download.timer
 enable wolos-report.timer
 enable wolos-xguard.service

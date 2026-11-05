@@ -15,6 +15,12 @@ Before=wolos-boot-ok.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/wol encrypt reseal
+# The cached secret is a key of root's user keyring that only its possessor may read (the
+# kernel's default for a key systemd-cryptsetup adds: anyone else of the same uid may only see
+# it). A service gets a session keyring of its own (KeyringMode=private, systemd's default),
+# not linked to root's user keyring: the search finds the key and the read is refused, so the
+# reseal did nothing at every start the chip refused (QA-BOOT-1). shared links it in.
+KeyringMode=shared
 # Hardening (audit A7/B5, crates/controller/tests/units.rs): systemd-cryptenroll writes the LUKS header and talks to the TPM device; udev over netlink.
 NoNewPrivileges=yes
 LockPersonality=yes

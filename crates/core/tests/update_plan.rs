@@ -184,9 +184,9 @@ fn interrupted_build_leaves_a_marker() {
             text: "wolos-b 2026/11/02\n".into()
         })
     );
-    // Removed once the new slot can boot (after esp-sync), before the last step.
+    // Removed once the new slot can boot (after esp-sync), before the default and the last sync.
     assert_eq!(
-        s[s.len() - 2].to_string(),
+        s[s.len() - 3].to_string(),
         format!("rm -f {}", up::BUILDING)
     );
     let undo = up::rollback_at("wolos-b", Base::Running { replace: true }, &s, 5);
@@ -379,4 +379,201 @@ fn the_mark_goes_once_the_slot_can_boot() {
         .position(|s| s.ends_with("esp-sync --new"))
         .unwrap();
     assert_eq!(t[esp + 1], format!("rm -f {}", up::BUILDING), "{t:?}");
+}
+
+/// The released mirrorlist files (wolos-pkgbuilds rel/0.12.0-3 and rel/0.12.1).
+fn mirrorlist(version: &str) -> String {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/mirrorlist")
+        .join(format!("wolos-mirrorlist-{version}"));
+    std::fs::read_to_string(p).unwrap()
+}
+
+const TESTING_CONF: &str = "[options]\nSigLevel = Required\n\n[core]\nServer = https://archive.archlinux.org/repos/2026/10/31/$repo/os/$arch\n\n\
+[wolos-testing]\nInclude = /etc/pacman.d/wolos-mirrorlist\n";
+
+/// A scratch root with that pacman.conf and mirrorlist.
+fn repo_root(name: &str, conf: &str, list: &str) -> std::path::PathBuf {
+    let d = std::env::temp_dir().join(format!("wol-upg6-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(d.join("etc/pacman.d")).unwrap();
+    std::fs::write(d.join("etc/pacman.conf"), conf).unwrap();
+    std::fs::write(d.join("etc/pacman.d/wolos-mirrorlist"), list).unwrap();
+    d
+}
+
+/// Runs the plan's `sed` steps on the copy's repo files, as the update does, but on `root`.
+fn run_repo_steps(steps: &[Step], root: &std::path::Path) {
+    let work = "/run/wolos/top/@wolos-tx";
+    for s in steps {
+        let Step::Run(a) = s else { continue };
+        let Some(file) = a.last() else { continue };
+        if a[0] != "sed"
+            || !(file.ends_with("/etc/pacman.conf") || file.ends_with("wolos-mirrorlist"))
+        {
+            continue;
+        }
+        let at = file.strip_prefix(work).expect(file);
+        let mut c = std::process::Command::new(&a[0]);
+        c.args(&a[1..a.len() - 1])
+            .arg(root.join(at.trim_start_matches('/')));
+        let o = c.output().unwrap();
+        assert!(
+            o.status.success(),
+            "{a:?}: {}",
+            String::from_utf8_lossy(&o.stderr)
+        );
+    }
+}
+
+/// QA-UPG-6: the 0.12.0 release image installed `[wolos-testing]` (install-channel) and a list
+/// ending in `wolos-testing`, a tag without a date: the update's sed matched nothing, the 0.12.1
+/// list landed as `.pacnew` and every later slot kept the testing channel. A release update now
+/// leaves the copy on the release's own repo, `[wolos]` and the list of that release's package;
+/// for a stable 0.12.0 list and for the 0.12.1 one moving on to the next release alike.
+#[test]
+fn release_update_moves_to_the_release_repo() {
+    let repo = |p: &str| {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(p)
+    };
+    // The 0.12.0 testing install, made by the real install-channel from the live medium's
+    // pacman.conf (`[wolos-testing]` + `Server = .../wolos-testing`).
+    let testing = repo_root(
+        "testing",
+        &TESTING_CONF.replace(
+            "Include = /etc/pacman.d/wolos-mirrorlist",
+            "Server = https://github.com/wonderlandos/wolos-packages/releases/download/wolos-testing",
+        ),
+        &mirrorlist("2026.10.31-3"),
+    );
+    let o = std::process::Command::new("sh")
+        .arg(repo("files/usr/lib/wolos/install-channel"))
+        .arg(&testing)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let installed = std::fs::read_to_string(testing.join("etc/pacman.d/wolos-mirrorlist")).unwrap();
+    assert!(
+        installed.contains("download/wolos-testing\n"),
+        "{installed}"
+    );
+    assert!(
+        std::fs::read_to_string(testing.join("etc/pacman.conf"))
+            .unwrap()
+            .contains("[wolos-testing]")
+    );
+
+    let to_0121 = up::plan_for("wolos-b", true, Some("2026/11/02"), None).unwrap();
+    let stable = repo_root(
+        "stable",
+        &TESTING_CONF.replace("[wolos-testing]", "[wolos]"),
+        &mirrorlist("2026.10.31-3"),
+    );
+    for root in [&testing, &stable] {
+        run_repo_steps(&to_0121, root);
+        let list = std::fs::read_to_string(root.join("etc/pacman.d/wolos-mirrorlist")).unwrap();
+        assert_eq!(list, mirrorlist("2026.11.02-1"), "{}", root.display());
+        let conf = std::fs::read_to_string(root.join("etc/pacman.conf")).unwrap();
+        assert!(
+            conf.contains("\n[wolos]\nInclude = /etc/pacman.d/wolos-mirrorlist\n"),
+            "{conf}"
+        );
+        assert!(!conf.contains("wolos-testing"), "{conf}");
+        assert!(conf.contains("/repos/2026/11/02/"), "{conf}");
+    }
+    // The 0.12.1 file moving to a later release: its tag and dates follow.
+    let later = up::plan_for("wolos-a", true, Some("2026/12/01"), None).unwrap();
+    let r = repo_root(
+        "later",
+        &TESTING_CONF.replace("[wolos-testing]", "[wolos]"),
+        &mirrorlist("2026.11.02-1"),
+    );
+    run_repo_steps(&later, &r);
+    let list = std::fs::read_to_string(r.join("etc/pacman.d/wolos-mirrorlist")).unwrap();
+    assert_eq!(
+        list,
+        mirrorlist("2026.11.02-1").replace("2026-11-02", "2026-12-01")
+    );
+    // A same-release update (no date) leaves the channel and the list alone.
+    let same = up::plan_for("wolos-a", true, None, None).unwrap();
+    assert!(
+        !text(&same)
+            .iter()
+            .any(|s| s.contains("wolos-mirrorlist") && s.starts_with("sed")),
+        "{:?}",
+        text(&same)
+    );
+    for d in [testing, stable, r] {
+        let _ = std::fs::remove_dir_all(d);
+    }
+}
+
+/// QA-UPG-6: a list pacman still found changed (ranked, edited) leaves the release's file as
+/// `.pacnew`; right after pacman the release's file replaces it, before the copy is sealed. Only
+/// for a release update.
+#[test]
+fn pacnew_mirrorlist_replaced() {
+    let t = text(&replace());
+    let pacman = t
+        .iter()
+        .position(|s| s.contains("/usr/bin/pacman -Syu"))
+        .unwrap();
+    let seal = t
+        .iter()
+        .position(|s| s.starts_with("wol seal apply"))
+        .unwrap();
+    let pacnew = t
+        .iter()
+        .position(|s| {
+            s == "find /run/wolos/top/@wolos-tx/etc/pacman.d -maxdepth 1 -name wolos-mirrorlist.pacnew \
+-exec mv -f {} /run/wolos/top/@wolos-tx/etc/pacman.d/wolos-mirrorlist ;"
+        })
+        .unwrap_or_else(|| panic!("{t:?}"));
+    assert!(pacman < pacnew && pacnew < seal, "{t:?}");
+    let same = text(&up::plan_for("wolos-b", true, None, None).unwrap());
+    assert!(!same.iter().any(|s| s.contains(".pacnew")), "{same:?}");
+}
+
+/// QA-LIVE4-7: the updater said "updated into wolos-b" while the new root and its record were
+/// not on the disk yet; a cut then booted an entry with an empty image or no root. The root and
+/// its seal record are synced before esp-sync writes an entry, and the plan ends with a sync, so
+/// "updated" (said after the last step) is true. A cut-off build's seal leftovers go first.
+#[test]
+fn updated_only_after_everything_is_on_the_disk() {
+    let t = text(&replace());
+    let swap = t
+        .iter()
+        .position(|s| s == "mv /run/wolos/top/@wolos-tx /run/wolos/top/@wolos-b")
+        .unwrap();
+    let digest = t
+        .iter()
+        .position(|s| s == "mv -f /efi/wolos-b/verity.new /efi/wolos-b/verity")
+        .unwrap();
+    let esp = t
+        .iter()
+        .position(|s| s.ends_with("esp-sync --new"))
+        .unwrap();
+    let sync = t[digest..esp]
+        .iter()
+        .position(|s| s == "sync")
+        .map(|i| i + digest);
+    assert!(
+        sync.is_some_and(|i| swap < i && digest < i && i < esp),
+        "root and record on the disk before an entry names them: {t:?}"
+    );
+    assert_eq!(t.last().map(String::as_str), Some("sync"), "{t:?}");
+    let leftovers = t
+        .iter()
+        .position(|s| {
+            s == "find /efi -mindepth 2 -maxdepth 2 ( -path /efi/wolos-b/verity.new -o -path \
+/efi/wolos-b/verity*.wol-tmp ) -delete"
+        })
+        .unwrap_or_else(|| panic!("{t:?}"));
+    let seal = t
+        .iter()
+        .position(|s| s.starts_with("wol seal apply"))
+        .unwrap();
+    assert!(leftovers < seal, "{t:?}");
 }

@@ -1422,8 +1422,8 @@ fn trusted_base_adds_date_steps() {
     assert!(!dated(&plain), "no release: the pinned snapshot");
     assert_eq!(
         slot.ran.borrow().len(),
-        plain.ran.borrow().len() + 2,
-        "two sed steps more, nothing else"
+        plain.ran.borrow().len() + 3,
+        "two sed steps and the release's mirrorlist after pacman (QA-UPG-6), nothing else"
     );
     // A held package keeps the release for later.
     let held = Fake {

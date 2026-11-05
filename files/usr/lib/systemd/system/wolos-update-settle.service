@@ -1,0 +1,44 @@
+[Unit]
+Description=Drop update findings that describe another copy of WolOS
+Documentation=file:///usr/share/doc/wolos/modules/security.md
+# QA-UPG-5: the daily check's findings (/var/lib/wolos/updates, shared by both slots) were read
+# against one slot's installed packages. After a slot switch (an update, a rollback) they describe
+# the other one: Software Update offered packages the new slot already had. Before any session
+# reads them, findings of another package set are dropped; the hourly check fills them again.
+DefaultDependencies=no
+RequiresMountsFor=/var/lib/wolos
+After=local-fs.target
+Before=systemd-user-sessions.service wold.service sysinit.target
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/wolos/update-settle
+# Hardening (audit A7/B5, crates/controller/tests/units.rs): reads the package database, removes files in its own state directory; no network, no devices.
+NoNewPrivileges=yes
+LockPersonality=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+ReadWritePaths=/var/lib/wolos/updates
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=sysinit.target

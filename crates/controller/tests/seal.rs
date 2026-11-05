@@ -922,6 +922,28 @@ fn a_deleted_manifest_fails_the_check() {
     assert!(env.err.contains("protected file list"), "{}", env.err);
 }
 
+/// QA-BOOT-1: the chip refused, the person typed the recovery key, and the cached copy is there
+/// but this step may not read it: that is a failure said in the journal (the unit fails), never
+/// "nothing to reseal", which left the disk asking for the recovery key at every later start.
+#[test]
+fn reseal_fails_when_the_typed_secret_cannot_be_read() {
+    let mut env = FakeEnv {
+        root: true,
+        files: vec![(PathBuf::from("/proc/cmdline"), TPM_CMDLINE.into())],
+        unreadable_keys: vec!["cryptsetup".into()],
+        ..Default::default()
+    };
+    let rc = run("encrypt reseal", &mut env);
+    assert_ne!(rc, 0, "{}", env.out);
+    assert!(env.execs.is_empty(), "{:?}", env.execs);
+    assert!(env.err.contains("recovery key"), "{}", env.err);
+    assert!(
+        env.err.contains("the kernel refused the read"),
+        "{}",
+        env.err
+    );
+}
+
 /// QA-LIVE3-32: `wol encrypt reseal` as a standard user was a silent success. It is root's (the
 /// service runs it): anyone else is told so, with the denied exit, and nothing runs.
 #[test]

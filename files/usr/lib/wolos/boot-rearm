@@ -1,13 +1,24 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# wolos-boot-rearm.service, at shutdown (`stop`), live-4 F3: a blessed entry (<slot>.conf) has no
-# try counter, so an image the firmware cannot load failed every start and never fell back.
-# Blessed stays blessed (systemd's rule), unless this boot gives a reason to count the next start
-# again (<slot>+3.conf; systemd-boot counts before it loads the image, three failed starts sort
-# the entry last and the other slot starts by itself; a good boot blesses it again):
-#   - the image no longer matches the digest esp-sync kept: damaged, rebuilt from the slot first;
-#   - the image is not the one blessed last (boot-ok keeps <slot>/blessed.sha256);
-#   - this boot's seal or floor check failed (verity-failed-<slot>, epoch-failed-<slot>).
+# wolos-boot-rearm.service, at shutdown (`stop`), live-4 F3 / QA-LIVE4-3: a blessed entry
+# (<slot>.conf) has no try counter, so an image the firmware cannot load failed every start and
+# never fell back ("Failed to execute ... Load error", then the firmware's own screen). The image
+# can also be damaged while the computer is off, where no check of this boot sees it. So the next
+# start is always counted; systemd-boot counts before it loads the image, an entry with no tries
+# left sorts last and the other slot starts by itself, and the good start blesses it again
+# (systemd-bless-boot):
+#   - three tries (<slot>+3.conf) when this boot gives a reason:
+#     - the image no longer matches the digest esp-sync kept: damaged, rebuilt from the slot first;
+#     - the image is not the one blessed last (boot-ok keeps <slot>/blessed.sha256);
+#     - this boot's seal or floor check failed (verity-failed-<slot>, epoch-failed-<slot>);
+#   - otherwise one try (<slot>+1.conf): the image that started last time shows it still loads.
+#     When it does not, systemd-boot (262: `reboot-on-error`, `auto` by default, restarts only
+#     after a counted entry failed) restarts the machine, the entry has no tries left, and the
+#     other slot starts in the same power-on with nobody at the keyboard (checked on OVMF with
+#     systemd-boot 262.1). A blessed entry instead stopped on the firmware's own screen. The other
+#     slot's good start gives an intact image its three tries back (`wol boot bless`: the try was
+#     lost to a power cut, not to the image).
+# Limit: a computer that loses power while running skips this; its next start is not counted.
 # The new entry is written, synced and renamed before the old one goes (FAT, a power cut): there
 # is never a moment without an entry for the slot.
 # `start` does nothing (the unit only needs to be up to be stopped at shutdown).
@@ -39,13 +50,14 @@ fi
 for k in verity-failed epoch-failed; do
   if [ -z "$why" ] && [ -e "$M/$k-$slot" ]; then why=$k; fi
 done
-[ -n "$why" ] || exit 0
-echo "boot-rearm: $slot counted again at the next start ($why)" >&2
+tries=3
+[ -n "$why" ] || { tries=1; why="the image must show it still loads"; }
+echo "boot-rearm: $slot counted again at the next start, $tries tries ($why)" >&2
 # esp-sync may have counted the entry already (a changed image gets three tries).
 if [ -f "$E/$slot.conf" ]; then
-  cp "$E/$slot.conf" "$E/$slot+3.conf.new" || exit 1
-  sync "$E/$slot+3.conf.new"
-  mv -f "$E/$slot+3.conf.new" "$E/$slot+3.conf" || exit 1
+  cp "$E/$slot.conf" "$E/$slot+$tries.conf.new" || exit 1
+  sync "$E/$slot+$tries.conf.new"
+  mv -f "$E/$slot+$tries.conf.new" "$E/$slot+$tries.conf" || exit 1
   sync -f "$ESP/"
   rm -f "$E/$slot.conf"
 fi

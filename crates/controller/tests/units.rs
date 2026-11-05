@@ -52,6 +52,35 @@ const HARDENED: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        // QA-UPG-5: reads the package database, removes the check's stale findings; offline.
+        "wolos-update-settle.service",
+        &[
+            "NoNewPrivileges=yes",
+            "LockPersonality=yes",
+            "RestrictRealtime=yes",
+            "SystemCallArchitectures=native",
+            "ProtectSystem=strict",
+            "ProtectHome=yes",
+            "PrivateTmp=yes",
+            "PrivateDevices=yes",
+            "PrivateNetwork=yes",
+            "ProtectKernelTunables=yes",
+            "ProtectKernelModules=yes",
+            "ProtectKernelLogs=yes",
+            "ProtectControlGroups=yes",
+            "ProtectClock=yes",
+            "ProtectHostname=yes",
+            "RestrictNamespaces=yes",
+            "RestrictSUIDSGID=yes",
+            "MemoryDenyWriteExecute=yes",
+            "SystemCallFilter=@system-service",
+            "SystemCallErrorNumber=EPERM",
+            "ReadWritePaths=/var/lib/wolos/updates",
+            "CapabilityBoundingSet=",
+            "RestrictAddressFamilies=AF_UNIX",
+        ],
+    ),
+    (
         "wolos-report.service",
         &[
             "NoNewPrivileges=yes",
@@ -662,6 +691,70 @@ fn tpm_binding_waits_for_a_start_the_firmware_measured() {
             "{u}: [Unit] lacks ConditionSecurity=measured-uki"
         );
     }
+}
+
+/// QA-UPG-5: the check's findings are dropped when they describe another slot's packages before
+/// any session can read them: every start, ahead of logins and the session supervisor, enabled.
+#[test]
+fn stale_update_findings_go_before_sessions() {
+    let text = std::fs::read_to_string(path("wolos-update-settle.service")).unwrap();
+    let u: Vec<(&str, &str)> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.starts_with('#'))
+        .filter_map(|l| l.split_once('='))
+        .collect();
+    let get = |k: &str| -> Vec<String> {
+        u.iter()
+            .filter(|(hk, _)| *hk == k)
+            .flat_map(|(_, v)| v.split_whitespace().map(str::to_owned).collect::<Vec<_>>())
+            .collect()
+    };
+    assert_eq!(get("ExecStart"), ["/usr/lib/wolos/update-settle"]);
+    for before in ["systemd-user-sessions.service", "wold.service"] {
+        assert!(
+            get("Before").iter().any(|b| b == before),
+            "Before={before}: {u:?}"
+        );
+    }
+    assert!(
+        get("RequiresMountsFor")
+            .iter()
+            .any(|p| p == "/var/lib/wolos")
+    );
+    let preset = std::fs::read_to_string(
+        siblings::root().join("files/usr/lib/systemd/system-preset/50-wolos.preset"),
+    )
+    .unwrap();
+    assert!(
+        preset
+            .lines()
+            .any(|l| l == "enable wolos-update-settle.service")
+    );
+}
+
+/// QA-BOOT-1: after a start the chip refused, the reseal reads what was typed from root's user
+/// keyring, where systemd-cryptsetup cached it. The kernel lets only the key's possessor read it,
+/// and a service with systemd's default KeyringMode=private has a session keyring that does not
+/// link root's: the key was found, the read refused, nothing resealed, and the recovery key was
+/// asked for at every later start. The unit links root's user keyring in.
+#[test]
+fn reseal_can_read_the_secret_typed_at_the_unlock() {
+    let text = std::fs::read_to_string(path("wolos-tpm-reseal.service")).unwrap();
+    let service: Vec<&str> = text
+        .split("[Service]")
+        .nth(1)
+        .unwrap_or_default()
+        .split("\n[")
+        .next()
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .collect();
+    assert!(
+        service.contains(&"KeyringMode=shared"),
+        "[Service] lacks KeyringMode=shared: {service:?}"
+    );
 }
 
 /// QA-PWR-11: the compositor loads `hyprland.conf` while Settings > Keyboard > Shortcuts reads

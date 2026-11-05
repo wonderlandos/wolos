@@ -372,6 +372,38 @@ fn esp_files_are_durable_before_done() {
     assert_eq!(sum.trim().len(), 64, "{sum}");
 }
 
+/// QA-LIVE4-7: a cut after "updated" left `wolos-b.efi` and its `+3` entry 0 bytes. FAT renames
+/// are directory writes a file's own sync does not cover: the image's name is on the disk (the
+/// whole ESP synced) before the entry naming it is written, and the image's digest record is
+/// written aside and renamed whole (a cut-off one is removed at the next run).
+#[test]
+fn fsync_before_entry() {
+    let d = esp("fsync-entry");
+    fs::create_dir_all(d.join("esp/wolos-a")).unwrap();
+    fs::write(d.join("esp/wolos-a/image.sha256.new"), "").unwrap();
+    let o = esp_sync(&d, true);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let l = log(&d);
+    let esp = d.join("esp").display().to_string();
+    let img = l
+        .find(&format!("sync {esp}/EFI/wolos/wolos-a.efi.new"))
+        .expect(&l);
+    let ent = l
+        .find(&format!("sync {esp}/loader/entries/wolos-a+3.conf.new"))
+        .expect(&l);
+    assert!(
+        l[img..ent].contains(&format!("sync -f {esp}/")),
+        "the ESP is synced between the image's rename and its entry: {l}"
+    );
+    assert!(
+        l[img..ent].contains(&format!("sync {esp}/wolos-a/image.sha256.new")),
+        "{l}"
+    );
+    assert!(!d.join("esp/wolos-a/image.sha256.new").exists());
+    let sum = fs::read_to_string(d.join("esp/wolos-a/image.sha256")).unwrap();
+    assert_eq!(sum.trim().len(), 64, "{sum}");
+}
+
 /// QA-STORE-54: offline is not an error; a bundle that is here and refused is (exit 1, said).
 #[test]
 fn rules_failure_exits_1() {
@@ -560,11 +592,14 @@ fn shutdown_rearms_the_try_counter() {
         v.sort();
         v
     };
-    // Intact and the image blessed last: blessed stays blessed (systemd's rule); `start` is a no-op.
+    // QA-LIVE4-3: intact and the image blessed last: the next start is still counted, once, so
+    // an image damaged while the computer is off falls back (the blessed entry never did);
+    // `start` is a no-op.
     let d = setup("rearm-keep", "wolos-a.conf", true, true, false);
     assert!(run(&d, "start").status.success());
-    assert!(run(&d, "stop").status.success());
     assert_eq!(entries(&d), ["wolos-a.conf"]);
+    assert!(run(&d, "stop").status.success());
+    assert_eq!(entries(&d), ["wolos-a+1.conf"]);
     assert!(!log(&d).contains("esp-sync"), "{}", log(&d));
     // Damaged: rebuilt from the slot, then counted.
     let d = setup("rearm-damaged", "wolos-a.conf", false, true, false);
@@ -589,7 +624,7 @@ fn shutdown_rearms_the_try_counter() {
     assert!(l[new..].contains(&format!("sync -f {esp}/")), "{l}");
     let t = fs::read_to_string(lib("boot-rearm")).unwrap();
     let mv = t
-        .find("mv -f \"$E/$slot+3.conf.new\" \"$E/$slot+3.conf\"")
+        .find("mv -f \"$E/$slot+$tries.conf.new\" \"$E/$slot+$tries.conf\"")
         .unwrap();
     let rm = t.find("rm -f \"$E/$slot.conf\"").unwrap();
     assert!(mv < rm, "rename before the old entry goes");

@@ -98,10 +98,13 @@ pub trait Env {
         let _ = (argv, input);
         Err(io::Error::from(io::ErrorKind::Unsupported))
     }
-    /// Payload of the `user` key `desc` in root's user keyring (systemd's password cache).
-    fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
+    /// Payload of the `user` key `desc` in root's user keyring (systemd's password cache):
+    /// `Ok(None)` when there is no such key, `Err` (why) when there is one this process cannot
+    /// read (QA-BOOT-1: a service without `KeyringMode=shared` does not possess root's user
+    /// keyring, so the read is refused while the search finds the key).
+    fn keyring_read(&mut self, desc: &str) -> Result<Option<Vec<u8>>, String> {
         let _ = desc;
-        None
+        Ok(None)
     }
     /// Drop that key once used.
     fn keyring_forget(&mut self, desc: &str) {
@@ -1786,8 +1789,10 @@ impl Env for RealEnv {
         }
         Ok(child.wait()?.code().unwrap_or(1))
     }
-    fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
-        let id = keyring_search(desc)?;
+    fn keyring_read(&mut self, desc: &str) -> Result<Option<Vec<u8>>, String> {
+        let Some(id) = keyring_search(desc) else {
+            return Ok(None);
+        };
         let mut buf = vec![0u8; 4096];
         // SAFETY: KEYCTL_READ writes at most buf.len() bytes into buf.
         let n = unsafe {
@@ -1799,9 +1804,11 @@ impl Env for RealEnv {
                 buf.len(),
             )
         };
-        let n = usize::try_from(n).ok()?;
+        let Ok(n) = usize::try_from(n) else {
+            return Err(io::Error::last_os_error().to_string());
+        };
         buf.truncate(n.min(4096));
-        Some(buf)
+        Ok(Some(buf))
     }
     fn keyring_forget(&mut self, desc: &str) {
         if let Some(id) = keyring_search(desc) {
@@ -1930,6 +1937,8 @@ pub struct FakeEnv {
     pub secrets: Vec<(String, String)>,
     /// Root's user keyring: (description, payload).
     pub keys: Vec<(String, Vec<u8>)>,
+    /// Keys found in root's user keyring that cannot be read (the read is refused).
+    pub unreadable_keys: Vec<String>,
     /// Files deleted through `remove_file`.
     pub removed: Vec<PathBuf>,
     /// Directories made through `make_dir`.
@@ -2024,8 +2033,11 @@ impl Env for FakeEnv {
         self.inputs.push(input.into());
         self.exec(argv)
     }
-    fn keyring_read(&mut self, desc: &str) -> Option<Vec<u8>> {
-        self.keys.iter().find(|k| k.0 == desc).map(|k| k.1.clone())
+    fn keyring_read(&mut self, desc: &str) -> Result<Option<Vec<u8>>, String> {
+        if self.unreadable_keys.iter().any(|k| k == desc) {
+            return Err("the kernel refused the read".into());
+        }
+        Ok(self.keys.iter().find(|k| k.0 == desc).map(|k| k.1.clone()))
     }
     fn lock_held(&self, path: &Path) -> bool {
         let held = self.locks.lock().unwrap_or_else(|p| p.into_inner());

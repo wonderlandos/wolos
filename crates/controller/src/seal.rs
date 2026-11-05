@@ -632,8 +632,22 @@ pub fn reseal(env: &mut dyn Env) -> i32 {
     if !unlocks_with_chip(env, &uuid) {
         return 0;
     }
-    let Some(raw) = env.keyring_read(encrypt::PASSWORD_CACHE_KEY) else {
-        return 0;
+    // QA-BOOT-1: a key that is there but cannot be read is a start the chip refused whose
+    // secret never reached this step; "nothing to do" would ask for the key at every start.
+    let raw = match env.keyring_read(encrypt::PASSWORD_CACHE_KEY) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => return 0,
+        Err(e) => {
+            return fail(
+                env,
+                ErrorCode::Failed,
+                &format!(
+                    "the disk was opened with a typed password or recovery key, but this step \
+cannot read it ({e}): the disk key was not bound to this computer again, so the next start asks \
+again"
+                ),
+            );
+        }
     };
     let tries = encrypt::parse_cache(&raw);
     let public = Path::new(wol_core::boot::STATE_DIR).join("tpm2-pcr-public.pem");
