@@ -13,6 +13,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::task::{Context, Poll, Waker};
+use std::time::{Duration, Instant};
 
 /// The scheme the host serves.
 pub const SCHEME: &str = "fed";
@@ -303,5 +304,57 @@ fn work(slot: &Slot) {
         }))
         .unwrap_or_else(|_| Reply::text(502, "The fed:// handler failed."));
         (job.finish)(r);
+    }
+}
+
+/// What a mapped page load does next ([`Retry::step`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    /// Not yet time for another try.
+    Wait,
+    /// Ask the engine to load the page now.
+    Try,
+    /// Over: the `fed:` handler was asked for a document since the last try (the load took), or the
+    /// tries ran out (the page stays as it was, as with any refused load).
+    Done,
+}
+
+/// The retry of a mapped page load (`lib.rs`, `start_deferred`): the engine drops an embedder load
+/// while the navigation the 204 ended is still pending, and nothing reports when that is over, so
+/// the load is tried every `every` until a document load reaches the `fed:` handler, at most
+/// `max_tries` times. The pace and the count are arguments so a test can use a short deadline.
+#[derive(Debug, Clone)]
+pub struct Retry {
+    every: Duration,
+    max_tries: u32,
+    tries: u32,
+    next: Instant,
+    seen: u64,
+}
+
+impl Retry {
+    /// A retry that may try at `now`; `docs` is the count of documents the handler was asked for.
+    pub fn new(every: Duration, max_tries: u32, docs: u64, now: Instant) -> Retry {
+        Retry {
+            every,
+            max_tries,
+            tries: 0,
+            next: now,
+            seen: docs,
+        }
+    }
+
+    /// The next move at `now`, given the handler's document count `docs`.
+    pub fn step(&mut self, docs: u64, now: Instant) -> Step {
+        if docs != self.seen || self.tries >= self.max_tries {
+            return Step::Done;
+        }
+        if now < self.next {
+            return Step::Wait;
+        }
+        self.tries += 1;
+        self.seen = docs;
+        self.next = now + self.every;
+        Step::Try
     }
 }

@@ -209,10 +209,7 @@ pub struct Engine {
 struct Deferred {
     webview: WebView,
     to: Url,
-    tries: u32,
-    next: Instant,
-    /// [`FED_DOCUMENTS`] when the last try was made.
-    seen: u64,
+    retry: scheme::Retry,
 }
 
 thread_local! {
@@ -236,17 +233,17 @@ fn start_deferred() {
     DEFERRED.with(|d| {
         let mut d = d.borrow_mut();
         d.retain_mut(|x| {
-            let docs = FED_DOCUMENTS.load(Ordering::Relaxed);
-            if docs != x.seen || x.tries >= RETRY_MAX {
-                return false;
+            match x
+                .retry
+                .step(FED_DOCUMENTS.load(Ordering::Relaxed), Instant::now())
+            {
+                scheme::Step::Try => {
+                    x.webview.load(x.to.clone());
+                    true
+                }
+                scheme::Step::Wait => true,
+                scheme::Step::Done => false,
             }
-            if Instant::now() >= x.next {
-                x.webview.load(x.to.clone());
-                x.tries += 1;
-                x.seen = docs;
-                x.next = Instant::now() + RETRY_EVERY;
-            }
-            true
         });
         DEFERRED_N.store(d.len(), Ordering::Relaxed);
     });
@@ -378,9 +375,12 @@ impl WebViewDelegate for Delegate {
                 d.push(Deferred {
                     webview,
                     to,
-                    tries: 0,
-                    next: Instant::now(),
-                    seen: FED_DOCUMENTS.load(Ordering::Relaxed),
+                    retry: scheme::Retry::new(
+                        RETRY_EVERY,
+                        RETRY_MAX,
+                        FED_DOCUMENTS.load(Ordering::Relaxed),
+                        Instant::now(),
+                    ),
                 });
                 DEFERRED_N.store(d.len(), Ordering::Relaxed);
                 d.len() == 1

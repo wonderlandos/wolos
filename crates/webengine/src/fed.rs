@@ -38,6 +38,12 @@ pub fn serve(url: &str, kind: federate::Load) -> federate::Reply {
     })
 }
 
+/// The `fed://` spelling of an `http(s)://name.tld` URL of the Federate Network, in this process's
+/// resolver; `None` when `url` is not one (an ordinary web host, a TLD outside the network's).
+pub fn map_http(url: &str) -> Option<String> {
+    guarded(|| resolver().map_http(url))
+}
+
 /// `f`'s answer, or `None` when it panics: a panic must not unwind into the library (across
 /// `extern "C"` that aborts the process).
 fn guarded(f: impl FnOnce() -> Option<String>) -> Option<String> {

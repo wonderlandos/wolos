@@ -264,6 +264,21 @@ pub(crate) fn engine_flags(content_process: bool) -> u32 {
     }
 }
 
+/// The start URL the view opens: `url`, or its `fed://` spelling when `map` has one, and in both
+/// cases only if the policy's gate lets that address be navigated to.
+fn checked_start(
+    gate: &Gate,
+    url: &str,
+    map: impl Fn(&str) -> Option<String>,
+) -> Result<String, Error> {
+    let opens = map(url).unwrap_or_else(|| url.to_owned());
+    if gate.allows(&opens, Load::Navigation) {
+        Ok(opens)
+    } else {
+        Err(Error::Policy(format!("{url} is outside the app's origins")))
+    }
+}
+
 impl WebView {
     /// The app's page at `url`, under `policy`. The start URL must pass the policy's gate.
     pub fn new(policy: &Policy, app: App, target: Target, url: &str) -> Result<WebView, Error> {
@@ -273,9 +288,10 @@ impl WebView {
             ));
         }
         let gate = Gate::new(policy, &app.profile_dir).map_err(Error::Policy)?;
-        if !gate.allows(url, Load::Navigation) {
-            return Err(Error::Policy(format!("{url} is outside the app's origins")));
-        }
+        // A start URL the network spells `fed://` (`http://home.fed`) opens as that address, so the
+        // policy names `fed://name.tld` and nothing about the web (ADR 0052).
+        let start = checked_start(&gate, url, crate::fed::map_http)?;
+        let url = start.as_str();
         std::fs::create_dir_all(&app.profile_dir)
             .map_err(|e| Error::Policy(format!("{}: {e}", app.profile_dir.display())))?;
         let lib = ffi::lib().map_err(Error::Library)?;
@@ -656,6 +672,65 @@ mod tests {
             crashed,
             frames: 0,
         }
+    }
+
+    fn gate_of(origins: &[&str]) -> Gate {
+        let p = Policy {
+            origins: origins.iter().map(|s| (*s).to_owned()).collect(),
+            ..Policy::default()
+        };
+        Gate::new(
+            &p,
+            std::path::Path::new("/home/a/.local/share/wolos/profiles/x"),
+        )
+        .unwrap()
+    }
+
+    /// The network's own mapping without a network: the 23 known TLDs, nothing held.
+    fn map(url: &str) -> Option<String> {
+        struct NoNet;
+        impl federate::Source for NoNet {
+            fn get(&self, _: &str, _: u64) -> Result<Vec<u8>, String> {
+                Err("no network in this test".into())
+            }
+        }
+        federate::Resolver::new(Box::new(NoNet), federate::ROOT_KEY).map_http(url)
+    }
+
+    #[test]
+    fn a_mapped_start_url_is_allowed_when_the_policy_has_the_fed_origin() {
+        let g = gate_of(&["fed://home.fed"]);
+        assert_eq!(
+            checked_start(&g, "http://home.fed/", map).unwrap(),
+            "fed://home.fed"
+        );
+        assert_eq!(
+            checked_start(&g, "fed://home.fed/", map).unwrap(),
+            "fed://home.fed/"
+        );
+    }
+
+    #[test]
+    fn a_mapped_start_url_is_denied_when_the_policy_has_neither_spelling() {
+        let g = gate_of(&["fed://lobo.pagina", "https://example.com"]);
+        assert!(matches!(
+            checked_start(&g, "http://home.fed/", map),
+            Err(Error::Policy(m)) if m.contains("http://home.fed/")
+        ));
+        let none = gate_of(&[]);
+        assert!(checked_start(&none, "http://home.fed/", map).is_err());
+    }
+
+    #[test]
+    fn a_non_network_http_host_is_left_alone() {
+        // `.com` is not one of the network's TLDs: no mapping, and the policy decides as before.
+        let g = gate_of(&["https://example.com", "fed://home.fed"]);
+        assert_eq!(map("https://example.com/"), None);
+        assert_eq!(
+            checked_start(&g, "https://example.com/", map).unwrap(),
+            "https://example.com/"
+        );
+        assert!(checked_start(&g, "https://other.com/", map).is_err());
     }
 
     #[test]

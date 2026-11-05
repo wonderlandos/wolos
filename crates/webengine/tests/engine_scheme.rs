@@ -307,3 +307,44 @@ fn loads_are_capped_queued_in_order_and_refused_beyond_the_queue() {
         "in order"
     );
 }
+
+#[test]
+fn a_mapped_load_is_tried_until_the_handler_is_asked_then_stops() {
+    use scheme::{Retry, Step};
+    use std::time::{Duration, Instant};
+    let t0 = Instant::now();
+    let every = Duration::from_millis(100);
+    let mut r = Retry::new(every, 50, 7, t0);
+    assert_eq!(r.step(7, t0), Step::Try);
+    assert_eq!(r.step(7, t0 + every / 2), Step::Wait);
+    assert_eq!(r.step(7, t0 + every), Step::Try);
+    // A document load reached the handler: the load took.
+    assert_eq!(r.step(8, t0 + every * 2), Step::Done);
+}
+
+#[test]
+fn a_mapped_load_gives_up_after_its_deadline() {
+    use scheme::{Retry, Step};
+    use std::time::{Duration, Instant};
+    // The deadline is the count of tries times the pace; a test makes it short.
+    let t0 = Instant::now();
+    let every = Duration::from_millis(1);
+    let mut r = Retry::new(every, 3, 0, t0);
+    let mut tried = 0;
+    let mut now = t0;
+    let mut done = false;
+    for _ in 0..20 {
+        match r.step(0, now) {
+            Step::Try => tried += 1,
+            Step::Done => {
+                done = true;
+                break;
+            }
+            Step::Wait => {}
+        }
+        now += every;
+    }
+    assert!(done, "the retry must end");
+    assert_eq!(tried, 3, "it tries exactly max_tries times");
+    assert_eq!(r.step(0, now + every * 100), Step::Done, "and stays over");
+}
