@@ -140,9 +140,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-027", "controller", 1),
     ("RR-027", "core", 10),
     ("RR-027", "realtime", 1),
-    // +4 (INT-2, 0.13 integration): kit/mod.rs: the budgeted launch reads HOME and
-    //   WOL_SNAPSHOT_DELAY_MS; monitor/mod.rs: WOL_MONITOR_DEMO, the golden demo switch.
-    ("RR-027", "shell", 59),
+    // +5 (INT-2, 0.13 integration): kit/mod.rs: the budgeted launch reads HOME and
+    //   WOL_SNAPSHOT_DELAY_MS; monitor/mod.rs: WOL_MONITOR_DEMO, the golden demo switch;
+    //   kit/picture.rs: WOL_FAKE_NOW, the golden render decodes a picture on the spot (FIX-A9-SHELL).
+    ("RR-027", "shell", 60),
     ("RR-027", "wol-abi", 5),
     ("RR-027", "wol-lua", 1),
     // +9 (INT-2, 0.13 integration): io.rs is the one file of the crate that reads HOME and XDG_*
@@ -223,9 +224,10 @@ const BASELINE: &[(&str, &str, usize)] = &[
     ("RR-048", "proxy", 1),
     ("RR-048", "realtime", 3),
     ("RR-048", "shared", 6),
-    // +3 (INT-2, 0.13 integration): kit_calendar, kit_choice and kit_groups are one-line tests whose
-    //   assertions live in tests/support/kit_case.rs `run` (ds-spec-a2).
-    ("RR-048", "shell", 8),
+    // +4 (INT-2, 0.13 integration): kit_calendar, kit_choice and kit_groups are one-line tests whose
+    //   assertions live in tests/support/kit_case.rs `run` (ds-spec-a2); one_helper's
+    //   toolbar_sheets_have_one_closer asserts in scan::ratchet like its three siblings (FIX-A9-SHELL).
+    ("RR-048", "shell", 9),
     ("RR-048", "wol-abi", 10),
     ("RR-049", "api", 7),
     // +2 (INT-2, 0.13 integration): atlas-fed/tests/serve.rs waits out the helper's idle exit
