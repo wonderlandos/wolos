@@ -321,21 +321,24 @@ fn kernel_change_resets_tries() {
     let d = esp("tries");
     let o = esp_sync(&d, true);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert_eq!(entries(&d), ["wolos-a+3.conf"]);
-    // Two boots used two tries.
+    assert_eq!(entries(&d), ["wolos-a+3.conf", "wolos-a-fallback+3.conf"]);
+    // Two boots used two tries (systemd-boot counts the entry it started, not its fallback).
     fs::rename(
         d.join("esp/loader/entries/wolos-a+3.conf"),
         d.join("esp/loader/entries/wolos-a+1-2.conf"),
     )
     .unwrap();
-    // Nothing changed: the entry keeps its count.
+    // Nothing changed: the entry keeps its count, and its fallback entry gets the same one.
     assert!(esp_sync(&d, false).status.success());
-    assert_eq!(entries(&d), ["wolos-a+1-2.conf"]);
+    assert_eq!(
+        entries(&d),
+        ["wolos-a+1-2.conf", "wolos-a-fallback+1-2.conf"]
+    );
     // A new kernel: three tries again, the old entry gone, the generation kept.
     fs::write(d.join("root/boot/vmlinuz-linux-wolos"), "kernel 2").unwrap();
     let o = esp_sync(&d, false);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert_eq!(entries(&d), ["wolos-a+3.conf"]);
+    assert_eq!(entries(&d), ["wolos-a+3.conf", "wolos-a-fallback+3.conf"]);
     let e = fs::read_to_string(d.join("esp/loader/entries/wolos-a+3.conf")).unwrap();
     assert!(e.contains("version 1-"), "{e}");
     // A blessed entry gets counted again after a new initramfs.
@@ -346,7 +349,76 @@ fn kernel_change_resets_tries() {
     .unwrap();
     fs::write(d.join("root/boot/initramfs-linux-wolos.img"), "initrd 2").unwrap();
     assert!(esp_sync(&d, false).status.success());
-    assert_eq!(entries(&d), ["wolos-a+3.conf"]);
+    assert_eq!(entries(&d), ["wolos-a+3.conf", "wolos-a-fallback+3.conf"]);
+}
+
+/// QA-BOOT-13 (journey qa100-boot2-no-entry): next to the slot's entry esp-sync writes its
+/// fallback entry: the same signed image and version, sorted after every slot entry
+/// (`sort-key wolos.fallback`), the same try counter. The slot's entry is on the disk (the ESP
+/// flushed) before the fallback is written, so a cut damages at most one of them. A slot whose
+/// entry is lost keeps its generation (read from the fallback) instead of jumping above the
+/// other slot; a blessed entry has a blessed fallback.
+#[test]
+fn esp_sync_writes_the_fallback_entry() {
+    let d = esp("twin");
+    let o = esp_sync(&d, true);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let read = |n: &str| fs::read_to_string(d.join("esp/loader/entries").join(n)).unwrap();
+    let main = read("wolos-a+3.conf");
+    let fb = read("wolos-a-fallback+3.conf");
+    assert!(main.contains("sort-key wolos\n"), "{main}");
+    assert!(fb.contains("sort-key wolos.fallback\n"), "{fb}");
+    assert!(fb.contains("(fallback entry)\n"), "{fb}");
+    for l in main
+        .lines()
+        .filter(|l| l.starts_with("version ") || l.starts_with("uki "))
+    {
+        assert!(fb.lines().any(|f| f == l), "{l} in {fb}");
+    }
+    let l = log(&d);
+    let esp = d.join("esp").display().to_string();
+    let ent = l
+        .find(&format!("sync {esp}/loader/entries/wolos-a+3.conf.new"))
+        .expect(&l);
+    let twin = l
+        .find(&format!(
+            "sync {esp}/loader/entries/wolos-a-fallback+3.conf.new"
+        ))
+        .expect(&l);
+    assert!(
+        ent < twin && l[ent..twin].contains(&format!("sync -f {esp}/")),
+        "the slot entry and the ESP on the disk before the fallback is written: {l}"
+    );
+    assert!(
+        !d.join("esp/loader/entries/wolos-a-fallback+3.conf.new")
+            .exists()
+    );
+    // Blessed: a blessed fallback; the counted one goes.
+    fs::rename(
+        d.join("esp/loader/entries/wolos-a+3.conf"),
+        d.join("esp/loader/entries/wolos-a.conf"),
+    )
+    .unwrap();
+    assert!(esp_sync(&d, false).status.success());
+    assert_eq!(entries(&d), ["wolos-a-fallback.conf", "wolos-a.conf"]);
+    // The slot's entry lost (generation 1, another slot's entry at 4): written again at its
+    // generation, read from the fallback, not one above the other slot.
+    fs::remove_file(d.join("esp/loader/entries/wolos-a.conf")).unwrap();
+    fs::write(
+        d.join("esp/loader/entries/wolos-b.conf"),
+        "title WolOS\nsort-key wolos\nversion 4-x\nuki /EFI/wolos/wolos-b.efi\n",
+    )
+    .unwrap();
+    assert!(esp_sync(&d, false).status.success());
+    assert_eq!(
+        entries(&d),
+        ["wolos-a+3.conf", "wolos-a-fallback+3.conf", "wolos-b.conf"]
+    );
+    assert!(
+        read("wolos-a+3.conf").contains("version 1-"),
+        "{}",
+        read("wolos-a+3.conf")
+    );
 }
 
 /// QA-F7 / BOOT2-7: every image and entry is synced before its name moves, the ESP at the end,
@@ -645,6 +717,43 @@ fn shutdown_rearms_the_try_counter() {
     let d = setup("rearm-counted", "wolos-a+1-2.conf", false, false, true);
     assert!(run(&d, "stop").status.success());
     assert_eq!(entries(&d), ["wolos-a+1-2.conf"]);
+    // QA-BOOT-13: the fallback entry is counted with the slot's entry, the same tries (whatever
+    // count it had: `wol boot bless` wrote it before systemd-bless-boot renamed the entry), so it
+    // never starts an image the counter gave up on; its new name on the disk before the old goes.
+    for (twin, rearm) in [
+        ("wolos-a-fallback.conf", "keep"),
+        ("wolos-a-fallback+2-1.conf", "mark"),
+    ] {
+        let d = setup(
+            &format!("rearm-twin-{rearm}"),
+            "wolos-a.conf",
+            true,
+            true,
+            rearm == "mark",
+        );
+        fs::write(
+            d.join("esp/loader/entries").join(twin),
+            "uki /EFI/wolos/wolos-a.efi\n",
+        )
+        .unwrap();
+        assert!(run(&d, "stop").status.success());
+        let tries = if rearm == "mark" { 3 } else { 1 };
+        assert_eq!(
+            entries(&d),
+            [
+                format!("wolos-a+{tries}.conf"),
+                format!("wolos-a-fallback+{tries}.conf")
+            ]
+        );
+        let l = log(&d);
+        let esp = d.join("esp").display().to_string();
+        let new = l
+            .find(&format!(
+                "sync {esp}/loader/entries/wolos-a-fallback+{tries}.conf.new"
+            ))
+            .expect(&l);
+        assert!(l[new..].contains(&format!("sync -f {esp}/")), "{l}");
+    }
 }
 
 /// D5: a good boot records the image it started, which boot-rearm compares against.

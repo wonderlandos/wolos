@@ -205,12 +205,22 @@ fn booted(cmdline: &str, floor: &str) -> FakeEnv {
                 "title WolOS 1.0 (previous version)\nsort-key wolos\nversion 6-2026.10.20\nuki /EFI/wolos/wolos-b.efi\n"
                     .into(),
             ),
+            // QA-BOOT-13: each slot's fallback entry, in step with its own entry.
+            (
+                PathBuf::from("/efi/loader/entries/wolos-a-fallback.conf"),
+                "title WolOS 1.1 (fallback entry)\nsort-key wolos.fallback\nversion 7-2026.11.02\nuki /EFI/wolos/wolos-a.efi\n".into(),
+            ),
+            (
+                PathBuf::from("/efi/loader/entries/wolos-b-fallback+3.conf"),
+                "title WolOS 1.0 (previous version) (fallback entry)\nsort-key wolos.fallback\nversion 6-2026.10.20\nuki /EFI/wolos/wolos-b.efi\n"
+                    .into(),
+            ),
             (PathBuf::from("/efi/EFI/wolos/wolos-a.efi"), "MZ".into()),
             (PathBuf::from("/efi/EFI/wolos/wolos-b.efi"), "MZ".into()),
         ],
         captures: vec![(
             "ls -1 /efi/loader/entries".into(),
-            "wolos-a.conf\nwolos-b+3.conf\nwolos-a-linux-zen.conf\n".into(),
+            "wolos-a.conf\nwolos-a-fallback.conf\nwolos-b+3.conf\nwolos-b-fallback+3.conf\nwolos-a-linux-zen.conf\n".into(),
         )],
         ..Default::default()
     }
@@ -381,7 +391,7 @@ fn probe_failed_slot_gets_its_tries_back() {
             "title WolOS 1.2\nsort-key wolos\nversion 8-2026.12.01\nuki /EFI/wolos/wolos-b.efi\n"
                 .into(),
         ));
-        e.captures[0].1 = format!("wolos-a.conf\n{entry}\n");
+        e.captures[0].1 = format!("wolos-a.conf\nwolos-a-fallback.conf\n{entry}\n");
         e.files.push((
             PathBuf::from("/efi/wolos-b/image.sha256"),
             format!("{}\n", sum('a')),
@@ -405,7 +415,13 @@ fn probe_failed_slot_gets_its_tries_back() {
         [PathBuf::from("/efi/loader/entries/wolos-b+0-1.conf")]
     );
     let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
-    assert_eq!(ran, ["sync -f /efi"], "{}", e.err);
+    // The new name, then its fallback entry (QA-BOOT-13) with the same three tries.
+    assert_eq!(ran, ["sync -f /efi", "sync -f /efi"], "{}", e.err);
+    assert!(
+        wrote(&e, "wolos-b-fallback+3.conf").is_some(),
+        "{:?}",
+        e.written
+    );
     assert!(e.err.contains("three tries"), "{}", e.err);
     // Damaged: pinned behind (QA-LIVE4-4), never re-armed.
     let mut e = with("wolos-b+0-1.conf", 'f');
@@ -416,7 +432,14 @@ fn probe_failed_slot_gets_its_tries_back() {
     let mut e = with("wolos-b+0-3.conf", 'a');
     assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
     assert!(!e.written.iter().any(|(p, _)| p.ends_with("wolos-b+3.conf")));
-    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    // Its fallback entry is out of tries with it (QA-BOOT-13), nothing else runs.
+    assert!(
+        wrote(&e, "wolos-b-fallback+0-3.conf").is_some(),
+        "{:?}",
+        e.written
+    );
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["sync -f /efi"], "{}", e.err);
 }
 
 /// QA-LIVE3-16 on the boot check's pass path: the notice goes once no slot is marked and the
@@ -547,4 +570,134 @@ fn the_seal_trusts_the_signed_command_line_over_the_esp() {
         1,
         "the ESP copy agrees, the signed word does not"
     );
+}
+
+/// The file `wol boot bless` wrote last under `loader/entries/<name>`.
+fn wrote(e: &FakeEnv, name: &str) -> Option<String> {
+    let p = PathBuf::from(format!("/efi/loader/entries/{name}"));
+    e.written
+        .iter()
+        .rev()
+        .find(|(w, _)| *w == p)
+        .map(|(_, t)| t.clone())
+}
+
+/// QA-BOOT-13: a system installed before the fallback entry existed gets one per slot at its
+/// next good start: the same image, sorted after every slot entry, the slot's own counter (the
+/// other slot's three tries stay three, never a blessed copy of an untested slot), each on the
+/// disk before the next; the other slot's title is the one this bless just gave it.
+#[test]
+fn bless_writes_each_slots_fallback_entry() {
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    e.files
+        .retain(|(p, _)| !p.to_string_lossy().contains("-fallback"));
+    e.captures[0].1 = "wolos-a.conf\nwolos-b+3.conf\nwolos-a-linux-zen.conf\n".into();
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    let a = wrote(&e, "wolos-a-fallback.conf").unwrap_or_else(|| panic!("{:?}", e.written));
+    assert_eq!(
+        a,
+        "title WolOS 1.1 (fallback entry)\nsort-key wolos.fallback\nversion 7-2026.11.02\nuki /EFI/wolos/wolos-a.efi\n"
+    );
+    let b = wrote(&e, "wolos-b-fallback+3.conf").unwrap_or_else(|| panic!("{:?}", e.written));
+    assert!(
+        b.starts_with("title WolOS 1.0 (previous version) (fallback entry)\n"),
+        "{b}"
+    );
+    assert!(
+        wrote(&e, "wolos-b-fallback.conf").is_none(),
+        "{:?}",
+        e.written
+    );
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["sync -f /efi", "sync -f /efi"], "{}", e.err);
+    // In step already: nothing written, nothing run.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+    assert!(
+        !e.written
+            .iter()
+            .any(|(p, _)| p.to_string_lossy().contains("/loader/entries/")),
+        "{:?}",
+        e.written
+    );
+}
+
+/// QA-BOOT-13: the other slot ran out of tries (systemd-boot counted its own entry only): its
+/// fallback entry is out of tries too, so it never starts a slot already marked bad; the new
+/// name is on the disk before the old one goes.
+#[test]
+fn a_slot_out_of_tries_has_a_fallback_out_of_tries() {
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    let b = "title WolOS 1.0 (previous version)\nsort-key wolos\nversion 6-2026.10.20\nuki /EFI/wolos/wolos-b.efi\n";
+    e.files.retain(|(p, _)| !p.ends_with("wolos-b+3.conf"));
+    e.files.push((
+        PathBuf::from("/efi/loader/entries/wolos-b+0-3.conf"),
+        b.into(),
+    ));
+    e.captures[0].1 =
+        "wolos-a.conf\nwolos-a-fallback.conf\nwolos-b+0-3.conf\nwolos-b-fallback+3.conf\n".into();
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    assert!(
+        wrote(&e, "wolos-b-fallback+0-3.conf").is_some(),
+        "{:?}",
+        e.written
+    );
+    assert_eq!(
+        e.removed,
+        [PathBuf::from("/efi/loader/entries/wolos-b-fallback+3.conf")]
+    );
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["sync -f /efi", "sync -f /efi"], "{}", e.err);
+}
+
+/// QA-BOOT-13 (journey qa100-boot2-no-entry): the slot's entry was garbled (or lost) and this
+/// boot came from its fallback entry. The good start writes the slot's entry again, blessed,
+/// from the fallback, and says so; the fallback entry that started is left for
+/// systemd-bless-boot, which renames it.
+#[test]
+fn a_start_from_the_fallback_writes_the_slot_entry_again() {
+    let fb = "title WolOS 1.1 (fallback entry)\nsort-key wolos.fallback\nversion 7-2026.11.02\nuki /EFI/wolos/wolos-a.efi\n";
+    for listing in [
+        "wolos-a.conf\nwolos-a-fallback+1-2.conf\nwolos-b+3.conf\nwolos-b-fallback+3.conf\n",
+        "wolos-a-fallback+1-2.conf\nwolos-b+3.conf\nwolos-b-fallback+3.conf\n",
+    ] {
+        let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+        // Garbled: not UTF-8, as the journey writes it (read as unreadable) - or gone.
+        e.files.retain(|(p, _)| !p.ends_with("wolos-a.conf"));
+        e.files.push((
+            PathBuf::from("/efi/loader/entries/wolos-a-fallback+1-2.conf"),
+            fb.into(),
+        ));
+        e.captures[0].1 = listing.into();
+        assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+        assert_eq!(
+            wrote(&e, "wolos-a.conf").as_deref(),
+            Some(
+                "title WolOS 1.1\nsort-key wolos\nversion 7-2026.11.02\nuki /EFI/wolos/wolos-a.efi\n"
+            ),
+            "{:?}",
+            e.written
+        );
+        assert!(
+            !e.removed
+                .iter()
+                .any(|p| p.to_string_lossy().contains("wolos-a-fallback")),
+            "{:?}",
+            e.removed
+        );
+        assert!(
+            e.err.contains("written again from its fallback entry"),
+            "{}",
+            e.err
+        );
+        let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+        assert_eq!(ran, ["sync -f /efi"], "{}", e.err);
+    }
+    // The other slot's entry lost: nobody here knows that slot is good; nothing written for it.
+    let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+    e.captures[0].1 = "wolos-a.conf\nwolos-a-fallback.conf\nwolos-b-fallback+3.conf\n".into();
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    assert!(wrote(&e, "wolos-b.conf").is_none(), "{:?}", e.written);
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
 }

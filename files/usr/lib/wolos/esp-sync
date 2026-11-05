@@ -4,6 +4,8 @@
 # Pacman hook 95-wolos-esp after a kernel or initramfs change; the installer and updates with --new.
 #   linux-wolos  -> EFI/wolos/wolos-<slot>.efi, entry wolos-<slot>[+tries].conf: counted, sorted by
 #                   generation so the newest good slot boots and a bad one falls behind the other.
+#                   Its fallback entry wolos-<slot>-fallback[+tries].conf starts the same image with
+#                   the same counter, sorted last (QA-BOOT-13): a lost entry is not a dead end.
 #   other kernel -> EFI/wolos/wolos-<slot>-<pkgbase>.efi, entry wolos-<slot>-<pkgbase>.conf.
 # One image holds kernel, initramfs and command line, so one signature covers all three. Image names
 # never change: another boot manager (rEFInd, GRUB) points at them; the counter stays on the entry.
@@ -55,6 +57,12 @@ done
 gen=$((top + 1))
 if [ "$new" != --new ] && [ -n "$cur" ]; then
   g=$(sed -n 's/^version \([0-9]*\)-.*/\1/p' "$E/$cur"); [ -z "$g" ] || gen=$g
+elif [ "$new" != --new ]; then
+  # The slot's entry is lost: its fallback entry keeps the generation (QA-BOOT-13).
+  for f in "$E/$slot"-fallback.conf "$E/$slot"-fallback+*.conf; do
+    [ -f "$f" ] || continue
+    g=$(sed -n 's/^version \([0-9]*\)-.*/\1/p' "$f"); [ -z "$g" ] || { gen=$g; break; }
+  done
 fi
 
 words="$opts wolos.epoch=$gen"
@@ -120,6 +128,28 @@ for k in "$R"/boot/vmlinuz-*; do
     rm -f "$E/$drop"
   fi
   drop=
+  if [ "$kb" = linux-wolos ]; then
+    # The fallback entry (QA-BOOT-13, ADR 0025): the same image and the same try counter, sorted
+    # after every slot entry, so a lost or garbled entry still leaves something to start, and a
+    # slot the counter gave up on is given up on in its fallback too. Written once the slot's
+    # entry is on the disk: a cut damages at most one of the two.
+    sync -f "$ESP/"
+    c=${name#"$slot"}; c=${c%.conf}
+    fb=$slot-fallback$c.conf
+    {
+      echo "title $title (fallback entry)"
+      echo "sort-key wolos.fallback"
+      echo "version $gen-$rel"
+      echo "uki /EFI/wolos/$img.efi"
+    } > "$E/$fb.new"
+    sync "$E/$fb.new"
+    mv -f "$E/$fb.new" "$E/$fb"
+    for f in "$E/$slot"-fallback.conf "$E/$slot"-fallback+*.conf; do
+      [ -f "$f" ] && [ "${f##*/}" != "$fb" ] || continue
+      sync -f "$ESP/"
+      rm -f "$f"
+    done
+  fi
 done
 # The images replace the loose kernels of older systems.
 rm -f "$old"/vmlinuz-* "$old"/initramfs-*
