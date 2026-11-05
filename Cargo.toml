@@ -17,6 +17,9 @@ members = [
     "crates/xguard-clam",
     "crates/aurlaws",
     "crates/webengine",
+    "crates/federate",
+    "crates/wolcrypt",
+    "crates/atlas-fed",
 ]
 # The engine library's source (ADR 0042): built in the engine's own workspace by webengine-wolos.
 exclude = ["crates/webengine/engine"]
@@ -35,6 +38,19 @@ serde_json = { version = "1", features = ["float_roundtrip"] }
 # .wol signatures and hashes (ADR 0011).
 ed25519-dalek = { version = "2.2", default-features = false, features = ["std"] }
 sha2 = "0.10"
+# Author certificates (ADR 0046): hybrid Ed25519 + ML-DSA-65 below the roots, Ed25519 + SLH-DSA-SHA2-128s for the roots.
+# Pinned exactly (TRUST audit 1 M8 / audit 2 M7): a new release of either is reviewed and re-run against
+# the vectors and tests/crosscheck.rs before it is taken; Cargo.lock holds each one's checksum.
+fips204 = { version = "=0.5.0", default-features = false, features = ["ml-dsa-65"] }
+fips205 = { version = "=0.5.0", default-features = false, features = ["slh-dsa-sha2-128s"] }
+# Sealed messages (ADR 0046 "Encryption"): hybrid KEM X25519 + ML-KEM-768. X25519 is curve25519-dalek's
+# Montgomery ladder (already in the tree under ed25519-dalek); ML-KEM-768 is fips203, of the same family as
+# fips204/fips205. ChaCha20-Poly1305 and PBKDF2-HMAC-SHA512 are RustCrypto's (chacha20poly1305, pbkdf2), in
+# crates/wolcrypt only (lead decision 2026-11-04 "WOLCRYPT": no ring).
+fips203 = { version = "=0.5.0", default-features = false, features = ["ml-kem-768"] }
+curve25519-dalek = { version = "4.1", default-features = false }
+zeroize = { version = "1.8", default-features = false }
+wolcrypt = { path = "crates/wolcrypt" }
 shared = { path = "crates/shared" }
 wol_core = { path = "crates/core", package = "core" }
 

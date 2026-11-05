@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* The only exports of libwolwebengine.so.1 (ABI 1). Append-only within a major: a new version node
- * per addition, so a host built for 1.0 still loads (WWE_1.1 is the host channel, ADR 0048). */
+ * per addition, so a host built for 1.0 still loads (WWE_1.1 is the host channel, ADR 0048; WWE_1.2 the
+ * host's fed: scheme, ADR 0052). */
 WOLWEBENGINE_1 {
   global:
     wwe_abi_version;
@@ -28,3 +29,8 @@ WWE_1.1 {
     wwe_engine_set_host_channel;
     wwe_view_post_message;
 } WOLWEBENGINE_1;
+
+WWE_1.2 {
+  global:
+    wwe_engine_set_scheme;
+} WWE_1.1;

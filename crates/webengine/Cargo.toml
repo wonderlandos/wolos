@@ -17,6 +17,8 @@ name = "webengine"
 shared.workspace = true
 wol_core.workspace = true
 wolkit = { path = "../wolkit" }
+# Federate Network addresses, verified (ADR 0052).
+federate = { path = "../federate" }
 # Loads libwolwebengine.so.1 at run time (already in the lock through ash).
 libloading = "0.8.9"
 serde.workspace = true

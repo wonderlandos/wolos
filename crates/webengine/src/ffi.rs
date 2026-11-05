@@ -66,6 +66,34 @@ pub type SetChannelFn = unsafe extern "C" fn(
 // SAFETY: WWE_1.1 `wwe_view_post_message`: a live view and `len` readable bytes.
 pub type PostMessageFn = unsafe extern "C" fn(*mut ViewH, *const u8, usize) -> i32;
 
+// SAFETY: WWE_1.2 (ADR 0052) `wwe_body_fn`: the library's body sink, valid during a load call.
+pub type BodyFn = unsafe extern "C" fn(*mut c_void, *const u8, usize);
+// SAFETY: WWE_1.2 `wwe_scheme_load_fn`: the host's answer for one URL of its scheme (any thread).
+pub type SchemeLoadFn = unsafe extern "C" fn(
+    *mut c_void,
+    *const u8,
+    usize,
+    u32,
+    *mut c_char,
+    usize,
+    BodyFn,
+    *mut c_void,
+) -> u32;
+// SAFETY: WWE_1.2 `wwe_scheme_map_fn`: the host's `fed://` spelling of an http(s) URL.
+pub type SchemeMapFn =
+    unsafe extern "C" fn(*mut c_void, *const u8, usize, *mut c_char, usize) -> isize;
+// SAFETY: WWE_1.2 `wwe_engine_set_scheme`: a live engine, a valid scheme name, callbacks and a
+// context that live until the engine is freed, an error buffer.
+pub type SetSchemeFn = unsafe extern "C" fn(
+    *mut EngineH,
+    *const c_char,
+    Option<SchemeLoadFn>,
+    Option<SchemeMapFn>,
+    *mut c_void,
+    *mut c_char,
+    usize,
+) -> i32;
+
 #[repr(C)]
 pub struct Config {
     pub abi: u32,
@@ -160,6 +188,8 @@ pub struct Lib {
     /// them an app runs in development mode (the page has no `window.__wolosHost`).
     pub set_host_channel: Option<SetChannelFn>,
     pub post_message: Option<PostMessageFn>,
+    /// WWE_1.2 (ADR 0052), absent in a library of an earlier build: the host's `fed:` scheme.
+    pub set_scheme: Option<SetSchemeFn>,
     /// The loaded library: the function pointers above live as long as it.
     _handle: libloading::Library,
 }
@@ -195,7 +225,7 @@ fn open(path: &str) -> Result<Lib, String> {
             *sym
         }};
     }
-    // The 1.1 additions may be missing: that is a library of the earlier build, not an error.
+    // The 1.1 and 1.2 additions may be missing: that is a library of the earlier build, not an error.
     macro_rules! opt {
         ($name:literal) => {
             // SAFETY: the symbol, when present, has the type the header (ABI 1, WWE_1.1) declares.
@@ -221,6 +251,7 @@ fn open(path: &str) -> Result<Lib, String> {
         run_content_process: f!(b"wwe_run_content_process"),
         set_host_channel: opt!(b"wwe_engine_set_host_channel"),
         post_message: opt!(b"wwe_view_post_message"),
+        set_scheme: opt!(b"wwe_engine_set_scheme"),
         _handle: handle,
     };
     // SAFETY: resolved above with its declared type.

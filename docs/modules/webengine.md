@@ -26,13 +26,13 @@ A host process starts as `<host> --content-process TOKEN` when the engine wants 
 
 | Part | Means |
 |---|---|
-| Exports | the 16 `wwe_*` functions of `crates/webengine/engine/wolwebengine.map` at version `WOLWEBENGINE_1`, and from WWE_1.1 `wwe_engine_set_host_channel` and `wwe_view_post_message` at version `WWE_1.1` (the host channel of system web apps, ADR 0048); append-only within the major |
+| Exports | the 16 `wwe_*` functions of `crates/webengine/engine/wolwebengine.map` at version `WOLWEBENGINE_1`, and from WWE_1.1 `wwe_engine_set_host_channel` and `wwe_view_post_message` at version `WWE_1.1` (the host channel of system web apps, ADR 0048), and from WWE_1.2 `wwe_engine_set_scheme` (the host's `fed:` scheme, ADR 0052); append-only within the major |
 | Source | `crates/webengine/src/engine/lib.rs` (not a module of `webengine`; counted by its unsafe ratchet row), manifest `crates/webengine/engine/Cargo.toml` (excluded from the workspace) |
 | Build | `webengine-wolos` copies `crates/webengine` into the engine's workspace as `ports/wolwebengine`, builds `-p wolwebengine` under the engine's `Cargo.lock` (prepare() refuses any other change to the lock), links with `crates/webengine/engine/link.sh` |
 | Threads | every call on the thread that made the engine; `wake` may be called from any thread |
 | One per process | a second `wwe_engine_new` is refused ("one engine per process") |
 | Errors | NULL or -1 and one sentence in the caller's `err` buffer |
-| Callbacks | `allow` (required, every navigation and resource load), `wake`, `clip_get`, `clip_set`, all with the host's `ctx` |
+| Callbacks | `allow` (required, every navigation and resource load), `wake`, `clip_get`, `clip_set`, all with the host's `ctx`; WWE_1.2 `load` (one `fed:` load with its kind, on the library's scheme workers, may block) and `map` (an http(s) page URL spelled as `fed://`, engine thread, never blocks) |
 
 ## The host process of a system web app (`wol-webhost`, ADR 0048)
 
@@ -57,9 +57,14 @@ Tests without the engine: `tests/engine_channel.rs` (the injected script in a Ja
 | `about:blank`, `about:srcdoc` | always |
 | `data:` | as a resource, never as a navigation |
 | `blob:<origin>/...` | when its origin is allowed |
+| `fed://label.tld/...` | the policy names `fed://label.tld` (ADR 0052) |
 | anything else | never |
 
 A host or path prefix in `telemetry_off` (`hosts`, `beacon_paths`; a path covers itself and what is below it) is refused even inside an allowed origin. A refused navigation of the page ends with the page as it was (the shim answers `204 No Content`) and is kept for the host (`WebView::take_refused`); a refused frame gets an empty `403`; a refused resource is a network error. Refused loads are counted (`WebView::refused_loads`).
+
+## Federate Network addresses (`src/fed.rs`, ADR 0052)
+
+Every view serves `fed://label.tld/path` natively: no setting, no extension. The library registers the `fed` scheme with the engine when the engine is made (`src/engine/scheme.rs`, std only); `WebView::new` hands it `fed::load_cb` and `fed::map_cb` whenever the library has WWE_1.2. Each load runs the `federate` crate on its own thread: the signed root zone (pinned root key), the TLD record, the domain record, the owner-signed manifest and the content block, every signature and BLAKE3 address checked before a byte is served; a failed check is a page naming the layer and the reason (502), never the content. A page load of `http://home.fed` (the network's compatibility spelling, a TLD of the verified zone) ends with `204` and loads `fed://home.fed`. Which names an app may open is still its policy's (`fed://label.tld` origins in the gate). Tests without the engine: `tests/engine_scheme.rs` (the library's half) and `tests/shim_loader_12.rs` (the loader, the view and the host's handler against the C stand-in, on the network's captured data); the chain itself is `cargo test -p federate`.
 
 ## Process model and sandbox
 
@@ -93,6 +98,8 @@ A host or path prefix in `telemetry_off` (`hosts`, `beacon_paths`; a path covers
 | On-screen presentation through the surface (`Target::surface`) | not run yet: needs a compositor on the test machine (CR-8) |
 | Pathname unix sockets of the user below Landlock ABI 9 | the kernel (`RESOLVE_UNIX`); `confine::REQUIRE_UNIX_RESOLVE` |
 | Media (`<video>`, audio) | the shim is built without the engine's media feature; WA-6's probes |
+| `fed:` through the real engine (the shim's `HostScheme` and the http(s) mapping) | not built yet: needs a webengine-wolos build at the pin (forge) |
+| Federate's native transport (TCP 4077), delegated TLD registries, a disk cache of verified data | ADR 0052 follow-ups; today the HTTPS door and root-managed TLDs |
 
 ## Verify
 

@@ -144,6 +144,27 @@ int wwe_engine_set_host_channel(wwe_engine *engine, const char *origin, const ch
 /* Calls window.__wolosHost.onmessage(text) in the view's top-level document if it has the channel;
  * 0 handed to the document, -1 not (no channel, the document is elsewhere, or a bad text). */
 int wwe_view_post_message(wwe_view *view, const uint8_t *text, size_t len);
+/* WWE_1.2 (ADR 0052): a URL scheme the host serves itself; this build knows "fed" (Federate Network
+ * addresses, fed://label.tld/path) and registers it with the engine when the engine is made. */
+typedef void (*wwe_body_fn)(void *sink, const uint8_t *bytes, size_t len);
+/* Answers one load of url (kind: WWE_LOAD_NAVIGATION for a document, WWE_LOAD_RESOURCE for what it
+ * loads): writes its content type (NUL-terminated, truncated to mimecap) into mime,
+ * hands the body to body(sink, ...) (any number of calls, during this call only) and returns the HTTP
+ * status (100-599; anything else is a 502). Called on the library's worker threads, at most 8
+ * loads at once per engine, the rest queued in order (at most 256; beyond that a load is a 503 without
+ * a call); may block. */
+typedef uint32_t (*wwe_scheme_load_fn)(void *ctx, const uint8_t *url, size_t len, uint32_t kind,
+                                       char *mime, size_t mimecap, wwe_body_fn body, void *sink);
+/* The scheme's address for an http(s) url the host also answers (http://home.fed is fed://home.fed):
+ * writes it NUL-terminated into out and returns its length, or -1 when the url stays on the web.
+ * Called on the engine thread before each top-level load of an http(s) URL; must not block. */
+typedef intptr_t (*wwe_scheme_map_fn)(void *ctx, const uint8_t *url, size_t len, char *out, size_t cap);
+/* Until this is called a load of the scheme is a 503 page. A mapped page load ends (204) and the
+ * view loads the scheme's address, which passes allow() like any navigation. map may be NULL.
+ * load, map and ctx stay valid until wwe_engine_free returns, which waits for a load in progress.
+ * 0 ok, -1 error (another scheme, no load). */
+int wwe_engine_set_scheme(wwe_engine *engine, const char *scheme, wwe_scheme_load_fn load,
+                          wwe_scheme_map_fn map, void *ctx, char *err, size_t errlen);
 /* In a content process (argv: --content-process TOKEN): confines the process (it must still have a
  * single thread: call this first in main), then runs the content until the engine ends it; the host
  * then exits. A process that cannot be confined prints why on stderr and returns without running the content. */
