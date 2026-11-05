@@ -258,15 +258,24 @@ pub fn bless(env: &mut dyn Env) -> i32 {
     let dir = format!("{}/loader/entries", update::ESP);
     let names = env.capture(&["ls", "-1", &dir]).unwrap_or_default();
     let mut generations = Vec::new();
+    // Every slot entry and fallback entry as it is after this loop (QA-BOOT-13: `keep_twins`).
+    let mut entries: Vec<(String, String)> = Vec::new();
     for name in names.lines() {
+        let twin = update::SLOTS
+            .into_iter()
+            .any(|s| seal::twin::counter(s, seal::twin::TAG, name).is_some());
         let Some(slot) = update::SLOTS.into_iter().find(|s| {
             name.strip_prefix(s)
                 .is_some_and(|r| r == ".conf" || r.starts_with('+'))
         }) else {
+            if twin && let Some(text) = env.read_file(&PathBuf::from(format!("{dir}/{name}"))) {
+                entries.push((name.to_owned(), text));
+            }
             continue;
         };
         let path = PathBuf::from(format!("{dir}/{name}"));
         let Some(text) = env.read_file(&path) else {
+            entries.push((name.to_owned(), String::new()));
             continue;
         };
         generations.extend(boot::entry_generation(&text));
@@ -284,6 +293,7 @@ pub fn bless(env: &mut dyn Env) -> i32 {
         if new != text {
             let _ = env.write_file(&path, &new);
         }
+        entries.push((name.to_owned(), new));
     }
     let floor = boot::next_floor(number(env.read_file(&state("floor"))), &generations);
     if env
@@ -328,15 +338,63 @@ pub fn bless(env: &mut dyn Env) -> i32 {
     if let Some(other) = update::other_slot(running)
         && names.lines().any(|n| n == format!("{other}+0-1.conf"))
         && !crate::seal::image_damaged(env, other)
-        && let Err(msg) = rearm_probe(env, &dir, other)
     {
-        return fail(env, ErrorCode::Failed, &msg);
+        if let Err(msg) = rearm_probe(env, &dir, other) {
+            return fail(env, ErrorCode::Failed, &msg);
+        }
+        let from = format!("{other}+0-1.conf");
+        for e in entries.iter_mut().filter(|e| e.0 == from) {
+            e.0 = format!("{other}+3.conf");
+        }
     }
+    keep_twins(env, &dir, running, &entries);
     // The line the service log shows: which slot was marked good and where the floor stands.
     env.out(&format!(
         "{running} is marked as a good start; the rollback floor is {floor}.\n"
     ));
     0
+}
+
+/// QA-BOOT-13 (ADR 0025, fallback entry): each slot's fallback entry follows its own entry (the
+/// same counter, the same image; written for a system installed before it had one), and a slot
+/// whose own entry is lost or garbled while it started from its fallback gets the entry back.
+/// Each change is on the disk (the ESP flushed) before the next, so a cut leaves at most one of
+/// the two files damaged. A failure is said and changes nothing else: the bless stands.
+fn keep_twins(env: &mut dyn Env, dir: &str, running: &str, entries: &[(String, String)]) {
+    let pairs: Vec<(&str, &str)> = entries
+        .iter()
+        .map(|(n, t)| (n.as_str(), t.as_str()))
+        .collect();
+    for slot in update::SLOTS {
+        for step in seal::twin::steps(slot, slot == running, &pairs) {
+            let done = match &step {
+                seal::twin::Step::Write { name, text } => {
+                    if name.starts_with(&format!("{slot}.")) {
+                        env.err(&format!(
+                            "The menu entry of {slot} was missing or damaged; it is written again \
+                             from its fallback entry.\n"
+                        ));
+                    }
+                    env.write_file(&PathBuf::from(format!("{dir}/{name}")), text)
+                }
+                seal::twin::Step::Remove { name } => {
+                    env.remove_file(&PathBuf::from(format!("{dir}/{name}")))
+                }
+            };
+            let flushed = done.is_ok()
+                && env
+                    .exec(&["sync".to_owned(), "-f".to_owned(), update::ESP.to_owned()])
+                    .unwrap_or(1)
+                    == 0;
+            if !flushed {
+                env.err(&format!(
+                    "Could not keep the fallback menu entry of {slot} in step ({step:?}); the next \
+                     good start tries again.\n"
+                ));
+                break;
+            }
+        }
+    }
 }
 
 /// `other+0-1.conf` -> `other+3.conf` in the entries folder `dir`: the new name on the disk

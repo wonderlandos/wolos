@@ -74,3 +74,46 @@ Box builds (AWS) then build with `WOLOS_SB_LAYOUT=1 wolos-iso/build.sh`; the tag
 image, boots it with Secure Boot on, and uploads the signed image with its new hash.
 
 Amended 2026-11-04 (QA-ADR-36, lead decision 352): Secure Boot is the person's choice in the installer, off unless they ask. `Flow::secure` starts false, the installer shows the Secure Boot step only to those who opt in (`ui::installer::Step::SecureBoot`), and the plan carries `secure_boot: Option<bool>` (`None`: not asked, `Some(false)`: asked and declined). The `off` tier above is also the state a person chose. The first-start key screen (0013) appears only while an enrolment is pending.
+
+## Fallback entry (amended 2026-11-05, QA-BOOT-13)
+
+Problem: the images live in `EFI/wolos/`, which systemd-boot does not search by itself (type #2 auto-discovery reads
+`EFI/Linux/` only). So the slot's menu entry `loader/entries/wolos-<slot>[+N[-M]].conf` was the only way to the image.
+When that file was lost or garbled (a power cut while FAT renamed it: `mv -f .new` is not atomic there, a bad write),
+the menu held only "Reboot Into Firmware Interface" and the firmware's device list followed, with an intact signed
+image on the disk (journey `qa100-boot2-no-entry`).
+
+Decision (option (a) of FIX-DRYRUN-2, #plan 10610): each slot's entry has a twin, the **fallback entry**
+`wolos-<slot>-fallback[+N[-M]].conf` (`wol_core::seal::twin`):
+
+- **Same image.** `uki /EFI/wolos/wolos-<slot>.efi`, the same `version` (generation-release), title + " (fallback entry)".
+  Nothing new is signed; the image's own signature, command line (`wolos.seal`, `wolos.epoch`) and checks are those of the slot.
+- **Sorted last.** `sort-key wolos.fallback` sorts after `wolos` and every `wolos-<kernel>` (`.` > `-`), so it is chosen only
+  when no slot entry with tries left is there.
+- **Same boot-count state.** It carries its slot entry's try counter as WolOS last wrote either: esp-sync writes it
+  with the counter it gives the slot entry, boot-rearm counts it with the slot entry at shutdown, `wol boot bless`
+  aligns it with its slot entry at every good start (including the other slot's tries given back, and a slot out of
+  tries: its fallback is out of tries too). systemd-boot counts only the entry it starts; an entry with no tries left
+  sorts last (after the fallbacks), so a fallback never outranks a good entry, and a slot already marked bad is not
+  started from its fallback while another slot can start. Where no slot has tries left, systemd-boot starts the first
+  of them, as it did before; the fallback's own counter still ends it, so there is no loop.
+- **Written FAT-safe, one at a time.** Each file is written to `.new`, synced and renamed; the slot entry is on the disk
+  (`sync -f` of the ESP) before its fallback is written, and the fallback's new name before an old one goes. A cut
+  damages at most one of the two.
+- **Repair.** A good start that came from the fallback (its slot has no entry that names an image) makes `wol boot bless`
+  write the slot's entry again, blessed, from the fallback, and say so in the service log. The fallback that started is
+  left for systemd-bless-boot to rename. The other slot's lost entry is not written again: nothing in this boot knows
+  that slot is good.
+- **Lifetime.** An update's swap removes `wolos-<slot>-*.conf` with the slot (no fallback names a slot that is gone). The
+  installer gets one through esp-sync. A system installed before 0.13 gets one per slot at its first good start on 0.13.
+- **Not a slot.** `wol restore`, Settings > Restore and the boot check never take it for a slot (`is_valid_be`,
+  `seal::entry_of` match `wolos-a`/`wolos-b` entries only).
+
+Deferred: option (b), the images under `EFI/Linux/` as type #2 entries (no entry file to lose; the counter moves into the
+image file name, `wolos-a+3.efi`). It changes the image names that rEFInd/GRUB entries and `blessed.sha256`/`image.sha256`
+point at, renames a signed image on every count, and moves the boot counter from entry files to image files in esp-sync,
+boot-rearm, `wol boot bless`, `wol boot check` and the update's swap. That is a layout migration of every installed ESP and
+needs its own release and VM round; the fallback entry closes the dead end without it.
+
+Limit: a person who picks the fallback by hand in the hidden menu while the slot entry is fine starts the same image; its
+counter is the one renamed. `bootctl list` shows the fallback with the id `wolos-<slot>-fallback.conf`.

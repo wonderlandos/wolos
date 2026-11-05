@@ -61,5 +61,25 @@ if [ -f "$E/$slot.conf" ]; then
   sync -f "$ESP/"
   rm -f "$E/$slot.conf"
 fi
+# The fallback entry (QA-BOOT-13) is counted with it, the same tries, the same way: it never
+# starts an image the counter gave up on. Whatever count it had (`wol boot bless` writes it
+# before systemd-bless-boot renames the entry that started).
+want="$slot-fallback+$tries.conf"
+if [ -f "$E/$slot+$tries.conf" ] && [ ! -f "$E/$want" ]; then
+  for f in "$E/$slot"-fallback.conf "$E/$slot"-fallback+*.conf; do
+    [ -f "$f" ] || continue
+    cp "$f" "$E/$want.new" || exit 1
+    sync "$E/$want.new"
+    mv -f "$E/$want.new" "$E/$want" || exit 1
+    break
+  done
+fi
+if [ -f "$E/$want" ]; then
+  for f in "$E/$slot"-fallback.conf "$E/$slot"-fallback+*.conf; do
+    [ -f "$f" ] && [ "${f##*/}" != "$want" ] || continue
+    sync -f "$ESP/"
+    rm -f "$f"
+  done
+fi
 sync -f "$ESP/"
 exit 0
