@@ -338,7 +338,7 @@ fn local_hour(t: u64) -> u8 {
 }
 
 /// Theme id the session shows now (Auto resolved by the time of day).
-fn effective_theme(env: &dyn Env, saved: Option<&str>) -> String {
+pub(crate) fn effective_theme(env: &dyn Env, saved: Option<&str>) -> String {
     let dark = accent::auto_is_dark(local_hour(env.now_secs()));
     let id = accent::effective(saved, dark);
     active::effective(id.as_deref(), dark)

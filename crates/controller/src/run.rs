@@ -743,12 +743,10 @@ fn theme(env: &mut dyn Env, inv: &Invocation, json: bool) -> i32 {
     let data = wol_core::theme::apps::data_home(|k| env.var(k));
     let catalog = ThemeCatalog::installed(&home, data.as_deref());
     let file = active::default_file(&home);
-    let dark = env
-        .read_file(Path::new(wol_core::settings::appearance::FILE))
-        .as_deref()
-        .map(|t| wol_core::settings::appearance::parse(Some(t)))
-        == Some(wol_core::settings::appearance::DARK);
-    let current = active::effective(active::get(&file).as_deref(), dark);
+    // The theme in force: a saved id as it is; Auto (no file, or `wol-auto-<accent>`) by the hour,
+    // the one rule the shell paints its windows by (QA-IMG13-2: this read the system-wide
+    // appearance file, so a fresh install at night got a light title strip under dark windows).
+    let current = crate::verbs::effective_theme(env, active::get(&file).as_deref());
     let set = |env: &mut dyn Env, id: &str| -> i32 {
         if let Err(e) = catalog.resolve(id) {
             return fail(env, ErrorCode::NotFound, &format!("theme '{id}': {e:?}"));
@@ -1918,6 +1916,8 @@ pub struct FakeEnv {
     pub captures: Vec<(String, String)>,
     /// Every argv run through `capture`, in order.
     pub captured_argvs: Vec<Vec<String>>,
+    /// The clock `now_secs` answers (1000 when None).
+    pub now: Option<u64>,
     /// Host behind `controls()` (Linux fake when None).
     pub host: Option<std::sync::Arc<wol_core::system::fake::FakeHost>>,
     /// wol-admind as seen by `controls()`: replies in order (none left = not running), requests sent.
@@ -2159,7 +2159,7 @@ impl Env for FakeEnv {
         (topic == "about").then(|| serde_json::json!({"os": "WolOS", "kernel": "15.1"}))
     }
     fn now_secs(&self) -> u64 {
-        1000
+        self.now.unwrap_or(1000)
     }
     fn config_home(&self) -> PathBuf {
         self.home.clone()
