@@ -229,6 +229,119 @@ impl Future for Pending {
     }
 }
 
+impl Pending {
+    /// `waker` is woken when the reply is in (at once when it already is). For the engine's spin,
+    /// which has no task to poll: it wakes the host, whose next spin takes the reply ([`Outbox`]).
+    pub fn watch(&self, waker: &Waker) {
+        let mut s = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if s.reply.is_some() {
+            waker.wake_by_ref();
+        } else {
+            s.waker = Some(waker.clone());
+        }
+    }
+
+    /// The reply if the load is over (the reply is taken once), else `None`. For a caller that
+    /// cannot await (the engine thread's spin: [`Outbox`]).
+    pub fn take(&self) -> Option<Reply> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .reply
+            .take()
+    }
+}
+
+/// Loads in progress that are answered from the engine's spin: each holds what must answer it
+/// (`T`, the intercepted web load) beside its [`Pending`]. A fed-TLD host's http(s) subresource or
+/// frame is held here, never sent to the network, until the `fed:` chain has answered; the engine
+/// thread does not wait on it (see `lib.rs`, `load_web_resource`).
+pub struct Outbox<T> {
+    held: Vec<(T, Pending)>,
+}
+
+impl<T> Default for Outbox<T> {
+    fn default() -> Outbox<T> {
+        Outbox { held: Vec::new() }
+    }
+}
+
+impl<T> Outbox<T> {
+    pub fn add(&mut self, what: T, pending: Pending) {
+        self.held.push((what, pending));
+    }
+
+    #[allow(dead_code)] // the library does not ask; the tests do
+    pub fn len(&self) -> usize {
+        self.held.len()
+    }
+
+    #[allow(dead_code)] // as `len`
+    pub fn is_empty(&self) -> bool {
+        self.held.is_empty()
+    }
+
+    /// The loads whose reply is in, with it; the others stay.
+    pub fn ready(&mut self) -> Vec<(T, Reply)> {
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < self.held.len() {
+            match self.held[i].1.take() {
+                Some(r) => out.push((self.held.swap_remove(i).0, r)),
+                None => i += 1,
+            }
+        }
+        out
+    }
+
+    /// Everything still held, without a reply: the engine is going away.
+    pub fn abandon(&mut self) -> Vec<T> {
+        self.held.drain(..).map(|(t, _)| t).collect()
+    }
+}
+
+/// The `kind` of a load by the engine's request destination (its `Debug` name: `Document`,
+/// `Frame`, `IFrame` are documents, anything else a subresource, which has the smaller cap).
+pub fn load_kind(destination: &str) -> u32 {
+    match destination {
+        "Document" | "Frame" | "IFrame" => LOAD_NAVIGATION,
+        _ => LOAD_RESOURCE,
+    }
+}
+
+/// Whether a frame or subresource request to a Federate-TLD host (`http(s)://x.<fedTLD>`) may be
+/// answered from the chain. A frame (`kind` is [`LOAD_NAVIGATION`]) always may: it becomes a
+/// Federate document. Everything else (images, scripts, `fetch`, XHR, workers) only when the page
+/// that asks is itself a Federate page, `asked_by_fed` ([`referrer_is_fed`]); a web or `file:` page
+/// must not probe or fingerprint Federate names, and is refused.
+pub fn fed_request_allowed(kind: u32, asked_by_fed: bool) -> bool {
+    kind == LOAD_NAVIGATION || asked_by_fed
+}
+
+/// Whether `referrer` (the URL of the page that makes a request) is a Federate page: a `fed://`
+/// URL, or the http(s) spelling of a Federate name (a frame the chain answered under that URL),
+/// which `map` (the host's mapping) recognises. No referrer is no Federate page.
+pub fn referrer_is_fed(referrer: Option<&str>, map: impl Fn(&str) -> Option<String>) -> bool {
+    referrer.is_some_and(|r| r.starts_with("fed://") || map(r).is_some())
+}
+
+/// The page a refused Federate-host http(s) load becomes: it says where the address is.
+pub fn refused_fed_body(url: &str) -> String {
+    let url: String = url
+        .chars()
+        .filter(|c| c.is_ascii_graphic())
+        .map(|c| match c {
+            '<' | '>' | '&' | '"' | '\'' => '_',
+            c => c,
+        })
+        .collect();
+    format!(
+        "<!doctype html><meta charset=utf-8><title>Federate</title><h1>Not opened</h1>\
+         <p>{url} is a Federate name. On WolOS Federate names are fed:// only: they are never \
+         fetched over http(s) and never looked up in DNS. This program may not open it.</p>"
+    )
+}
+
 /// Queues `url`'s load (`kind` as the header's WWE_LOAD_*) on `slot`'s workers. The reply always
 /// comes: a full queue is a 503 at once, a panic in the load a 502, no worker thread a 503.
 pub fn spawn(slot: Arc<Slot>, url: String, kind: u32) -> Pending {

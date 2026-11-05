@@ -43,6 +43,10 @@ unsafe extern "C" fn host_load(
             unsafe { body(sink, k.as_ptr(), k.len()) };
             200
         }
+        u if u.starts_with("fed://order.fed/") => {
+            ORDER.lock().unwrap().push(u.to_owned());
+            200
+        }
         u if u.starts_with("fed://slow.fed/") => {
             slow(u);
             200
@@ -106,6 +110,8 @@ static SLOW: Mutex<Slow> = Mutex::new(Slow {
     started: Vec::new(),
     open: false,
 });
+/// The order the host saw `fed://order.fed/N` loads in (one worker, so it is the queue's order).
+static ORDER: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static SLOW_CV: std::sync::Condvar = std::sync::Condvar::new();
 
 fn slow(url: &str) {
@@ -300,12 +306,39 @@ fn loads_are_capped_queued_in_order_and_refused_beyond_the_queue() {
         !s.started.iter().any(|u| u.ends_with("over")),
         "the refused load never ran"
     );
-    let waited: Vec<&str> = s.started[2..].iter().map(String::as_str).collect();
+    // Two workers start the waiting loads at the same moment, so which of them reaches the host
+    // first is the scheduler's (it flaked 5 % of runs when this asserted an order); that they
+    // are all started, once each, after the first two is the contract. The queue's order is
+    // asserted with one worker in `the_queue_is_first_in_first_out`.
+    let mut waited: Vec<&str> = s.started[2..].iter().map(String::as_str).collect();
+    waited.sort_unstable();
     assert_eq!(
         waited,
         ["fed://slow.fed/2", "fed://slow.fed/3", "fed://slow.fed/4"],
-        "in order"
+        "each waiting load started once"
     );
+}
+
+/// With one worker the host sees the loads in the order they were queued.
+#[test]
+fn the_queue_is_first_in_first_out() {
+    let slot = Arc::new(scheme::Slot::with_limits(1, 16));
+    slot.set(host());
+    let all: Vec<_> = (0..12)
+        .map(|i| {
+            scheme::spawn(
+                slot.clone(),
+                format!("fed://order.fed/{i:02}"),
+                scheme::LOAD_RESOURCE,
+            )
+        })
+        .collect();
+    for p in all {
+        assert_eq!(block_on(p).status, 200);
+    }
+    let seen = ORDER.lock().unwrap().clone();
+    let want: Vec<String> = (0..12).map(|i| format!("fed://order.fed/{i:02}")).collect();
+    assert_eq!(seen, want);
 }
 
 #[test]
@@ -347,4 +380,127 @@ fn a_mapped_load_gives_up_after_its_deadline() {
     assert!(done, "the retry must end");
     assert_eq!(tried, 3, "it tries exactly max_tries times");
     assert_eq!(r.step(0, now + every * 100), Step::Done, "and stays over");
+}
+
+/// Exclusive Federate names (lead rule 2026-11-05): a fed-TLD http(s) subresource or frame is held
+/// in the outbox until the chain answers; it is never handed back unanswered, so it is never sent
+/// anywhere else. A reply is taken once.
+#[test]
+fn a_held_fed_subresource_waits_for_the_chain_and_is_answered_once() {
+    let slot = Arc::new(scheme::Slot::default());
+    slot.set(host());
+    let mut out: scheme::Outbox<&str> = scheme::Outbox::default();
+    assert!(out.is_empty());
+    out.add(
+        "style",
+        scheme::spawn(slot.clone(), "fed://home.fed/a.css".into(), 1),
+    );
+    out.add(
+        "frame",
+        scheme::spawn(slot.clone(), "fed://home.fed/f.html".into(), 0),
+    );
+    assert_eq!(out.len(), 2);
+    let mut got: Vec<(&str, Vec<u8>)> = Vec::new();
+    let t0 = std::time::Instant::now();
+    while got.len() < 2 {
+        assert!(t0.elapsed().as_secs() < 10, "the chain must answer");
+        for (what, r) in out.ready() {
+            assert_eq!(r.status, 200);
+            got.push((what, r.body));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2));
+    }
+    got.sort();
+    assert_eq!(got[0], ("frame", b"<p>fed://home.fed/f.html".to_vec()));
+    assert_eq!(got[1], ("style", b"<p>fed://home.fed/a.css".to_vec()));
+    assert!(out.ready().is_empty(), "answered once");
+    assert!(out.is_empty());
+}
+
+#[test]
+fn a_watched_load_wakes_the_host_when_its_reply_is_in() {
+    let slot = Arc::new(scheme::Slot::default());
+    slot.set(host());
+    let flag = Arc::new(Flag(Mutex::new(false), std::sync::Condvar::new()));
+    let pending = scheme::spawn(slot, "fed://home.fed/w".into(), 1);
+    pending.watch(&Waker::from(flag.clone()));
+    let mut woken = flag.0.lock().unwrap();
+    while !*woken {
+        woken = flag.1.wait(woken).unwrap();
+    }
+    drop(woken);
+    assert_eq!(pending.take().unwrap().body, b"<p>fed://home.fed/w");
+    assert!(pending.take().is_none(), "taken once");
+}
+
+#[test]
+fn a_held_load_that_never_got_its_reply_is_abandoned_not_released() {
+    let slot = Arc::new(scheme::Slot::default());
+    // No host yet: the slot answers 503 at once; a load with no worker waits in order instead.
+    let mut out: scheme::Outbox<u8> = scheme::Outbox::default();
+    out.add(1, scheme::spawn(slot.clone(), "fed://a.fed/".into(), 1));
+    // abandon hands every held load back to the caller, which refuses it (no network).
+    let mut n = out.abandon();
+    n.sort();
+    assert!(n.len() <= 1);
+    assert!(out.is_empty());
+}
+
+#[test]
+fn the_request_destination_picks_the_cap_and_a_refusal_names_the_rule() {
+    for doc in ["Document", "Frame", "IFrame"] {
+        assert_eq!(scheme::load_kind(doc), scheme::LOAD_NAVIGATION, "{doc}");
+    }
+    for res in ["Image", "Script", "Style", "Font", "None", ""] {
+        assert_eq!(scheme::load_kind(res), scheme::LOAD_RESOURCE, "{res}");
+    }
+    let page = scheme::refused_fed_body("https://x.fed/<script>\"&");
+    assert!(page.contains("fed:// only") && page.contains("never looked up in DNS"));
+    assert!(!page.contains("<script>"), "the URL cannot inject markup");
+}
+
+/// A web page must not probe Federate names: a frame is let through (it becomes a Federate
+/// document), a subresource, fetch or worker only for a Federate page (`fed://`, or the http
+/// spelling of a Federate name that a frame was answered under).
+#[test]
+fn only_fed_pages_may_read_federate_names_but_any_page_may_frame_them() {
+    let (doc, res) = (scheme::LOAD_NAVIGATION, scheme::LOAD_RESOURCE);
+    let map = |u: &str| (u.starts_with("http://home.fed/")).then(|| "fed://home.fed".to_owned());
+    let fed = |r: Option<&str>| scheme::referrer_is_fed(r, map);
+    assert!(
+        scheme::fed_request_allowed(doc, fed(None)),
+        "a frame, no referrer"
+    );
+    assert!(scheme::fed_request_allowed(
+        doc,
+        fed(Some("http://127.0.0.1:8777/"))
+    ));
+    assert!(
+        scheme::fed_request_allowed(res, fed(Some("fed://home.fed/"))),
+        "fed page, fetch"
+    );
+    assert!(scheme::fed_request_allowed(
+        res,
+        fed(Some("fed://other.pagina/x?y"))
+    ));
+    assert!(
+        scheme::fed_request_allowed(res, fed(Some("http://home.fed/a"))),
+        "a framed Federate document"
+    );
+    assert!(!scheme::fed_request_allowed(
+        res,
+        fed(Some("http://127.0.0.1:8777/"))
+    ));
+    assert!(!scheme::fed_request_allowed(
+        res,
+        fed(Some("file:///home/a/app/index.html"))
+    ));
+    assert!(!scheme::fed_request_allowed(
+        res,
+        fed(Some("https://example.com/fed://x"))
+    ));
+    assert!(
+        !scheme::fed_request_allowed(res, fed(None)),
+        "no referrer: not a fed page"
+    );
 }

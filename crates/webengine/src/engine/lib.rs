@@ -215,6 +215,75 @@ struct Deferred {
 thread_local! {
     /// Mapped page loads not started yet. Only the engine thread touches the list.
     static DEFERRED: RefCell<Vec<Deferred>> = const { RefCell::new(Vec::new()) };
+    /// http(s) frame and subresource loads of Federate-TLD hosts, held until the `fed:` chain has
+    /// answered (see `load_web_resource`). Only the engine thread touches it.
+    static SERVED: RefCell<scheme::Outbox<Held>> = RefCell::new(scheme::Outbox::default());
+}
+
+/// A web load held for the `fed:` chain. Never let go unanswered: dropping it (a panic, the
+/// engine going away) answers it with a refusal, because an unanswered web load proceeds to the
+/// network, and a Federate name never does.
+struct Held(Option<WebResourceLoad>);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        if let Some(load) = self.0.take() {
+            refuse(load, http::StatusCode::SERVICE_UNAVAILABLE);
+        }
+    }
+}
+
+/// Answers `load` with `status` and the page that says Federate names are `fed://` only.
+fn refuse(load: WebResourceLoad, status: http::StatusCode) {
+    let body = scheme::refused_fed_body(load.request().url.as_str());
+    answer(load, status, "text/html; charset=utf-8", body.into_bytes());
+}
+
+/// Answers `load` (never the network) with `status`, the content type and the body.
+fn answer(load: WebResourceLoad, status: http::StatusCode, mime: &str, body: Vec<u8>) {
+    let mut headers = http::HeaderMap::new();
+    if let Ok(v) = http::HeaderValue::from_str(mime) {
+        headers.insert(http::header::CONTENT_TYPE, v);
+    }
+    let url = load.request().url.clone();
+    let mut sending = load.intercept(
+        WebResourceResponse::new(url)
+            .status_code(status)
+            .headers(headers),
+    );
+    if !body.is_empty() {
+        sending.send_body_data(body);
+    }
+    sending.finish();
+}
+
+/// Wakes the host when a held load is answered ([`scheme::Pending::watch`]).
+struct HostWake(std::sync::Mutex<Waker>);
+impl std::task::Wake for HostWake {
+    fn wake(self: Arc<Self>) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .wake();
+    }
+}
+
+/// Sends the held loads whose reply is in.
+fn answer_served() {
+    let ready = SERVED.with(|s| s.borrow_mut().ready());
+    for (mut held, reply) in ready {
+        if let Some(load) = held.0.take() {
+            let status =
+                http::StatusCode::from_u16(reply.status).unwrap_or(http::StatusCode::BAD_GATEWAY);
+            answer(load, status, &reply.mime, reply.body);
+        }
+    }
+}
+
+/// The engine is going away: every held load is refused, none is left to proceed.
+fn refuse_served() {
+    let all = SERVED.with(|s| s.borrow_mut().abandon());
+    drop(all);
 }
 /// How many entries [`DEFERRED`] holds, for the thread that wakes the host while it waits.
 static DEFERRED_N: AtomicUsize = AtomicUsize::new(0);
@@ -230,6 +299,7 @@ const RETRY_MAX: u32 = 50;
 /// message nobody reports. So a load is tried again until the `fed:` handler is asked for a
 /// document; a second try while the first is pending is dropped the same way, so it is harmless.
 fn start_deferred() {
+    answer_served();
     DEFERRED.with(|d| {
         let mut d = d.borrow_mut();
         d.retain_mut(|x| {
@@ -332,6 +402,37 @@ impl ProtocolHandler for HostScheme {
     }
 }
 
+impl Delegate {
+    /// The page load `load` of an http(s) Federate name ends with `204` and loads `to` (`fed://`)
+    /// instead, which then passes the gate like any other navigation.
+    fn defer_load(&self, webview: WebView, load: WebResourceLoad, to: Url) {
+        let url = load.request().url.clone();
+        load.intercept(WebResourceResponse::new(url).status_code(http::StatusCode::NO_CONTENT))
+            .finish();
+        // Not `webview.load(to)` here: it is dropped while this navigation is pending (see
+        // [`start_deferred`]; measured on the forge guest, ENGINE-FED). It starts from the
+        // engine's spin ([`wwe_engine_spin`]).
+        let first = DEFERRED.with(|d| {
+            let mut d = d.borrow_mut();
+            d.push(Deferred {
+                webview,
+                to,
+                retry: scheme::Retry::new(
+                    RETRY_EVERY,
+                    RETRY_MAX,
+                    FED_DOCUMENTS.load(Ordering::Relaxed),
+                    Instant::now(),
+                ),
+            });
+            DEFERRED_N.store(d.len(), Ordering::Relaxed);
+            d.len() == 1
+        });
+        if let (true, Some(w)) = (first, &self.waker) {
+            nudge(w.clone());
+        }
+    }
+}
+
 impl WebViewDelegate for Delegate {
     // A refused navigation must not stall the page: at the pin, denying a frame's first
     // navigation leaves the parent waiting for that frame's load event forever (no `load`, no
@@ -352,41 +453,51 @@ impl WebViewDelegate for Delegate {
     // empty `403 Forbidden`, so a frame gets an empty document and fires `load` (a cancelled load
     // stalls the parent's `load` like a denied navigation at the pin).
     //
-    // WWE_1.2: a page load of an http(s) URL the host spells as `fed://` (the network's
-    // compatibility spelling, `http://home.fed`) ends the same way and loads that address instead,
-    // which then passes the gate like any other navigation.
+    // WWE_1.2, exclusive Federate names: a request to an http(s) URL the host spells as `fed://`
+    // (the network's compatibility spelling, `http://home.fed`, any host under a Federate TLD) is
+    // never sent to the network. A page load ends with `204` and loads that address instead; a
+    // frame or a subresource is held and answered from the `fed:` chain ([`SERVED`]); one the gate
+    // refuses is answered with a refusal. All pass the gate as the `fed://` address.
     fn load_web_resource(&self, webview: WebView, load: WebResourceLoad) {
-        let mapped = load
-            .request()
-            .is_for_main_frame
-            .then(|| self.scheme.map(load.request().url.as_str()))
-            .flatten()
-            .and_then(|u| Url::parse(&u).ok())
-            .filter(|to| self.host.allows(to, LOAD_NAVIGATION));
-        if let Some(to) = mapped {
-            let url = load.request().url.clone();
-            load.intercept(WebResourceResponse::new(url).status_code(http::StatusCode::NO_CONTENT))
+        let main = load.request().is_for_main_frame;
+        // A Federate name is `fed://` only (lead rule 2026-11-05, ADR 0052): a request to an
+        // http(s) host under a Federate TLD is answered from the chain or refused here, for the
+        // page, its frames and everything it loads. It never reaches the network, and a failed
+        // `fed:` load is the chain's own error page, never a fallback to http(s).
+        if let Some(fed) = self.scheme.map(load.request().url.as_str()) {
+            let to = Url::parse(&fed).ok();
+            if main {
+                if let Some(to) = to.filter(|to| self.host.allows(to, LOAD_NAVIGATION)) {
+                    self.defer_load(webview, load, to);
+                    return;
+                }
+                // Not the app's to open: the page stays as it was (as every refused page load).
+                let url = load.request().url.clone();
+                load.intercept(
+                    WebResourceResponse::new(url).status_code(http::StatusCode::NO_CONTENT),
+                )
                 .finish();
-            // Not `webview.load(to)` here: it is dropped while this navigation is pending (see
-            // [`start_deferred`]; measured on the forge guest, ENGINE-FED). It starts from the
-            // engine's spin ([`wwe_engine_spin`]).
-            let first = DEFERRED.with(|d| {
-                let mut d = d.borrow_mut();
-                d.push(Deferred {
-                    webview,
-                    to,
-                    retry: scheme::Retry::new(
-                        RETRY_EVERY,
-                        RETRY_MAX,
-                        FED_DOCUMENTS.load(Ordering::Relaxed),
-                        Instant::now(),
-                    ),
-                });
-                DEFERRED_N.store(d.len(), Ordering::Relaxed);
-                d.len() == 1
-            });
-            if let (true, Some(w)) = (first, &self.waker) {
-                nudge(w.clone());
+                return;
+            }
+            let kind = scheme::load_kind(&format!("{:?}", load.request().destination));
+            // A web page may not read Federate names (probe, fingerprint): only a frame, or a
+            // request of a `fed://` page, is answered.
+            let referrer = load.request().referrer_url.as_ref().map(Url::to_string);
+            let asked_by_fed = scheme::fed_request_allowed(
+                kind,
+                scheme::referrer_is_fed(referrer.as_deref(), |r| self.scheme.map(r)),
+            );
+            match to.filter(|to| asked_by_fed && self.host.allows(to, kind)) {
+                Some(to) => {
+                    let pending = scheme::spawn(self.scheme.clone(), to.as_str().to_owned(), kind);
+                    if let Some(w) = &self.waker {
+                        pending.watch(&std::task::Waker::from(Arc::new(HostWake(
+                            std::sync::Mutex::new(w.clone()),
+                        ))));
+                    }
+                    SERVED.with(|s| s.borrow_mut().add(Held(Some(load)), pending));
+                }
+                None => refuse(load, http::StatusCode::FORBIDDEN),
             }
             return;
         }
@@ -394,7 +505,7 @@ impl WebViewDelegate for Delegate {
             return;
         }
         let url = load.request().url.clone();
-        let status = if load.request().is_for_main_frame {
+        let status = if main {
             http::StatusCode::NO_CONTENT
         } else {
             http::StatusCode::FORBIDDEN
@@ -724,6 +835,8 @@ pub unsafe extern "C" fn wwe_engine_free(engine: *mut Engine) {
         _slot: slot,
         ..
     } = *engine;
+    // Held Federate loads are refused now: none is left to proceed to the network.
+    refuse_served();
     let shutdown =
         boundary::catch(|| boundary::bounded(SHUTDOWN, move || drop(servo), end_content_processes));
     match shutdown {

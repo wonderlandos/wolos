@@ -733,6 +733,26 @@ mod tests {
         assert!(checked_start(&g, "https://other.com/", map).is_err());
     }
 
+    /// Exclusive Federate names: no start URL under a Federate TLD stays http(s), whether it is a
+    /// valid name or not; what the mapping cannot make a name of the gate refuses.
+    #[test]
+    fn a_federate_tld_start_url_is_never_left_as_http() {
+        let g = gate_of(&["fed://home.fed", "https://example.com"]);
+        for url in [
+            "http://www.home.fed/",
+            "https://home.fed@evil.fed/",
+            "http://lobo.pagina:8080/",
+        ] {
+            let opens = map(url).expect(url);
+            assert!(opens.starts_with("fed://"), "{url} -> {opens}");
+            assert!(checked_start(&g, url, map).is_err(), "{url}");
+        }
+        assert_eq!(
+            checked_start(&g, "https://HOME.fed./x", map).unwrap(),
+            "fed://home.fed/x"
+        );
+    }
+
     #[test]
     fn a_crash_ends_the_wait_for_the_load_at_once() {
         assert_eq!(load_outcome(&state(1, 0)), None, "still loading");

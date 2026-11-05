@@ -188,7 +188,14 @@ fn only_the_networks_tlds_are_taken_from_the_web() {
         Some("fed://lobo.pagina")
     );
     assert_eq!(r.map_http("https://example.com/"), None);
-    assert_eq!(r.map_http("https://www.home.fed/"), None);
+    // Every host under a Federate TLD is the network's, valid name or not: never the web.
+    assert_eq!(
+        r.map_http("https://www.home.fed/").as_deref(),
+        Some("fed://www.home.fed/")
+    );
+    assert_eq!(r.serve("https://www.home.fed/").status, 400);
+    assert!(r.is_fed_host("a.b.pagina"));
+    assert!(!r.is_fed_host("example.com"));
     assert_eq!(
         r.serve("https://example.com/").status,
         400,
@@ -574,7 +581,7 @@ fn a_clock_set_back_does_not_bring_an_expired_name_back() {
 }
 
 #[test]
-fn only_known_tlds_also_in_the_zone_are_taken_from_the_web() {
+fn every_built_in_tld_is_taken_from_the_web_whatever_the_zone_holds() {
     let n = Net::new();
     let mut zzz = n.tld(json!({}));
     zzz["tld"] = json!("zzz");
@@ -598,13 +605,14 @@ fn only_known_tlds_also_in_the_zone_are_taken_from_the_web() {
     assert_eq!(
         r.map_http("http://x.zzz/"),
         None,
-        "a zone TLD not on the built-in list"
+        "a zone TLD not on the built-in list is not taken from the web (the root key cannot capture one)"
     );
     assert_eq!(
-        r.map_http("http://lobo.pagina/"),
-        None,
-        "a built-in TLD the zone lacks"
+        r.map_http("http://lobo.pagina/").as_deref(),
+        Some("fed://lobo.pagina"),
+        "a built-in TLD the zone lacks stays fed:// (the chain says the zone lacks it), never the web"
     );
+    assert_eq!(r.map_http("http://example.com/"), None);
 }
 
 #[test]

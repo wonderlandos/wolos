@@ -71,6 +71,24 @@ fn tail(rest: &str) -> Result<(String, Option<String>), String> {
     Ok((path.to_owned(), query))
 }
 
+/// `(host, rest)` of an `http(s)` URL: the host as [`FedUrl::http_host`] gives it, and everything
+/// from the first `/`, `?` or `#` after the authority.
+fn http_parts(url: &str) -> Option<(String, &str)> {
+    let (scheme, rest) = url.split_once("://")?;
+    if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")) {
+        return None;
+    }
+    let (authority, rest) = split_authority(rest);
+    // The host is what follows the last `@` (`http://home.fed@evil.com/` is evil.com).
+    let hostport = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = match hostport.rsplit_once(':') {
+        Some((h, p)) if !hostport.ends_with(']') && p.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => hostport,
+    };
+    let host = host.strip_suffix('.').unwrap_or(host);
+    Some((host.to_ascii_lowercase(), rest))
+}
+
 fn split_authority(rest: &str) -> (&str, &str) {
     match rest.find(['/', '?', '#']) {
         Some(i) => rest.split_at(i),
@@ -99,19 +117,12 @@ impl FedUrl {
     }
 
     /// The `fed://` address an `http://` or `https://` URL names when its host is a Federate name
-    /// (the network's compatibility spelling, `http://home.fed`); the port is dropped, as the
-    /// protocol's gateway does. Syntax only: the caller decides whether the TLD is the network's.
+    /// (the network's compatibility spelling, `http://home.fed`); user info, port and a trailing
+    /// dot of the host are dropped, as the protocol's gateway does. Syntax only: the caller decides
+    /// whether the TLD is the network's.
     pub fn from_http(url: &str) -> Option<FedUrl> {
-        let (scheme, rest) = url.split_once("://")?;
-        if !(scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")) {
-            return None;
-        }
-        let (authority, rest) = split_authority(rest);
-        let host = match authority.rsplit_once(':') {
-            Some((h, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => h,
-            _ => authority,
-        };
-        let (label, tld) = name(host).ok()?;
+        let (host, rest) = http_parts(url)?;
+        let (label, tld) = name(&host).ok()?;
         let (path, query) = tail(rest).ok()?;
         Some(FedUrl {
             label,
@@ -119,6 +130,22 @@ impl FedUrl {
             path,
             query,
         })
+    }
+
+    /// The host of an `http://` or `https://` URL as a DNS lookup would see it: lower case, without
+    /// user info, port and trailing dot; `None` for another scheme.
+    pub fn http_host(url: &str) -> Option<String> {
+        http_parts(url).map(|(h, _)| h)
+    }
+
+    /// The `fed://` spelling of an `http(s)://` URL for any host, valid name or not: the host as
+    /// [`FedUrl::http_host`] gives it, the path and query kept, the fragment dropped. A name that is
+    /// not `label.tld` is then refused by the `fed:` handler with a page that says why, so a
+    /// Federate TLD host is never left to the web.
+    pub fn raw_fed(url: &str) -> Option<String> {
+        let (host, rest) = http_parts(url)?;
+        let rest = rest.split('#').next().unwrap_or("");
+        Some(format!("fed://{host}{rest}"))
     }
 
     /// `label.tld`.
@@ -206,5 +233,32 @@ mod tests {
         // Syntax only: `.com` parses, and the resolver's TLD list is what keeps it on the web.
         assert!(FedUrl::from_http("https://example.com/").is_some());
         assert_eq!(FedUrl::from_http("file:///home.fed"), None);
+    }
+
+    #[test]
+    fn the_host_of_an_http_url_is_the_one_a_lookup_would_use() {
+        let h = FedUrl::http_host;
+        assert_eq!(h("http://HOME.fed/x").as_deref(), Some("home.fed"));
+        assert_eq!(h("https://home.fed.:8443/x").as_deref(), Some("home.fed"));
+        assert_eq!(h("http://home.fed@evil.com/").as_deref(), Some("evil.com"));
+        assert_eq!(h("http://evil.com@home.fed/").as_deref(), Some("home.fed"));
+        assert_eq!(h("ftp://home.fed/"), None);
+        // user info and a trailing dot do not keep a valid name from mapping.
+        assert_eq!(
+            FedUrl::from_http("http://u:p@home.fed./a")
+                .unwrap()
+                .to_url(),
+            "fed://home.fed/a"
+        );
+    }
+
+    #[test]
+    fn a_host_that_is_not_a_name_is_still_spelled_fed() {
+        assert_eq!(
+            FedUrl::raw_fed("http://www.home.fed/a?b=1#f").as_deref(),
+            Some("fed://www.home.fed/a?b=1")
+        );
+        assert!(FedUrl::parse("fed://www.home.fed/").is_err());
+        assert_eq!(FedUrl::raw_fed("file:///x"), None);
     }
 }
