@@ -599,11 +599,8 @@ fn finish(
 ) -> AdminReply {
     // Why it failed, taken before anything else runs a command: the log and the person get the
     // program's own last line, not "the change failed" alone (QA-100 LIVE3-19, DEV-4).
-    let reason = if ok {
-        None
-    } else {
-        reason_of(&os.last_error())
-    };
+    let stderr = if ok { String::new() } else { os.last_error() };
+    let reason = reason_of(&stderr);
     // After the reason is taken: the cleanup is a command too and would replace it.
     if let Some(argv) = cleanup.filter(|_| !ok) {
         os.run(&argv, false);
@@ -617,7 +614,16 @@ fn finish(
         }
     ));
     if !ok && said.is_none() {
-        *said = reason.map(|r| format!("{}: {r}", shared::admin::AdminReply::Failed.message()));
+        // An App Store change says what stopped it (QA-STORE-59: the closing line of `wol pkg`
+        // is "Nothing was changed", which is not a reason; the journal above has pacman's own
+        // last line); every other change gives the program's last line.
+        *said = match app_change(req.action) {
+            Some(installing) => Some(
+                wol_core::pkg_failure::explain(&stderr, installing)
+                    .unwrap_or_else(|| wol_core::pkg_failure::unknown(installing)),
+            ),
+            None => reason.map(|r| format!("{}: {r}", shared::admin::AdminReply::Failed.message())),
+        };
     }
     if ok && req.action == AdminAction::PkgInstall {
         drop_gave_up(os, &req.args[0]);
@@ -626,6 +632,19 @@ fn finish(
         AdminReply::Ok
     } else {
         AdminReply::Failed
+    }
+}
+
+/// Whether `action` is an app or package change the App Store makes: Some(true) installs,
+/// Some(false) removes.
+fn app_change(action: AdminAction) -> Option<bool> {
+    match action {
+        AdminAction::PkgInstall
+        | AdminAction::PkgInstallFile
+        | AdminAction::FlatpakInstall
+        | AdminAction::WolInstall => Some(true),
+        AdminAction::PkgRemove | AdminAction::FlatpakRemove | AdminAction::WolRemove => Some(false),
+        _ => None,
     }
 }
 

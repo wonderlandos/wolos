@@ -172,8 +172,10 @@ pub fn run_tracked_cmd(mut cmd: Command, kind: Kind, path: &str, timeout: Durati
     // grandchild prints late never recreates the file after it was removed.
     let stop = std::sync::Arc::new(std::sync::Mutex::new(false));
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    // The end of the output, for whoever must say why it failed (QA-STORE-59).
+    let tail = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
     let reader = {
-        let (stop, path) = (stop.clone(), path.to_owned());
+        let (stop, path, tail) = (stop.clone(), path.to_owned(), tail.clone());
         std::thread::spawn(move || {
             let mut t = Tracker::new(kind);
             let mut buf = [0u8; 4096];
@@ -183,6 +185,15 @@ pub fn run_tracked_cmd(mut cmd: Command, kind: Kind, path: &str, timeout: Durati
                     Ok(0) | Err(_) => break,
                     Ok(n) => n,
                 };
+                {
+                    let mut t = tail.lock().unwrap_or_else(|e| e.into_inner());
+                    t.extend_from_slice(&buf[..n]);
+                    let keep = 2 * crate::privileged::STDERR_TAIL;
+                    if t.len() > 2 * keep {
+                        let extra = t.len() - keep;
+                        t.drain(..extra);
+                    }
+                }
                 for &b in &buf[..n] {
                     if b == b'\n' || b == b'\r' {
                         if let Some(p) = t.feed(&String::from_utf8_lossy(&line)) {
@@ -229,7 +240,15 @@ pub fn run_tracked_cmd(mut cmd: Command, kind: Kind, path: &str, timeout: Durati
     if finished {
         let _ = reader.join();
     }
-    status.is_some_and(|s| s.success())
+    let ok = status.is_some_and(|s| s.success());
+    // A failure leaves its last lines for `privileged::take_last_stderr`, a success nothing.
+    let said = if ok {
+        Vec::new()
+    } else {
+        tail.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    };
+    crate::privileged::keep_stderr(&said);
+    ok
 }
 
 /// How long [`run_tracked_cmd`] waits for the output reader after the command ended (a process
@@ -374,5 +393,47 @@ mod tests {
         );
         assert!(!std::path::Path::new(&path).exists());
         let _ = std::fs::remove_dir_all(d);
+    }
+
+    /// QA-STORE-59 root cause: the tracked run (every App Store install) read pacman's output only
+    /// for percentages and threw it away, so a failed install left wol-admind nothing to say. The
+    /// end of a failed run's output is kept for the daemon (`privileged::take_last_stderr`); a run
+    /// that worked leaves nothing for the next failure to be mistaken for.
+    #[test]
+    fn a_failed_tracked_run_keeps_what_it_said() {
+        let dir = std::env::temp_dir().join(format!("wol-progress-said-{}", std::process::id()));
+        let path = dir.join("pkg").to_string_lossy().into_owned();
+        let _ = crate::privileged::take_last_stderr();
+        let ok = run_tracked(
+            &[
+                "sh",
+                "-c",
+                "echo 'installing a...'; echo 'error: failed retrieving file x' >&2; \
+                 echo 'wol: Nothing was changed.' >&2; exit 1",
+            ],
+            Kind::Pacman,
+            &path,
+            Duration::from_secs(10),
+        );
+        assert!(!ok);
+        let said = crate::privileged::take_last_stderr();
+        assert!(said.contains("error: failed retrieving file x"), "{said:?}");
+        assert!(said.ends_with("wol: Nothing was changed."), "{said:?}");
+        assert_eq!(crate::privileged::take_last_stderr(), "", "taken once");
+        // A success clears an earlier failure's words.
+        let _ = run_tracked(
+            &["sh", "-c", "echo 'error: old' >&2; exit 1"],
+            Kind::Pacman,
+            &path,
+            Duration::from_secs(10),
+        );
+        assert!(run_tracked(
+            &["true"],
+            Kind::Pacman,
+            &path,
+            Duration::from_secs(10)
+        ));
+        assert_eq!(crate::privileged::take_last_stderr(), "");
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

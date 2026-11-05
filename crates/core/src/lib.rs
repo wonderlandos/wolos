@@ -38,6 +38,7 @@ pub mod net;
 pub mod netconf;
 pub mod netinfo;
 pub mod package;
+pub mod pkg_failure;
 pub mod plugins;
 pub mod power;
 pub mod prefs;

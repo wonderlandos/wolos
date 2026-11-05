@@ -1306,6 +1306,85 @@ fn capture_returns_last_stderr_line() {
     assert_eq!(reason_of(&real.last_error()).as_deref(), Some("no adapter"));
 }
 
+/// QA-STORE-59: a failed install or remove of the App Store is answered with the true reason in
+/// words, for each kind the 0.12.1 VM run hit (offline, disk full, damaged package, an update
+/// holding the lock) and the reply line carries it to the status sheet. A failure none of them
+/// names is still said (nothing was changed, restart); before, a tracked install left nothing to
+/// read and the Store had no sentence. The journal keeps the program's own last line.
+#[test]
+fn a_failed_app_change_says_why_in_words() {
+    use wol_core::pkg_failure::{Cause, sentence};
+    let closing = "wol: Nothing was changed. Try again, or run `wol update` first.\n";
+    let cases: [(&str, &str, AdminAction, Option<String>); 6] = [
+        (
+            "error: failed retrieving file 'x' from m : Could not resolve host: m\n",
+            "bashtop",
+            AdminAction::PkgInstall,
+            Some(sentence(Cause::Download, true)),
+        ),
+        (
+            "error: Partition / too full: 3208 MiB needed, 410 MiB free\n",
+            "topcom",
+            AdminAction::PkgInstall,
+            Some(sentence(Cause::NoRoom, true)),
+        ),
+        (
+            "error: failed to commit transaction (invalid or corrupted package (PGP signature))\n",
+            "botsay",
+            AdminAction::PkgInstall,
+            Some(sentence(Cause::Damaged, true)),
+        ),
+        (
+            "wol: Another system update or package change is running. Try again when it has \
+             finished.\n",
+            "ponysay",
+            AdminAction::PkgInstall,
+            Some(sentence(Cause::UpdateRunning, true)),
+        ),
+        (
+            "wol: Another system update or package change is running. Try again when it has \
+             finished.\n",
+            "htop",
+            AdminAction::PkgRemove,
+            Some(sentence(Cause::UpdateRunning, false)),
+        ),
+        (
+            "error: target not found: htop\n",
+            "htop",
+            AdminAction::PkgInstall,
+            Some(wol_core::pkg_failure::unknown(true)),
+        ),
+    ];
+    for (stderr, pkg, action, want) in cases {
+        let os = Fake {
+            fail_run: true,
+            stderr: Box::leak(format!("{stderr}{closing}").into_boxed_str()),
+            ..Fake::default()
+        };
+        let mut said = None;
+        let r = handle_said(
+            &encode(&req(action, &[pkg]), b""),
+            ROOT,
+            &Shared::default(),
+            &os,
+            &mut said,
+        );
+        assert_eq!(r, AdminReply::Failed);
+        assert_eq!(said, want, "{stderr}");
+        assert!(
+            os.log
+                .borrow()
+                .iter()
+                .any(|l| l.contains("failed: wol: Nothing was changed")),
+            "{:?}",
+            os.log.borrow()
+        );
+        let line = reply_line(r, said.as_deref());
+        assert_eq!(shared::admin::failure_message(&line), want);
+        assert!(line.len() <= "failed ".len() + shared::admin::MAX_FAILURE_MESSAGE);
+    }
+}
+
 /// QA-100 SHADOW-20: an unreadable account list is logged as that.
 #[test]
 fn an_empty_account_list_is_logged_as_unreadable() {
