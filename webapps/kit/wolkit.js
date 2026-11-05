@@ -99,13 +99,13 @@ class WolSidebar extends Base {
   get value() { const a = this.nav && this.nav.querySelector('[aria-current="page"]'); return a ? a.hash.slice(1) : ""; }
   select(value) {
     if (!value) return;
-    let hit = false;
-    for (const a of this.items()) {
-      const on = a.hash.slice(1) === value;
-      hit ||= on;
-      if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+    const items = this.items();
+    // An address that is no item (the skip link's #content, an in-page anchor) changes nothing.
+    if (!items.some((a) => a.hash.slice(1) === value)) return;
+    for (const a of items) {
+      if (a.hash.slice(1) === value) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
     }
-    if (hit) this.dispatchEvent(new CustomEvent("select", { detail: { value }, bubbles: true }));
+    this.dispatchEvent(new CustomEvent("select", { detail: { value }, bubbles: true }));
   }
 }
 

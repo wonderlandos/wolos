@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 // bridge.js without a browser (ADR 0048, QA-WEB-6 and QA-WEB-12): the page side of the contract,
 // run in a bare node context with a fake runtime channel.
-//   node --test webapps/kit/test        (crates/webengine/tests/kit_js.rs runs it when node exists)
+//   node --test webapps/kit/test/*.test.mjs   (crates/webengine/tests/kit_js.rs runs it when node exists;
+//   a directory argument fails on Node 22, so name the files or use the glob)
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
