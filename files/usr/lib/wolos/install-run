@@ -219,13 +219,13 @@ case ${cpu_need:-} in '' | *[!0-9]*) cpu_need=1 ;; esac
 case $cpu_need in 2) cpu_words=SSE4.2 ;; 3) cpu_words=AVX2 ;; *) cpu_words=AVX-512 ;; esac
 if [ "$cpu_level" -lt 1 ]; then
   # Unknown is not old: at the baseline the install goes on, above it nothing is written.
-  echo "wolos-install: the processor level could not be read" >&2
+  echo "install-run: the processor level could not be read" >&2
   [ "$cpu_need" -le 1 ] || refuse "the processor could not be identified, and this WolOS needs $cpu_words"
 elif [ "$cpu_level" -lt "$cpu_need" ]; then
   refuse "this processor is too old for this WolOS (it needs $cpu_words)"
 fi
 if [ "$cpu_level" -ge 1 ] && [ "$cpu_level" -lt 3 ]; then
-  echo "wolos-install: this processor has no AVX2: the standard builds are installed, everything works" >&2
+  echo "install-run: this processor has no AVX2: the standard builds are installed, everything works" >&2
 fi
 cleanup() {
   sync; umount -R "$T" 2>/dev/null || :

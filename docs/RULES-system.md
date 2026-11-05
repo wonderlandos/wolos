@@ -58,7 +58,7 @@ Narrower contract tests stay the authority for their units: `units.rs` (hardenin
 | RS-043 | unit | No unit starts a shell as its program. | `rs_043_units_do_not_start_shells` | enforced |
 | RS-044 | unit | Drop-in directories end in `.d` and hold only `.conf` files. | `rs_044_dropin_dirs_hold_only_conf_files` | enforced |
 | RS-045 | unit | Unit names start with `wolos-` (or `wold.`). | `rs_045_unit_names_carry_the_wolos_prefix` | enforced |
-| RS-046 | unit | `ReadWritePaths=`, `ReadOnlyPaths=`, `InaccessiblePaths=` are absolute. | `rs_046_read_write_paths_are_absolute` | enforced |
+| RS-046 | unit | `ReadWritePaths=`, `ReadOnlyPaths=`, `InaccessiblePaths=` are absolute (a leading `%h/ %t/ %S/ %C/ %L/ %E/` specifier expands to an absolute directory: a user unit names the account's own folders so). | `rs_046_read_write_paths_are_absolute` | enforced |
 | RS-047 | unit | No secret-looking `Environment=` values. | `rs_047_no_secrets_in_unit_environment` | enforced |
 | RS-048 | unit | A oneshot unit never has `Restart=always`. | `rs_048_oneshot_units_do_not_restart_always` | enforced |
 | RS-049 | unit | Ordering and dependency keys that name a wolos unit name one that exists. | `rs_049_ordering_names_a_unit_that_exists` | enforced |

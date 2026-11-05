@@ -7,3 +7,4 @@ Exec=wol-quicklook
 NoDisplay=true
 StartupNotify=false
 Categories=System;Utility;
+X-WolOS-Surfaces=S08

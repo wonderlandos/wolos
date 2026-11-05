@@ -98,7 +98,7 @@ What: a catalogue of checkable rules (ids `RU-nnn`) for user-facing text, GTK an
 | RU-075 | Every surface file in src/ui has at least one golden. |
 | RU-076 | Golden case names are unique in the declarations. |
 | RU-077 | Every golden case declared with a literal name has its light and dark PNG. |
-| RU-078 | The golden folder holds only PNG files. |
+| RU-078 | The golden folder holds only PNG files and the button-label manifest (button-labels.tsv). |
 
 ### Docs (RU-080 to RU-099)
 

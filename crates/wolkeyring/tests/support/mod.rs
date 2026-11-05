@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 //! Shared builders for the keyring tests.
-#![allow(dead_code)]
+#![allow(dead_code)] // helpers that each test file uses a part of
 use std::collections::BTreeMap;
 use wolkeyring::factor::{Factor, Kind, Presented};
 use wolkeyring::item::{Class, Meta};

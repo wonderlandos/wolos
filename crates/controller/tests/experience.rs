@@ -44,7 +44,6 @@ const JOURNEYS_NOT_YET: &[(&str, &str)] = &[
     ("e2e-secrets", "E2E-LIB-2"),
     ("e2e-links-open-in-atlas", "E2E-ATLAS"),
     ("e2e-files-tags", "E2E-FILES"),
-    ("e2e-gallery", "E2E-GALLERY"),
 ];
 
 /// Launcher entries that exist on other branches today and do not carry the key yet: the change that
@@ -188,10 +187,10 @@ fn entry_faults(
         Some(_) => {}
     }
     for l in text.lines() {
-        if let Some(k) = l.split('=').next().filter(|k| k.starts_with("X-WolOS-")) {
-            if !["X-WolOS-Surfaces", "X-WolOS-Share", "X-WolOS-Service"].contains(&k) {
-                bad.push(format!("{name}: key {k} is not documented in {PAGE}"));
-            }
+        if let Some(k) = l.split('=').next().filter(|k| k.starts_with("X-WolOS-"))
+            && !["X-WolOS-Surfaces", "X-WolOS-Share", "X-WolOS-Service"].contains(&k)
+        {
+            bad.push(format!("{name}: key {k} is not documented in {PAGE}"));
         }
     }
     bad
@@ -210,10 +209,10 @@ fn entries() -> Vec<(String, String)> {
         };
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
-            if name.ends_with(".desktop") {
-                if let Ok(t) = std::fs::read_to_string(e.path()) {
-                    out.push((name, t));
-                }
+            if name.ends_with(".desktop")
+                && let Ok(t) = std::fs::read_to_string(e.path())
+            {
+                out.push((name, t));
             }
         }
     }

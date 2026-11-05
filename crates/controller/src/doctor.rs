@@ -28,7 +28,8 @@ pub const AREAS: &[&str] = &[
 pub const ON_ASK: &[&str] = &[tls::AREA];
 /// What `wol doctor <area>` accepts: [`AREAS`], then [`ON_ASK`].
 pub const CHOICES: &[&str] = &[
-    "sound", "games", "updates", "security", "storage", "network", "power", "display", "tls",
+    "sound", "games", "updates", "security", "storage", "network", "power", "display", "hardware",
+    "tls",
 ];
 
 /// Last-check age that turns the update check into a warning: three days.

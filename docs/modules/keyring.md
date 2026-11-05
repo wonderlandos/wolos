@@ -1,5 +1,7 @@
 # Keyring: post-quantum secret store, unlock factors, access lists, audit, portability (ADR 0054)
 
+Decision record: [ADR 0054](../adr/0054-post-quantum-keyring.md). Code: `crates/wolkeyring` (the store, the formats and the daemon path, BSD-2-Clause) on top of `crates/wolcrypt` (the primitives).
+
 **Concept.** Every secret a person's apps keep (browser passwords, VPN keys, tokens) lives in one
 store. Its keys are 256-bit symmetric keys, wrapped by the unlock factors; its exports are encrypted
 to the hybrid KEM X25519 + ML-KEM-768 and signed with Ed25519 + ML-DSA-65 (`crates/wolcrypt`). There

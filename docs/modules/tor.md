@@ -1,4 +1,4 @@
-# Tor: the OS layer (`wol-tor`)
+# Tor: the OS layer, `wol-tor` (ADR 0056)
 
 Concept: Tor is a layer of the system. You choose where it applies, Atlas tabs, one app, or this whole computer, and where it applies the program has no way to the open internet except through Tor. Why this way: a setting inside a program can be bypassed by one bug (browsers have leaked DNS, DevTools and WebTransport traffic around their own Tor mode); a rule in the kernel cannot. How: the sections below. Decisions: [ADR 0053](../adr/0053-atlas-private-and-tor-tabs.md) (Atlas tabs) and [ADR 0056](../adr/0056-wol-tor-system-tor-layer.md) (apps and machine).
 
@@ -39,7 +39,7 @@ Off by default. When on, Tor's directory documents and its first relay are refre
 | Crate | `crates/wol-tor` (GPL-2.0-or-later, no `unsafe`) |
 | Switch state | `/etc/wol-tor/switches` (root-owned, the only scope switches), `/etc/wol-tor/bridges` (machine); per user: `~/.config/wol-tor/keep-ready` and `bridges` |
 | Atlas group runtime | `$XDG_RUNTIME_DIR/wol-tor/<group>` (tor), `wol-tor-browser/<group>` (browser), `wol-tor-profile/<group>` (policies, fonts) |
-| Benchmark plan | [bench/atlas-tor-plan.md](bench/atlas-tor-plan.md) |
+| Benchmark plan | [bench/atlas-tor-plan.md](../bench/atlas-tor-plan.md) |
 
 ## Status
 

@@ -177,24 +177,19 @@ pub fn revoked(json: &str) -> Vec<(String, String)> {
 /// Whether `text` is a consent file this module understands: a JSON object whose `grants` and
 /// `revoked` keys, when present, are lists of `{app, capability}` strings. Other keys are free.
 fn is_well_formed(text: &str) -> bool {
-    #[derive(serde::Deserialize)]
-    struct Pair {
-        #[allow(dead_code)]
-        app: String,
-        #[allow(dead_code)]
-        capability: String,
-    }
-    #[derive(serde::Deserialize)]
-    struct File {
-        #[serde(default)]
-        #[allow(dead_code)]
-        grants: Vec<Pair>,
-        #[serde(default)]
-        #[allow(dead_code)]
-        revoked: Vec<Pair>,
-    }
-    serde_json::from_str::<Value>(text).is_ok_and(|v| v.is_object())
-        && serde_json::from_str::<File>(text).is_ok()
+    // A key that is absent is an empty list; a key that is there is a list of pairs of strings.
+    let pairs = |v: Option<&Value>| {
+        v.is_none_or(|v| {
+            v.as_array().is_some_and(|a| {
+                a.iter().all(|p| {
+                    p.get("app").is_some_and(Value::is_string)
+                        && p.get("capability").is_some_and(Value::is_string)
+                })
+            })
+        })
+    };
+    serde_json::from_str::<Value>(text)
+        .is_ok_and(|v| v.is_object() && pairs(v.get("grants")) && pairs(v.get("revoked")))
 }
 
 /// What an app really holds: the vendor `defaults` and the grants of the file `file_text` (the

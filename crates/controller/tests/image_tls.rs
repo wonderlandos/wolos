@@ -104,6 +104,7 @@ const ARCH_GNUTLS_CONFIG: &str =
     "# GnuTLS is built with --enable-ktls\n\n[global]\nktls = false\n#ktls = true\n";
 
 struct Root(PathBuf);
+// Drop: removes the temporary root on every exit path.
 impl Drop for Root {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);

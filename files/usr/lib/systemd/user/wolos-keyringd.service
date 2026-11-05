@@ -6,14 +6,16 @@
 [Unit]
 Description=WolOS keyring (wol-keyringd)
 After=dbus.socket
-StartLimitIntervalSec=60
-StartLimitBurst=5
+# A crash burst never leaves it dead (RH-221): restarts slow down to one every 30 s instead of a start limit.
+StartLimitIntervalSec=0
 
 [Service]
 Type=exec
 ExecStart=/usr/bin/wol-keyringd
 Restart=on-failure
 RestartSec=2
+RestartSteps=5
+RestartMaxDelaySec=30
 # Argon2id at unlock needs 64 MiB; the rest is small.
 MemoryMax=256M
 NoNewPrivileges=yes

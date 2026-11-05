@@ -69,6 +69,7 @@ impl Scratch {
     }
 }
 
+// Drop: removes the scratch folder on every exit path.
 impl Drop for Scratch {
     fn drop(&mut self) {
         if let Some(c) = self.child.as_mut() {
@@ -248,6 +249,7 @@ fn the_secret_service_on_a_private_bus() {
         return;
     };
     struct Kill(Child);
+    // Drop: kills the private broadwayd the test started.
     impl Drop for Kill {
         fn drop(&mut self) {
             let _ = self.0.kill();
@@ -586,6 +588,7 @@ fn migrate_copies_a_gnome_keyring_and_touches_nothing() {
 }
 
 struct KillOnDrop(Child);
+// Drop: kills the child the test started.
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
         let _ = self.0.kill();

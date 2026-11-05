@@ -75,4 +75,4 @@ if [ -f "$share/gnutls.priority" ] && [ -d "$root/etc/gnutls" ]; then
     printf '%s\n[overrides]\n%s\ndefault-priority-string = %s\n' "$mark" "$mark" "$prio" >> "$gtls"
   fi
 fi
-exit $rc
+exit "$rc"

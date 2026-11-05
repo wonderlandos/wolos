@@ -1,4 +1,4 @@
-# Search by meaning (ADR pending)
+# Search by meaning (ADR 0057)
 
 Decision record: ADR 0057. Code: `crates/wolsem` (the engine, BSD-2-Clause), `crates/shell/src/ui/settings/search.rs` and `search_rows.rs` (Settings), `crates/shell/src/search_sem.rs` and `ui/searchbar.rs` (the Search bar), `crates/controller/src/helpfind.rs` (`wol help <words>`).
 

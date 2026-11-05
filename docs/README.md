@@ -77,10 +77,12 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0045](adr/0045-locale-system.md) | One locale system for the whole OS: TSV sources, compiled `.wtx` tables, constant-time lookup, English fallback, plurals, pseudo-locale | accepted |
 | [0048](adr/0048-system-web-apps.md) | System web apps: a folder per app, one bridge to `wol` verbs by permission, one kit | proposed |
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
+| [0052](adr/0052-federate-native-support.md) | Federate Network addresses, natively (`fed://` in the web engine) | proposed |
 | [0053](adr/0053-atlas-private-and-tor-tabs.md) | Atlas private and Tor tabs: the kernel is the kill switch | proposed |
 | [0054](adr/0054-post-quantum-keyring.md) | Post-quantum local keyring: unlock factors, per-app access lists, signed audit chain, export and LAN move | proposed |
 | [0055](adr/0055-system-wide-tls-policy.md) | System-wide TLS policy: post-quantum hybrid by default | proposed |
 | [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
+| [0057](adr/0057-search-by-meaning.md) | Search by meaning in Settings, the Search bar and `wol help` | accepted |
 | [0059](adr/0059-the-wolos-experience.md) | The WolOS experience: the integration surfaces every app provides (28 surfaces, three tiers, one test) | accepted |
 
 ## Modules
@@ -117,6 +119,9 @@ Each module document names its ADR and its code by crate and path.
 | [modules/hue.md](modules/hue.md) | wol-hue: themes from a picture, 12 sliders, Base16 and colors.toml import, saved looks | [0031](adr/0031-shell-plugins-themes-layouts.md) |
 | [modules/hyprland-fork.md](modules/hyprland-fork.md) | the compositor fork: base version, patches in `wolos-pkgbuilds/hyprland-wolos/`, config, QoS plugin | [0012](adr/0012-seamless-boot.md) |
 | [modules/intel-graphics.md](modules/intel-graphics.md) | i915 firmware, tunables, VA-API/Vulkan stack (historical: FreeBSD base) | [0008](adr/0008-i915-frame-deadline-boost.md) |
+| [modules/flathub.md](modules/flathub.md) | Flathub in the App Store: curation (Picked by WolOS, Verified), the Flatpak runtime, portals and consent grants | [0021](adr/0021-wopkg.md) |
+| [modules/wolcrypt.md](modules/wolcrypt.md) | wolcrypt: every cryptographic operation in one crate (sign, verify, seal, hash, derive, hybrid KEM, TLS group) | 0046 (written in the trust-core repository) |
+| [modules/x86-64-v3.md](modules/x86-64-v3.md) | x86-64-v3 for our own packages: the CPU gate, the second repo, `wol mirror`, the installer guard | [0030](adr/0030-repo-cdn-cachy-redirect.md) |
 | [modules/keyring.md](modules/keyring.md) | the keyring: `wol keyring`, `wol-keyringd`, the Secret Service subset, unlock factors, audit, Settings page copy | [0054](adr/0054-post-quantum-keyring.md) |
 | [modules/memory-bandwidth.md](modules/memory-bandwidth.md) | iGPU bandwidth paradigms, top 5, measurement | [0007](adr/0007-gpu-tuning-interface.md) |
 | [modules/memsaver.md](modules/memsaver.md) | Memory Saver and per-app memory budgets: the table, the launch in its own scope, the limits and the duty cycle wold applies | [0026](adr/0026-memory-saver.md), [0027](adr/0027-one-app-cannot-take-the-desktop.md) |

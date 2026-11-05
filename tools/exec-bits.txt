@@ -84,6 +84,15 @@ files/usr/lib/wolos/webpolicy
 files/usr/lib/wolos/wol-install
 files/usr/lib/wolos/xguard-update
 files/usr/share/wolos/boot/41_wolos
+tools/bench/discord/as-user.sh
+tools/bench/discord/cdp.py
+tools/bench/discord/duty.sh
+tools/bench/discord/evict.py
+tools/bench/discord/govern.py
+tools/bench/discord/msx.py
+tools/bench/discord/phases.sh
+tools/bench/discord/push.py
+tools/bench/discord/summary.py
 tools/build-rust.sh
 tools/check-adrs.sh
 tools/check-headers.sh

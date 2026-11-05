@@ -65,7 +65,7 @@ pub trait Env {
     fn now_secs(&self) -> u64;
     /// One TLS handshake with `host:443` through WolOS's own Rust stack (`wol doctor tls`).
     fn tls_probe(&mut self, host: &str) -> Result<wol_core::net::Negotiated, String> {
-        wol_core::net::probe(host, std::time::Duration::from_secs(15))
+        wol_core::net::probe(host, TLS_PROBE_WAIT)
     }
     fn config_home(&self) -> PathBuf;
     /// Like `exec`, but the child gets no stdin and its stdout goes to our stderr (`wol mcp`:
@@ -1092,6 +1092,8 @@ fn refresh_catalogue(env: &mut dyn Env) -> bool {
 
 /// How long `pacman -Qu` may take before `wol update check` stops waiting for it.
 const PACMAN_QU_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+/// How long one TLS handshake of `wol doctor tls` may take before the row says it did not answer.
+const TLS_PROBE_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Run `argv` with stdin closed: (exit status, stdout, stderr). `wol_core::system::KILLED` when a signal ended it;
 /// None when it cannot start or does not finish within `timeout` (it is killed): a hung
@@ -2081,8 +2083,12 @@ impl Env for FakeEnv {
         let Some((_, code, err)) = self.statuses.iter().find(|s| s.0 == line).cloned() else {
             return self.capture(argv).map(|o| (0, o, String::new()));
         };
-        // The fake's scripted output for this line; none scripted is an empty one.
-        let out = self.capture(argv).unwrap_or_default();
+        // The fake's scripted output for this line; none scripted is an empty one (a fake has no
+        // failure to give a reason for).
+        let out = match self.capture(argv) {
+            Some(o) => o,
+            None => String::new(),
+        };
         Some((code, out, err))
     }
     fn stdin_line(&mut self) -> Option<String> {

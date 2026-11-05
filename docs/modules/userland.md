@@ -41,7 +41,7 @@ Weather is the WolOS desktop widget (gnome-weather would add gjs + spidermonkey,
 
 Why the rest stays (checked 2026-11-04, details and sources in wolos-iso README "Userland and GNU"):
 
-- findutils: not in Arch `extra`; uutils-findutils 0.11.0 passes every call WolOS and Arch's tools make (find in `crates/core/src/update.rs` for the slot swap, `find -printf '%P\0'` in the base manifest, makepkg, mkinitcpio, dkms), but ships only as AUR source and its binary is larger than GNU findutils.
+- findutils: not in Arch `extra`; uutils-findutils 0.11.0 passes every call WolOS and Arch's tools make (find in `crates/core/src/update.rs` for the slot swap, `find -printf '%P\0'` in the base manifest, makepkg, mkinitcpio, dkms), but ships only as source in the community package collection and its binary is larger than GNU findutils.
 - diffutils: uutils-diffutils 0.6.0 has no `-r`, `-q`, `-w`, `-p`, `-N`, `--label`, `--color`, `--version`; devtools and dkms use them.
 - procps-ng: uutils procps has no release; its `ps -ax -o pid= -o ppid=` prints nothing, which `wol-login` needs to stop a session's process tree (`jobs::PS_ARGS`).
 - util-linux: uutils/util-linux is 0.0.1.

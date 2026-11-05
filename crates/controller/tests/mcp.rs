@@ -648,17 +648,17 @@ fn a_bad_value_is_not_blamed_on_a_missing_session() {
         (
             "audio_volume",
             json!({"percent": "abc"}),
-            "<percent> must be 0..100",
+            "argument 'percent' is a whole number from 0 to 100",
         ),
         (
             "audio_volume",
             json!({"percent": 300}),
-            "<percent> must be 0..100",
+            "argument 'percent' is a whole number from 0 to 100",
         ),
         (
             "display_brightness",
             json!({"percent": 0}),
-            "<percent> must be 1..100",
+            "argument 'percent' is a whole number from 1 to 100",
         ),
     ] {
         let r = call(&mut s, &mut e, tool, args);

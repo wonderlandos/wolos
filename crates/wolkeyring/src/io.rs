@@ -299,13 +299,16 @@ pub fn tpm_open(name: &str, blob: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
 }
 
 /// Asks fprintd for a fingerprint match of the current user (`fprintd-verify`, exit 0 = match).
-pub fn fingerprint_matches() -> bool {
-    Command::new("fprintd-verify")
+/// `Ok(false)` is a reader that said no; an error is a program that could not run (no fprintd), so
+/// the caller can tell "not you" from "cannot ask".
+pub fn fingerprint_matches() -> Result<bool> {
+    let status = Command::new("fprintd-verify")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|s| s.success())
+        .map_err(|e| io("fprintd-verify", e))?;
+    Ok(status.success())
 }
 
 /// The hmac-secret output of a FIDO2 key for a credential and salt (`fido2-assert -G -h`, input

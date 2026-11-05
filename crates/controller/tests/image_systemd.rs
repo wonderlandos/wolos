@@ -1413,3 +1413,28 @@ fn removable_disks_are_unmounted_at_the_end_of_the_session() {
     assert_eq!(log(&d), before);
     assert!(run("carol").status.success());
 }
+
+/// ADR 0054: the keyring daemon's unit is shipped sandboxed, and in 0.13 the session does not start
+/// it: gnome-keyring stays the login keyring until `wol keyring migrate` and the sign-in fast path
+/// are wired (audit A7-23). The unit only runs where something starts it on purpose.
+#[test]
+fn the_keyring_daemon_unit_is_sandboxed_and_not_wanted_by_the_session() {
+    let unit = read("files/usr/lib/systemd/user/wolos-keyringd.service");
+    for want in [
+        "ExecStart=/usr/bin/wol-keyringd",
+        "NoNewPrivileges=yes",
+        "ProtectSystem=strict",
+        "MemoryDenyWriteExecute=yes",
+        "RestrictAddressFamilies=AF_UNIX",
+        "LimitCORE=0",
+    ] {
+        assert!(unit.lines().any(|l| l.trim() == want), "wolos-keyringd.service lacks {want}");
+    }
+    // Its writable paths are the account's own folders, named by specifiers (RS-046).
+    assert!(unit.contains("ReadWritePaths=-%h/.local/share/wolos -%t/wolos"));
+    let target = read("files/usr/lib/systemd/user/wolos-session.target");
+    assert!(
+        !target.contains("wolos-keyringd"),
+        "the session target must not start the keyring daemon yet"
+    );
+}

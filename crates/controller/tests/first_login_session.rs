@@ -74,6 +74,7 @@ impl Scratch {
     }
 }
 
+// Drop: removes the scratch folder on every exit path.
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);

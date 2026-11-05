@@ -126,6 +126,8 @@ fn module_docs_name_their_adr_in_the_title() {
         "vm-graphics.md",
         "shards.md",
         "windows.md",
+        // The System Monitor (SYSMON) has its page and no ADR of its own yet.
+        "monitor.md",
     ];
     let mut bad = Vec::new();
     for e in std::fs::read_dir(repo("docs/modules")).unwrap().flatten() {

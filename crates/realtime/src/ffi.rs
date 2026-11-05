@@ -265,7 +265,7 @@ pub extern "C" fn wol_titlebar_button_origin(
 /// Position for a new floating window of `w`x`h` in area (ax, ay, aw, ah) with title bar `bar`.
 /// `has_prev` != 0: cascade from (px, py) (previous window of the same app). `x`, `y` may be null.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_place(
     w: i32,
     h: i32,
@@ -293,7 +293,7 @@ pub extern "C" fn wol_place(
 /// (ax, ay, aw, ah) minus the placement margin, title bar `bar` included. 0 in min/max = unset.
 /// `out_w`, `out_h` may be null.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_fit(
     w: i32,
     h: i32,
@@ -320,7 +320,7 @@ pub extern "C" fn wol_fit(
 /// the zone (ax, ay, aw, ah) minus the placement margin (`placement::centre_on`). `x`, `y` may be
 /// null.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_centre(
     w: i32,
     h: i32,
@@ -346,7 +346,7 @@ pub extern "C" fn wol_centre(
 /// An open floating window after the zone changed (`placement::refit`): client box in/out through
 /// `x`, `y`, `w`, `h`. Returns 1 when the box changed, 0 when it already fit or a pointer is null.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_refit(
     min_w: i32,
     min_h: i32,
@@ -509,7 +509,7 @@ pub unsafe extern "C" fn wol_frame_stats_json(buf: *mut u8, len: usize) -> i32 {
 /// `snap::zone_at`: the zone under the pointer (px, py) on an output whose box is (sx, sy, sw,
 /// sh), `open` its outer edges (WOL_SNAP_OPEN_*). A `snap::Zone` code (0 none).
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_snap_zone_at(
     sx: i32,
     sy: i32,
@@ -531,7 +531,7 @@ pub extern "C" fn wol_snap_zone_at(
 /// `snap::zone_box`: the frame of `zone` in the usable area (ax, ay, aw, ah) with the tiling
 /// gaps. 0 with x, y, w, h set (each may be null), -1 for zone none or a bad code.
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_snap_box(
     zone: i32,
     ax: i32,
@@ -592,7 +592,7 @@ pub extern "C" fn wol_snap_key(now: i32, key: i32, tiled: i32, zoomed: i32) -> i
 /// `snap::unsnap_at`: top-left (x, y; may be null) for a snapped frame (cx, cy, cw, ch) that gets
 /// its old size w x h back under the pointer (px, py).
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_snap_unsnap(
     cx: i32,
     cy: i32,
@@ -618,7 +618,7 @@ pub extern "C" fn wol_snap_unsnap(
 
 /// `snap::still_at`: 1 when the frame (x, y, w, h) is still the snapped one (sx, sy, sw, sh).
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // a C export: every input is a plain argument
 pub extern "C" fn wol_snap_still(
     x: i32,
     y: i32,

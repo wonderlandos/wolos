@@ -12,6 +12,9 @@ use std::time::Duration;
 use wolkeyring::daemon::{self, Daemon};
 use wolkeyring::{io, secret_service};
 
+/// How often the daemon's clock-driven work runs (idle lock, sleep lock, checkpoints).
+const TICK_EVERY: Duration = Duration::from_secs(5);
+
 fn logind_watchers(d: &Arc<Daemon>) {
     use zbus::message::Type;
     let rules: Vec<(&'static str, &'static str, Option<String>, bool)> = vec![
@@ -134,7 +137,7 @@ fn main() {
         let d = d.clone();
         std::thread::spawn(move || {
             loop {
-                std::thread::sleep(Duration::from_secs(5));
+                std::thread::sleep(TICK_EVERY);
                 d.tick();
             }
         });

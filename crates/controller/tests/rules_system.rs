@@ -802,7 +802,14 @@ fn rs_046_read_write_paths_are_absolute() {
         for k in ["ReadWritePaths", "ReadOnlyPaths", "InaccessiblePaths"] {
             for v in vals(&u, "Service", k) {
                 for p in v.split_whitespace() {
-                    if !p.trim_start_matches(['-', '+', '!', '~']).starts_with('/') {
+                    // A systemd path specifier expands to an absolute directory (%h home, %t runtime
+                    // dir, %S state, %C cache, %L logs, %E config): the way a user unit names the
+                    // account's own folders.
+                    let q = p.trim_start_matches(['-', '+', '!', '~']);
+                    let specifier = ["%h/", "%t/", "%S/", "%C/", "%L/", "%E/"]
+                        .iter()
+                        .any(|s| q.starts_with(s));
+                    if !q.starts_with('/') && !specifier {
                         bad.insert(format!("{u}: {k}={p}"));
                     }
                 }

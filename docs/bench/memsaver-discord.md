@@ -11,7 +11,7 @@ numbers. All values are MiB of PSS summed over every process of the app's cgroup
 |---|---|
 | Date | 2026-11-04, 19:40 to 22:10 UTC |
 | Image | WolOS 0.12.1 (`wolos-2026.11.04-x86_64.iso`), installed with `wolos.autoinstall`; kernel `7.3.0-5-wolos`; Discord from the Arch `discord` package, **logged out** (the login screen is what runs; a logged-in client holds more) |
-| VM | wolvm on the forge: 4 vCPU (Xeon Platinum 8375C), 8 GiB, KVM, `virtio-vga` (software rendering), zram 3.9 GiB zstd, Hyprland session, 1280x800 |
+| VM | wolvm on the forge: 4 vCPU (Xeon Platinum 8375C), 8 GiB, KVM, `virtio-vga` (software rendering), zram 3.9 GiB zstd, the WolOS desktop session, 1280x800 |
 | Probes | `tools/bench/discord/`: `msx.py` (PSS, `memory.current`, swap, PSI of the scope), `phases.sh` (fresh start, 60 s focused idle, 30 s of real key presses through QEMU, background on another workspace, back in front), `cdp.py` (page responsiveness through DevTools: animation frames in front, a constant evaluated in the background = how long a message waits), `govern.py` (the rejected governor), `evict.py`, `duty.sh`, `push.py` |
 | Runs | one run per row, 3 samples at launch, 6 idle, 6 typing, the background window 60 s to 10 min; raw numbers per run in `memsaver-discord.json`. n is small: the spread between runs of the same configuration is about 5 MiB at rest and up to 50 MiB while typing |
 

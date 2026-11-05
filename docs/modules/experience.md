@@ -50,6 +50,7 @@ The launcher entry carries `X-WolOS-Surfaces=` with the ids the app provides on 
 | org.wolos.gallery.desktop | S04;S05;S19;S27 |
 | org.wolos.store.desktop | S05;S19;S25;S27 |
 | org.wolos.plugin-maker.desktop | S19;S25;S27 |
+| org.wolos.quicklook.desktop | S08 |
 | org.wolos.windows-app.desktop | |
 | steam.desktop | S05;S27 |
 
