@@ -882,11 +882,26 @@ pub mod be {
         Vec::new()
     }
 
-    /// `bootctl set-default ENTRY`: `entry` is the boot entry's file name as it is in
-    /// `loader/entries`, counter included (`wolos-a+3.conf`): sd-boot matches it against that name
-    /// (QA-A9-CORE-5). See [`entry_file`].
+    /// `bootctl set-default ID`: `entry` is the boot entry's file name as it is in
+    /// `loader/entries` ([`entry_file`]); what is written is its id, [`entry_id`] (`wolos-a+3.conf`
+    /// is `wolos-a.conf`). sd-boot matches `LoaderEntryDefault` against the id and nothing else, so
+    /// a counted file name made the default match no entry and the newest slot booted
+    /// (IMAGE-013-3 gate-rollback; QA-A9-CORE-5 had read systemd 257, where the id kept the counter).
     pub fn activate_argv(entry: &str) -> Vec<String> {
-        vec!["bootctl".into(), "set-default".into(), entry.into()]
+        vec!["bootctl".into(), "set-default".into(), entry_id(entry)]
+    }
+
+    /// The id systemd-boot (>= 259) and bootctl give an entry file: its name with the boot counter
+    /// `+LEFT[-DONE]` taken out from before `.conf` (src/boot/boot.c `boot_entry_parse_tries`,
+    /// the last `+`). A name with no valid counter is its own id.
+    pub fn entry_id(file: &str) -> String {
+        let counted = file.strip_suffix(".conf").and_then(|stem| {
+            let (base, count) = stem.rsplit_once('+')?;
+            let (left, done) = count.split_once('-').unwrap_or((count, "0"));
+            let num = |t: &str| !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit());
+            (num(left) && num(done)).then(|| format!("{base}.conf"))
+        });
+        counted.unwrap_or_else(|| file.into())
     }
 
     /// Where the boot entries are (on the ESP, [`super::ESP`]).
@@ -1431,6 +1446,43 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
             be::destroy_argv("wolos-b").join(" "),
             "btrfs subvolume delete /run/wolos/top/@wolos-b"
         );
+    }
+
+    /// IMAGE-013-3 gate-rollback: after an update into wolos-b and a boot on it, `wol update
+    /// rollback` wrote `bootctl set-default wolos-a+1.conf`; the next boot was wolos-b again.
+    /// sd-boot (systemd >= 259, the image has 262: src/boot/boot.c `boot_entry_parse_tries`)
+    /// gives an entry the id of its file name WITHOUT the counter (`wolos-a+1.conf` is
+    /// `wolos-a.conf`) and matches `LoaderEntryDefault` against that id (`config_find_entry`,
+    /// `efi_fnmatch`): a counted name matches no entry and the sort order picks the newest slot.
+    #[test]
+    fn the_default_is_the_entry_id_without_its_counter() {
+        let listing =
+            "wolos-a+1.conf\nwolos-a-fallback+1.conf\nwolos-b-fallback.conf\nwolos-b.conf\n";
+        let set = |slot: &str| be::activate_argv(&be::entry_file(slot, Some(listing))).join(" ");
+        assert_eq!(set("wolos-a"), "bootctl set-default wolos-a.conf");
+        assert_eq!(set("wolos-b"), "bootctl set-default wolos-b.conf");
+        for (file, id) in [
+            ("wolos-a+3.conf", "wolos-a.conf"),
+            ("wolos-a+1-2.conf", "wolos-a.conf"),
+            ("wolos-a+0-3.conf", "wolos-a.conf"),
+            ("wolos-b.conf", "wolos-b.conf"),
+            ("wolos-a-fallback+1.conf", "wolos-a-fallback.conf"),
+            // Not a counter (sd-boot keeps the name whole): `+` mid-name, no digits.
+            ("wolos-a+x.conf", "wolos-a+x.conf"),
+            ("wolos-a+1.conf.bak", "wolos-a+1.conf.bak"),
+        ] {
+            assert_eq!(be::entry_id(file), id, "{file}");
+        }
+        // The id bootctl reports for the counted entry is what the default must equal.
+        let bes = be::parse(concat!(
+            r#"[{"id":"wolos-a.conf","path":"/efi/loader/entries/wolos-a+1.conf","#,
+            r#""uki":"/EFI/wolos/wolos-a.efi","triesLeft":1,"isDefault":false,"isSelected":false},"#,
+            r#"{"id":"wolos-b.conf","path":"/efi/loader/entries/wolos-b.conf","#,
+            r#""uki":"/EFI/wolos/wolos-b.efi","isDefault":true,"isSelected":true}]"#
+        ));
+        let target = be::rollback_target(&bes).unwrap();
+        assert_eq!(target.name, "wolos-a");
+        assert_eq!(set(&target.name), "bootctl set-default wolos-a.conf");
     }
 
     #[test]
