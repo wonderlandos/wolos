@@ -6,7 +6,7 @@ The picture library and viewer that ships with WolOS: a Wolkit app in Crystal (A
 
 - **Library.** Reads every PNG and JPEG under the Pictures folder (the folder settings' `XDG_PICTURES_DIR`, else `~/Pictures`) and shows them in smart sections: by date (a section per day for the last week, then per month) or by place (a cell of a tenth of a degree, named by its coordinates; pictures with no place last).
 - **Viewer.** One picture at a time with zoom (fit, then 25 % to 800 %), pan, a filmstrip of its neighbours, a quiet info panel (when, size, camera, exposure, place, folder) and a slideshow that goes round every four seconds.
-- **Image viewer.** `wol-gallery PICTURE` (or a `file://` address) opens that picture in the viewer, with the other pictures of its folder in the filmstrip; the launcher entry takes `image/jpeg` and `image/png`.
+- **Image viewer.** `wol-gallery PICTURE` (or a `file://` address) opens that picture in the viewer, with the other pictures of its folder in the filmstrip; the launcher entry takes `image/jpeg` and `image/png`, and is the default for both ("In the image").
 - **Delete with Undo.** Backspace or Delete moves the picture to the shared Trash (the folder the file manager's Trash shows); the notice line offers Undo, which puts it back.
 - **Share.** The system share sheet, through `Wolkit::Services.share`.
 
@@ -40,11 +40,18 @@ The scan runs on the Wolkit background pool (`FolderSource#load`, `src/gallery/s
 
 The package's `check()` runs the same `make spec` against the installed libwolkit.
 
+## In the image
+
+- **Package.** `wolos-app-gallery` (pkgbuilds, `packages` line after libwolkit and libwol) installs `/usr/bin/wol-gallery`, the launcher entry and `/usr/share/wolos/consent.d/org.wolos.gallery.json` (from `org.wolos.gallery.consent.json` in the app folder). The image profile lists it with the Dock apps.
+- **Grants.** The consent file is a vendor default (`consent::DEFAULTS_DIR`, `docs/modules/security.md`): `trash` and `share` for `/usr/bin/wol-gallery`, nothing else. Wold and Settings > Privacy & Security hold them until the person switches one off (the choice is kept in `/etc/wolos/consent.json` under `revoked` and survives updates). `crates/core/tests/consent_defaults.rs` holds the file to the rule for defaults.
+- **Default viewer.** Gallery is the default for `image/png` and `image/jpeg` (`desktop/overlay/usr/share/applications/mimeapps.list`, eog listed after it as the fallback), and the Photos pin of the Dock opens it. `image/gif`, `image/webp` and `image/svg+xml` stay with eog: Gallery draws PNG and JPEG only, and a default that cannot show its file is worse than none. Shotwell stays installed until Gallery has import from a camera or phone.
+- **Journey.** `e2e-gallery` (wolos-iso `tests/wolvm/journeys/`): a PNG opens from the default (the call Files makes), Delete puts it in the Trash with a notice, Ctrl+Z puts it back, Share opens the sheet; wold refuses nothing.
+
 ## Limits and what waits on other packages
 
-- **No pixels yet.** libwolkit keeps encoded images but does not decode or paint them (its image decoder lands with the paint stage), so the goldens show the frames of tiles, stage and filmstrip empty, and icon buttons without their icon. The app already sets every `image` source (file path, or `icon:<name>`), so pictures appear when the engine draws them, with no change here.
+- **Pictures.** libwolkit decodes and paints PNG and JPEG since WK-image (`docs/modules/wolkit.md`, `image`): every `image` source (file path, or `icon:<name>`) draws the picture, and a placeholder in the `control` colour shows until the file is decoded. Other formats (GIF, WebP, SVG) are not drawn, so the library does not list them and they stay with the image viewer (see "In the image").
 - **Thumbnails** exist only for pictures whose camera stored a preview; the others show the picture itself, scaled by the engine.
-- **Trash, Share and Open with** go through libwol 1.15 (`Wol::Trash.move`, `Wol::Share.file`, `Wol::Share.open_with`): the app needs the grants `trash` and `share`; without them the refusal's sentence shows inline. Undo renames the picture back out of the home Trash (`Gallery::Trash#restore`, the note the desktop wrote is removed); a picture that went to the Trash of its own drive is put back from the Files Trash.
+- **Trash, Share and Open with** go through libwol 1.15 (`Wol::Trash.move`, `Wol::Share.file`, `Wol::Share.open_with`): the app needs the grants `trash` and `share`. The package ships both as vendor defaults ("In the image"), so the first Delete on a fresh system works; when the person has switched one off in Settings > Privacy & Security, the refusal's sentence shows inline. Undo renames the picture back out of the home Trash (`Gallery::Trash#restore`, the note the desktop wrote is removed); a picture that went to the Trash of its own drive is put back from the Files Trash.
 - **Pan** is by keyboard and by clicking (actual size at the point); dragging and wheel panning need pointer drag events in the DSL.
 - **Window size**: the grid's row length and the stage size are read from the window when a key is pressed or the zoom changes; a resize does not re-lay the zoom until then.
 - At most 4,000 tiles are mounted at once (a window holds 65,536 parts); the library says so when there are more.

@@ -57,6 +57,172 @@ const PEER: &str = "ipc:";
 /// Before the device in a grant for one USB device.
 const DEVICE: &str = "device:";
 
+/// Grants the packages of bundled apps ship (vendor defaults): `*.json` files of the same
+/// `{"grants":[...]}` shape in a root-owned folder under `/usr`, one per package. A bundled app
+/// then works on a fresh system (the first Delete in Gallery moves the picture to the Trash
+/// instead of showing a refusal), and the person can still switch any of them off in Settings >
+/// Privacy & Security: the switch writes the pair to `"revoked"` in [`FILE`], which survives
+/// package updates (a package never rewrites that file, so no file conflict either).
+pub const DEFAULTS_DIR: &str = "/usr/share/wolos/consent.d";
+
+/// What a package may grant by default: harmless verbs that ask the person each time or only act
+/// on what the app is handed. Nothing that reads the screen, the keyboard, the clipboard history,
+/// the window list or other apps' messages, and no package changes. A default outside this list
+/// is ignored, so a third-party package cannot ship itself a powerful grant.
+pub const DEFAULTABLE: [&str; 6] = [
+    "trash",
+    "share",
+    "notifications",
+    "file-panels",
+    "app-preferences",
+    "search-provider",
+];
+
+/// Most default files read, and bytes read from each (a package ships a few lines).
+const MAX_DEFAULT_FILES: usize = 64;
+const MAX_DEFAULT_BYTES: u64 = 16 * 1024;
+
+/// Whether a package may ship `capability` for `app` as a default: a valid grant of a
+/// [`DEFAULTABLE`] capability for a program directly in `/usr/bin`.
+pub fn is_default_grant(app: &str, capability: &str) -> bool {
+    is_valid_grant(app, capability)
+        && DEFAULTABLE.contains(&capability)
+        && app
+            .strip_prefix("/usr/bin/")
+            .is_some_and(|name| !name.contains('/'))
+}
+
+/// The grants of the default files' texts: only [`is_default_grant`] pairs, no duplicates.
+pub fn parse_defaults<'a>(texts: impl IntoIterator<Item = &'a str>) -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = Vec::new();
+    for t in texts {
+        for g in parse(t) {
+            if is_default_grant(&g.0, &g.1) && !v.contains(&g) {
+                v.push(g);
+            }
+        }
+    }
+    v
+}
+
+/// Vendor defaults on this machine ([`DEFAULTS_DIR`]).
+pub fn defaults(h: &dyn Host) -> Vec<(String, String)> {
+    let texts: Vec<String> = h
+        .list_dir(DEFAULTS_DIR)
+        .into_iter()
+        .filter(|p| p.ends_with(".json"))
+        .take(MAX_DEFAULT_FILES)
+        .filter_map(|p| {
+            // Bounded like `defaults_in`: a file past the limit is cut, no longer valid JSON, ignored.
+            let mut buf = vec![0u8; MAX_DEFAULT_BYTES as usize];
+            let n = h.read_head(&p, &mut buf)?;
+            String::from_utf8(buf[..n].to_vec()).ok()
+        })
+        .collect();
+    parse_defaults(texts.iter().map(String::as_str))
+}
+
+/// [`defaults`] for a process with no [`Host`] (wold, the administrator helper): reads `dir`,
+/// bounded, nothing for a missing or unreadable folder.
+pub fn defaults_in(dir: &std::path::Path) -> Vec<(String, String)> {
+    use std::io::Read;
+    let mut names: Vec<std::path::PathBuf> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "json"))
+        .collect();
+    names.sort();
+    let texts: Vec<String> = names
+        .into_iter()
+        .take(MAX_DEFAULT_FILES)
+        .filter_map(|p| {
+            let mut s = String::new();
+            std::fs::File::open(p)
+                .ok()?
+                .take(MAX_DEFAULT_BYTES)
+                .read_to_string(&mut s)
+                .ok()?;
+            Some(s)
+        })
+        .collect();
+    parse_defaults(texts.iter().map(String::as_str))
+}
+
+/// The pairs the person switched off although a package grants them (`"revoked"` in [`FILE`]).
+/// Same shape as `"grants"`; a file that is not that shape revokes nothing.
+pub fn revoked(json: &str) -> Vec<(String, String)> {
+    #[derive(serde::Deserialize)]
+    struct File {
+        #[serde(default)]
+        revoked: Vec<Grant>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Grant {
+        app: String,
+        capability: String,
+    }
+    serde_json::from_str::<File>(json).map_or_else(
+        |_| Vec::new(),
+        |f| {
+            f.revoked
+                .into_iter()
+                .map(|g| (g.app, g.capability))
+                .collect()
+        },
+    )
+}
+
+/// Whether `text` is a consent file this module understands: a JSON object whose `grants` and
+/// `revoked` keys, when present, are lists of `{app, capability}` strings. Other keys are free.
+fn is_well_formed(text: &str) -> bool {
+    #[derive(serde::Deserialize)]
+    struct Pair {
+        #[allow(dead_code)]
+        app: String,
+        #[allow(dead_code)]
+        capability: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct File {
+        #[serde(default)]
+        #[allow(dead_code)]
+        grants: Vec<Pair>,
+        #[serde(default)]
+        #[allow(dead_code)]
+        revoked: Vec<Pair>,
+    }
+    serde_json::from_str::<Value>(text).is_ok_and(|v| v.is_object())
+        && serde_json::from_str::<File>(text).is_ok()
+}
+
+/// What an app really holds: the vendor `defaults` and the grants of the file `file_text` (the
+/// person's own choices), minus every pair in the file's `revoked` list. No duplicates.
+///
+/// Revoked wins over grants: a pair in both is not held, because switching something off is the
+/// person's last word (Settings never writes both; a hand edit or an old entry might). No file at
+/// all is a fresh system and the defaults stand alone. A file that is not well formed, as a whole
+/// (not a JSON object, or a `grants` or `revoked` key that is not a list of pairs), grants nothing,
+/// defaults included (fail closed, as [`parse`]): the next edit from Settings starts it over.
+pub fn effective(file_text: Option<&str>, defaults: &[(String, String)]) -> Vec<(String, String)> {
+    if file_text.is_some_and(|t| !is_well_formed(t)) {
+        return Vec::new();
+    }
+    let off = file_text.map(revoked).unwrap_or_default();
+    let mut v: Vec<(String, String)> = Vec::new();
+    for g in defaults
+        .iter()
+        .cloned()
+        .chain(file_text.map(parse).unwrap_or_default())
+    {
+        if !off.contains(&g) && !v.contains(&g) {
+            v.push(g);
+        }
+    }
+    v
+}
+
 /// The grant that lets an app send messages to `peer`.
 pub fn peer_grant(peer: &str) -> String {
     format!("{PEER}{peer}")
@@ -125,32 +291,59 @@ pub fn parse(json: &str) -> Vec<(String, String)> {
 }
 
 /// `current` with the one grant added (`allow`) or removed; other grants and keys kept, pretty JSON.
-/// A malformed file grants nothing, so the edit starts it over.
+/// A malformed file grants nothing, so the edit starts it over. Knows no vendor defaults: see
+/// [`set_over`].
 pub fn set(current: Option<&str>, app: &str, capability: &str, allow: bool) -> String {
+    set_over(current, &[], app, capability, allow)
+}
+
+/// [`set`] over the vendor `defaults`. Switching a default off records it in `"revoked"` (the
+/// default itself is the package's file and stays); switching it on again drops that entry, and
+/// a default needs no entry in `"grants"`. Any other pair is added to or removed from `"grants"`
+/// as in [`set`]. A `"revoked"` entry stays when its package goes away, so installing the app again
+/// keeps the person's choice; only a default can be added to it.
+pub fn set_over(
+    current: Option<&str>,
+    defaults: &[(String, String)],
+    app: &str,
+    capability: &str,
+    allow: bool,
+) -> String {
     let mut top: Map<String, Value> = current
         .and_then(|c| serde_json::from_str::<Value>(c).ok())
         .and_then(|v| v.as_object().cloned())
         .unwrap_or_default();
+    let pair = (app.to_owned(), capability.to_owned());
+    let is_default = defaults.contains(&pair);
     let mut grants = current.map(parse).unwrap_or_default();
-    grants.retain(|g| !(g.0 == app && g.1 == capability));
-    if allow {
-        grants.push((app.to_owned(), capability.to_owned()));
+    let mut off = current.map(revoked).unwrap_or_default();
+    grants.retain(|g| *g != pair);
+    off.retain(|r| *r != pair);
+    if allow && !is_default {
+        grants.push(pair);
+    } else if !allow && is_default {
+        off.push(pair);
     }
-    top.insert(
-        "grants".into(),
-        grants
-            .iter()
+    let list = |v: &[(String, String)]| -> Value {
+        v.iter()
             .map(|(a, c)| json!({"app": a, "capability": c}))
-            .collect(),
-    );
+            .collect()
+    };
+    top.insert("grants".into(), list(&grants));
+    if off.is_empty() {
+        top.remove("revoked");
+    } else {
+        top.insert("revoked".into(), list(&off));
+    }
     let mut s = serde_json::to_string_pretty(&Value::Object(top)).unwrap_or_default();
     s.push('\n');
     s
 }
 
-/// Grants on this machine (Settings > Privacy lists them).
+/// Grants on this machine (Settings > Privacy lists them): the vendor defaults the person has
+/// not switched off, and the person's own ([`effective`]).
 pub fn read(h: &dyn Host) -> Vec<(String, String)> {
-    h.read_text(FILE).map(|t| parse(&t)).unwrap_or_default()
+    effective(h.read_text(FILE).as_deref(), &defaults(h))
 }
 
 /// What wold refused an account's apps (`<ASKED_DIR>/<uid>.json`, `{"asked":[{"app":"<canonical
@@ -280,6 +473,176 @@ mod tests {
             asked_path(1000),
             std::path::Path::new(ASKED_DIR).join("1000.json")
         );
+    }
+
+    const GALLERY: &str = r#"{"grants":[{"app":"/usr/bin/wol-gallery","capability":"trash"},{"app":"/usr/bin/wol-gallery","capability":"share"}]}"#;
+
+    fn gallery_defaults() -> Vec<(String, String)> {
+        parse_defaults([GALLERY])
+    }
+
+    /// E2E-GALLERY: the first Delete in a bundled app on a fresh system showed a refusal because
+    /// no grant existed. The package ships its two grants; a fresh system (no consent file) holds them.
+    #[test]
+    fn a_fresh_system_holds_the_defaults_of_bundled_apps() {
+        let d = gallery_defaults();
+        assert_eq!(d.len(), 2);
+        let held = effective(None, &d);
+        assert_eq!(held, d);
+        // The person's own grants come after, without repeating a default.
+        let file = set(None, "/usr/bin/wlrctl", "window-list", true);
+        let held = effective(Some(&file), &d);
+        assert_eq!(held.len(), 3);
+        assert_eq!(held[2], ("/usr/bin/wlrctl".into(), "window-list".into()));
+        let again = set_over(Some(&file), &d, "/usr/bin/wol-gallery", "trash", true);
+        assert_eq!(
+            effective(Some(&again), &d),
+            held,
+            "a default is not copied into the file"
+        );
+    }
+
+    #[test]
+    fn switching_a_default_off_survives_and_on_restores() {
+        let d = gallery_defaults();
+        let app = "/usr/bin/wol-gallery";
+        let off = set_over(None, &d, app, "trash", false);
+        assert_eq!(revoked(&off), [(app.into(), "trash".into())]);
+        assert_eq!(effective(Some(&off), &d), [(app.into(), "share".into())]);
+        // Another switch leaves the choice alone, and so does an update of the package (the same
+        // defaults, a file only the person writes).
+        let other = set_over(Some(&off), &d, "/usr/bin/wlrctl", "window-list", true);
+        assert_eq!(revoked(&other).len(), 1);
+        assert!(!effective(Some(&other), &d).contains(&(app.into(), "trash".into())));
+        // Off twice is one entry; on again removes it and writes no grant of its own.
+        let twice = set_over(Some(&off), &d, app, "trash", false);
+        assert_eq!(revoked(&twice).len(), 1);
+        let on = set_over(Some(&off), &d, app, "trash", true);
+        assert!(revoked(&on).is_empty());
+        assert!(!on.contains("revoked"), "{on}");
+        assert!(parse(&on).is_empty());
+        assert_eq!(effective(Some(&on), &d), d);
+        // A pair that is no default is never recorded as revoked.
+        let plain = set_over(Some(SHIPPED), &d, "/usr/bin/hello", "notifications", false);
+        assert!(revoked(&plain).is_empty());
+        assert_eq!(parse(&plain).len(), 1);
+        // The old entry of a package that went away does not block a grant from the person.
+        let stale = set_over(Some(&off), &[], app, "trash", true);
+        assert!(revoked(&stale).is_empty());
+        assert_eq!(parse(&stale), [(app.into(), "trash".into())]);
+    }
+
+    #[test]
+    fn a_broken_file_grants_nothing_not_even_defaults() {
+        let d = gallery_defaults();
+        for bad in ["", "{oops", "[]", "7"] {
+            assert!(effective(Some(bad), &d).is_empty(), "{bad}");
+        }
+        assert_eq!(effective(Some("{}"), &d), d);
+        // A malformed key fails the whole file, defaults included: a switch-off that cannot be
+        // read must not turn a default back on.
+        for bad in [
+            r#"{"grants":{}}"#,
+            r#"{"grants":[{"app":"/usr/bin/a"}]}"#,
+            r#"{"grants":[],"revoked":{}}"#,
+            r#"{"grants":[],"revoked":[{"app":"/usr/bin/wol-gallery"}]}"#,
+            r#"{"revoked":"trash"}"#,
+        ] {
+            assert!(effective(Some(bad), &d).is_empty(), "{bad}");
+        }
+        // Other keys are free.
+        assert_eq!(effective(Some(r#"{"_note":"dev VM"}"#), &d), d);
+    }
+
+    #[test]
+    fn revoked_wins_over_a_grant_of_the_same_pair() {
+        let d = gallery_defaults();
+        let app = "/usr/bin/wol-gallery";
+        let both = format!(
+            r#"{{"grants":[{{"app":"{app}","capability":"trash"}},{{"app":"/usr/bin/x","capability":"share"}}],
+                "revoked":[{{"app":"{app}","capability":"trash"}},{{"app":"/usr/bin/x","capability":"share"}}]}}"#
+        );
+        let held = effective(Some(&both), &d);
+        assert_eq!(held, [(app.into(), "share".into())], "{held:?}");
+        // No default involved: the grant is switched off all the same.
+        assert!(effective(Some(&both), &[]).is_empty());
+    }
+
+    #[test]
+    fn a_default_file_past_the_limit_is_cut_and_ignored() {
+        let h = FakeHost::linux();
+        // The grant sits past the bound: cut off, no longer valid JSON, so nothing is granted.
+        let late = format!(
+            r#"{{"grants":[{}{{"app":"/usr/bin/wol-gallery","capability":"trash"}}]}}"#,
+            " ".repeat(MAX_DEFAULT_BYTES as usize)
+        );
+        h.file(&format!("{DEFAULTS_DIR}/late.json"), &late);
+        assert!(
+            parse_defaults([late.as_str()]).len() == 1,
+            "valid when read whole"
+        );
+        assert!(defaults(&h).is_empty());
+        // Within the bound the same file is read.
+        h.file(&format!("{DEFAULTS_DIR}/late.json"), GALLERY);
+        assert_eq!(defaults(&h), gallery_defaults());
+    }
+
+    #[test]
+    fn a_package_default_is_only_a_harmless_verb_for_a_program_in_usr_bin() {
+        for (app, cap, ok) in [
+            ("/usr/bin/wol-gallery", "trash", true),
+            ("/usr/bin/wol-gallery", "share", true),
+            ("/usr/bin/wol-notes", "search-provider", true),
+            ("/usr/bin/x", "packages-install", false),
+            ("/usr/bin/x", "clipboard-history", false),
+            ("/usr/bin/x", "input-injection", false),
+            ("/usr/bin/x", "window-list", false),
+            ("/usr/bin/x", "ipc", false),
+            ("/usr/bin/x", "screen-capture", false),
+            ("/usr/bin/x", "made-up", false),
+            ("/home/eve/x", "trash", false),
+            ("/opt/x/x", "trash", false),
+            ("/usr/bin/sub/x", "trash", false),
+            ("/usr/bin/../../tmp/x", "trash", false),
+            ("wol-gallery", "trash", false),
+        ] {
+            assert_eq!(is_default_grant(app, cap), ok, "{app} {cap}");
+        }
+        let text = r#"{"grants":[{"app":"/usr/bin/a","capability":"trash"},
+            {"app":"/usr/bin/a","capability":"trash"},{"app":"/usr/bin/a","capability":"devices"}]}"#;
+        assert_eq!(
+            parse_defaults([text, "{bad"]),
+            [("/usr/bin/a".into(), "trash".into())]
+        );
+        // Every defaultable name is a real capability.
+        for c in DEFAULTABLE {
+            assert!(CAPABILITIES.contains(&c), "{c}");
+        }
+    }
+
+    #[test]
+    fn defaults_come_from_the_json_files_of_the_folder() {
+        let h = FakeHost::linux();
+        h.file(&format!("{DEFAULTS_DIR}/org.wolos.gallery.json"), GALLERY);
+        h.file(
+            &format!("{DEFAULTS_DIR}/README"),
+            GALLERY.replace("gallery", "other").as_str(),
+        );
+        assert_eq!(defaults(&h), gallery_defaults());
+        h.file(
+            FILE,
+            &set_over(None, &defaults(&h), "/usr/bin/wol-gallery", "share", false),
+        );
+        assert_eq!(read(&h), [("/usr/bin/wol-gallery".into(), "trash".into())]);
+        assert!(defaults(&FakeHost::linux()).is_empty());
+        // The real reader gives the same on disk.
+        let dir = std::env::temp_dir().join(format!("wol-consent-d-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("org.wolos.gallery.json"), GALLERY).unwrap();
+        std::fs::write(dir.join("notes.txt"), GALLERY).unwrap();
+        assert_eq!(defaults_in(&dir), gallery_defaults());
+        assert!(defaults_in(&dir.join("missing")).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

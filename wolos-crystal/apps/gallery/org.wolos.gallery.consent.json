@@ -1,0 +1,6 @@
+{
+  "grants": [
+    { "app": "/usr/bin/wol-gallery", "capability": "trash" },
+    { "app": "/usr/bin/wol-gallery", "capability": "share" }
+  ]
+}

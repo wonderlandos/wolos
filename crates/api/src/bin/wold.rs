@@ -53,7 +53,10 @@ fn main() {
     {
         let (jobs, bus) = (jobs.clone(), bus.clone());
         let grants = Arc::new(api::portal::Remembering {
-            grants: api::portal::ConsentFile(wol_core::consent::FILE.into()),
+            grants: api::portal::ConsentFile(
+                wol_core::consent::FILE.into(),
+                wol_core::consent::DEFAULTS_DIR.into(),
+            ),
             dir: wol_core::consent::ASKED_DIR.into(),
             log: |m| eprintln!("wold: {m}"),
         });

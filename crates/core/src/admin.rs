@@ -59,7 +59,13 @@ impl WriteContent {
                 app,
                 capability,
                 allow,
-            } => crate::consent::set(current, app, capability, *allow),
+            } => crate::consent::set_over(
+                current,
+                &crate::consent::defaults_in(std::path::Path::new(crate::consent::DEFAULTS_DIR)),
+                app,
+                capability,
+                *allow,
+            ),
         }
     }
 }
