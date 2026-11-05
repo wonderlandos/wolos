@@ -41,7 +41,7 @@ fn release_manifest_is_what_updates_read() {
             "r42",
             "https://example.org/img",
         ])
-        .args(["0.11.2", "7.3.0-1"])
+        .args(["0.11.2", "7.3.0-1", "wolos"])
         .output()
         .unwrap();
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -423,6 +423,94 @@ fn int_descends_from_last_release() {
     }
 }
 
+/// The first `## ` heading of CHANGELOG.md as (version, the rest): Err when the newest section is
+/// not `## N.N.N ...` (QA-A9-IMAGE-01: a `## Unreleased` above the last release made
+/// tools/bump-wolos.sh in wolos-pkgbuilds take the OLD number, so the whole 0.13 head shipped as
+/// "WolOS 0.12.1" on 0.12.1's snapshot date and no 0.12.1 computer was ever offered it).
+fn changelog_top(text: &str) -> Result<(Vec<u64>, String), String> {
+    let h = text
+        .lines()
+        .find(|l| l.starts_with("## "))
+        .ok_or("no `## ` heading")?;
+    let mut w = h[3..].splitn(2, ' ');
+    let (v, rest) = (w.next().unwrap_or(""), w.next().unwrap_or("").trim());
+    let nums: Option<Vec<u64>> = v.split('.').map(|p| p.parse().ok()).collect();
+    match nums {
+        Some(n) if n.len() == 3 => Ok((n, rest.to_owned())),
+        _ => Err(format!(
+            "the newest CHANGELOG heading `{h}` is not a numbered release"
+        )),
+    }
+}
+
+#[test]
+fn changelog_reader_reads_what_it_says() {
+    assert_eq!(
+        changelog_top("# Changelog\n\n## 0.13.0 (2026-11-05)\n## 0.12.1\n"),
+        Ok((vec![0, 13, 0], "(2026-11-05)".to_owned()))
+    );
+    assert!(changelog_top("# Changelog\n\n## Unreleased\n\n## 0.12.1 (unreleased)\n").is_err());
+    assert!(changelog_top("## 0.13\n").is_err());
+    assert!(changelog_top("nothing\n").is_err());
+}
+
+/// QA-A9-IMAGE-01: the newest CHANGELOG section is a numbered release (it is the pkgver of eight
+/// recipes and the version `wol update` compares), written `N.N.N (YYYY-MM-DD)` or
+/// `N.N.N (unreleased)`, newer than the last published release (tools/release/last-release.txt:
+/// `is_newer` is strict, a head with the last release's number is never offered to a computer
+/// that runs it), and the numbered sections below it go down.
+#[test]
+fn changelog_top_release_is_newer_than_the_last_release() {
+    let log = read("CHANGELOG.md");
+    let (top, rest) = changelog_top(&log).unwrap_or_else(|e| panic!("{e}"));
+    let dated = rest.len() == 12
+        && rest.starts_with('(')
+        && rest.ends_with(')')
+        && rest[1..11].bytes().enumerate().all(|(i, b)| {
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
+        });
+    assert!(
+        dated || rest == "(unreleased)",
+        "the newest CHANGELOG heading ends `{rest}`: write `(YYYY-MM-DD)` or `(unreleased)`"
+    );
+    let rec = read("tools/release/last-release.txt");
+    let tag = rec
+        .lines()
+        .find_map(|l| l.strip_prefix("tag v"))
+        .expect("last-release.txt tag");
+    let last: Vec<u64> = tag.trim().split('.').map(|p| p.parse().unwrap()).collect();
+    assert!(
+        top > last,
+        "CHANGELOG's newest release {top:?} is not newer than the last release v{tag}: the head \
+         would ship under the number of a release already out (QA-A9-IMAGE-01)"
+    );
+    let mut prev = top;
+    for l in log.lines().filter(|l| l.starts_with("## ")).skip(1) {
+        let Some(n) = l[3..]
+            .split(' ')
+            .next()
+            .map(|v| {
+                v.split('.')
+                    .map(|p| p.parse::<u64>().ok())
+                    .collect::<Option<Vec<_>>>()
+            })
+            .and_then(|o| o)
+            .filter(|n| n.len() == 3)
+        else {
+            continue; // older headings without a patch number (0.11.5 is three; 0.10.0 too)
+        };
+        assert!(
+            n < prev,
+            "CHANGELOG heading `{l}` is not older than the one above it"
+        );
+        prev = n;
+    }
+}
+
 /// ADR 0044 (0.12.1 FIX-slot): the `/etc` overlay line every slot reads mounts with
 /// `index=off,metacopy=off`, so the overlay takes the new slot's `/etc` as its lower after a
 /// switch (with `index=on` it refused it: emergency mode after an update). The installer's line
@@ -566,6 +654,7 @@ fn the_0120_client_reads_the_published_release() {
             "https://cdn.wolos.org/v0.13.0",
             "0.13.0",
             "1:1.0+7.3.1-1",
+            "wolos",
         ])
         .output()
         .unwrap();

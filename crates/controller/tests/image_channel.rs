@@ -78,7 +78,10 @@ fn a_testing_image_installs_a_system_on_testing() {
         "the section reads the mirrorlist again: {conf}"
     );
     assert!(!conf.contains("\nServer = https://github.com"), "{conf}");
-    assert_eq!(servers(&list), [url.as_str()], "{list}");
+    // The CDN first (QA-A9-IMAGE-05: its folder is named like the tag, `wolos-testing/`), the
+    // release assets of the same tag second.
+    let cdn = format!("{}/wolos-testing", wol_core::cdn::PRIMARY);
+    assert_eq!(servers(&list), [cdn.as_str(), url.as_str()], "{list}");
     assert!(
         !list.contains(&format!("$repo-{}", snapshot())),
         "no stable tag left: {list}"

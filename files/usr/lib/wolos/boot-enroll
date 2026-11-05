@@ -33,9 +33,13 @@ case $(mokutil --test-key "$S/db.der" 2>&1 || :) in
   exit 0
   ;;
 esac
-h=$(mktemp)
+h=$(umask 077; mktemp)
 trap 'rm -f "$h"' EXIT
-mokutil --generate-hash="$(wol boot password)" > "$h"
+# The password goes through a pipe: mokutil --generate-hash=PASSWORD would show it in /proc/*/cmdline
+# to every local process (QA-A9-IMAGE-12). openssl hashes it from stdin (crypt(3) SHA-512, the form
+# the key screen and mokutil --hash-file take).
+(umask 077; wol boot password | openssl passwd -6 -stdin > "$h")
+[ -s "$h" ] || { echo "boot-enroll: could not hash the enrollment password" >&2; exit 1; }
 mokutil --import "$S/db.der" --hash-file "$h"
 mokutil --timeout -1
 mkdir -p "$R" 2>/dev/null && : > "$R/mok-pending" || :

@@ -3,7 +3,9 @@
 # integration never drops a fix the last release shipped (qa100 H18-1: wave3/int lacked all of
 # 0.12.1). Checked by crates/controller/tests/image_release.rs `int_descends_from_last_release`.
 # One `key value` per line: `tag` the release tag, `wolos` the commit it names, `shell` the
-# crates/shell commit that commit records. Update all three in the commit that merges a release.
+# crates/shell commit that commit records, `snapshot` the Arch archive date it shipped on (wolos-pkgbuilds
+# checks/tests/snapshot.rs: a newer release needs a newer date). Update all four in the commit that merges a release.
 tag v0.12.1
 wolos 639c070ed007bfd1ecaee3a6eb41d8e2499e33e6
 shell 9dd66eddb2fa0015e94c0db0bdca7a57969bbad3
+snapshot 2026-11-02
