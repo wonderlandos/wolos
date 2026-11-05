@@ -111,7 +111,9 @@ impl Patience {
 
     /// The setting of account `uid` from its file `path` for a process that runs as root (wold):
     /// opened without following a link or waiting on a pipe, and used only when it is a small
-    /// regular file the account owns. Anything else is normal.
+    /// regular file the account owns. Anything else is normal. Unix only (wold); the wasm32
+    /// build of `shared` (crates/wolkit-web) has no file owners.
+    #[cfg(unix)]
     pub fn read_owned(path: &Path, uid: u32) -> Patience {
         use std::io::Read;
         use std::os::unix::fs::{MetadataExt, OpenOptionsExt};

@@ -1,0 +1,25 @@
+[package]
+name = "wolkit-web"
+version.workspace = true
+edition.workspace = true
+license = "BSD-2-Clause"
+authors.workspace = true
+description = "A wolkit page in the browser: the wasm32 module the site's /kit loader mounts into a canvas (WebGPU)"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wolkit = { path = "../wolkit", default-features = false }
+wolkit-render = { path = "../wolkit-render", default-features = false, features = ["gpu"] }
+shared.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "wgsl", "webgpu"] }
+# Must equal the wasm-bindgen CLI that writes the JS glue (tools: wasm-bindgen 0.2.130).
+wasm-bindgen = "=0.2.130"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["HtmlCanvasElement", "Window", "Performance", "console"] }

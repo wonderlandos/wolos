@@ -319,10 +319,15 @@ fn backspace_runs_undo_together() {
 fn single_line_turns_breaks_into_spaces_and_drops_controls() {
     let mut ed = Editor::new(true);
     ed.insert("a\nb\r\nc\u{0}d\u{7}");
-    assert_eq!(ed.text(), "a b  cd");
+    // A `\r\n` is one break, so one space.
+    assert_eq!(ed.text(), "a b cd");
     let mut ml = Editor::new(false);
     ml.insert("a\nb");
     assert_eq!(ml.text(), "a\nb");
+    // Every kind of break is one `\n`; other control characters go.
+    let mut ml = Editor::new(false);
+    ml.insert("a\r\nb\rc\u{2028}d\u{2029}e\u{85}f\u{0}g\th");
+    assert_eq!(ml.text(), "a\nb\nc\nd\ne\nfg\th");
 }
 
 #[test]

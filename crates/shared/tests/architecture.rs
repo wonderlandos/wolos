@@ -60,8 +60,18 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // widgets (ADR 0020); the Sound pane and the Control Center drive PipeWire through
                 // the audio adaptor (wol_audio::pw::Handle).
                 // Settings and the Search bar rank by meaning with wolsem (docs/modules/search.md).
-                "shell" => ["shared", "core", "wopkg", "wol-lua", "audio", "wolsem"]
-                    .contains(&dep.as_str()),
+                // Kit app windows draw through libWolkit's page and CPU rasteriser (WOLKIT-1TO1).
+                "shell" => [
+                    "shared",
+                    "core",
+                    "wopkg",
+                    "wol-lua",
+                    "audio",
+                    "wolsem",
+                    "wolkit",
+                    "wolkit-render",
+                ]
+                .contains(&dep.as_str()),
                 // The web-app runtime (ADR 0042) paints into wolkit surface nodes and reads wolkit's
                 // event records; BSD-2-Clause like wolkit, so the licence rule holds. It serves
                 // fed:// through `federate` (ADR 0052), a BSD-2-Clause leaf with no workspace
@@ -70,6 +80,11 @@ fn violations(graph: &BTreeMap<String, Vec<String>>) -> Vec<String> {
                 // The Federate client (ADR 0052) uses wolcrypt (a BSD-2-Clause leaf, no workspace
                 // dependency) for the hybrid TLS group and to seal its local state.
                 "federate" => dep == "wolcrypt",
+                // The render targets (wgpu, Vulkan, CPU) and the browser module (ADR 0060,
+                // "wolkit on WebGPU and WASM"): BSD-2-Clause like wolkit; they build for
+                // wasm32, where `core` does not, so they take `shared` and `wolkit` only.
+                "wolkit-render" => ["shared", "wolkit"].contains(&dep.as_str()),
+                "wolkit-web" => ["shared", "wolkit", "wolkit-render"].contains(&dep.as_str()),
                 // other members (e.g. audio: shared::atomic for its config fragments) may use
                 // core + shared only
                 _ => dep == "shared" || dep == "core",
@@ -141,7 +156,8 @@ fn violations_table() {
         (&[("wolkit", &["core", "shared"])], &[]),
         (&[("wolkit", &["wol-abi"])], &["wolkit -> wol-abi"]),
         (&[("wolkit", &["api"])], &["wolkit -> api"]),
-        (&[("shell", &["wolkit"])], &["shell -> wolkit"]),
+        // WOLKIT-1TO1: Kit app windows draw through libWolkit's page and CPU rasteriser.
+        (&[("shell", &["wolkit"])], &[]),
         (&[("wol-abi", &["wolkit"])], &["wol-abi -> wolkit"]),
         (&[("wopkg", &["core", "shared"])], &[]),
         (&[("wopkg", &["api"])], &["wopkg -> api"]),
@@ -158,6 +174,15 @@ fn violations_table() {
         (&[("controller", &["api"])], &["controller -> api"]),
         (&[("webengine", &["wolkit", "core", "shared"])], &[]),
         (&[("webengine", &["api"])], &["webengine -> api"]),
+        (&[("wolkit-render", &["wolkit", "shared"])], &[]),
+        (&[("wolkit-render", &["core"])], &["wolkit-render -> core"]),
+        (
+            &[("wolkit-web", &["wolkit-render", "wolkit", "shared"])],
+            &[],
+        ),
+        (&[("wolkit-web", &["api"])], &["wolkit-web -> api"]),
+        (&[("shell", &["wolkit-render"])], &[]),
+        (&[("shell", &["wolkit-web"])], &["shell -> wolkit-web"]),
     ];
     for (edges, want) in cases {
         assert_eq!(violations(&g(edges)), *want, "{edges:?}");

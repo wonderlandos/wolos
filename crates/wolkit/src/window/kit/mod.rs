@@ -232,7 +232,8 @@ fn window_of(e: &FromHost) -> u32 {
         | FromHost::Edited { window, .. }
         | FromHost::Toggled { window, .. }
         | FromHost::Slid { window, .. }
-        | FromHost::Chose { window, .. } => *window,
+        | FromHost::Chose { window, .. }
+        | FromHost::Picked { window, .. } => *window,
     }
 }
 
@@ -302,7 +303,9 @@ impl KitWindow {
                     s.emit(ev::SLIDER, w.scene.id(r).0, &v.to_le_bytes(), &[]);
                 }
             }
-            FromHost::Chose { .. } => {}
+            // Wolkit lowers no radio group, chip set or tabs to the host yet (DS-COMPONENTS view
+            // nodes): a pick has no receiver here.
+            FromHost::Chose { .. } | FromHost::Picked { .. } => {}
         }
         pipeline::ensure_layout(w);
     }

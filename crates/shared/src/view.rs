@@ -97,6 +97,129 @@ pub enum Node {
     List {
         children: Vec<Node>,
     },
+    // ---- Appended for the design system (ADR 0058 draft, DS-COMPONENTS); the ten above keep
+    // their shape. Each one is `design/components/<id>.toml` `[implementations.view]`.
+    /// A checkbox with its label; [`FromHost::Toggled`]. `mixed` draws the dash of a group of
+    /// which some are on.
+    Checkbox {
+        id: u32,
+        label: String,
+        #[serde(default)]
+        checked: bool,
+        #[serde(default, skip_serializing_if = "is_false")]
+        mixed: bool,
+    },
+    /// Exclusive options, one per line; picking one comes back as [`FromHost::Picked`].
+    RadioGroup {
+        id: u32,
+        options: Vec<Choice>,
+        selected: String,
+    },
+    /// A set of chips of one kind; a click on chip `key` comes back as [`FromHost::Picked`] (a
+    /// filter chip flips in place; the app's next tree says what is on).
+    Chips {
+        id: u32,
+        kind: ChipKind,
+        chips: Vec<Chip>,
+    },
+    /// Tabs over one child per tab; picking a tab shows its child and comes back as
+    /// [`FromHost::Picked`].
+    Tabs {
+        id: u32,
+        tabs: Vec<Choice>,
+        selected: String,
+        children: Vec<Node>,
+    },
+    /// A progress bar: `value` 0 to 1, or none while the amount is unknown (it pulses). `label`
+    /// names it for assistive technology.
+    Progress {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<f64>,
+        #[serde(default)]
+        label: String,
+    },
+    /// A hairline between groups.
+    Divider,
+    /// A card around its children.
+    Card {
+        #[serde(default)]
+        style: CardStyle,
+        children: Vec<Node>,
+    },
+    /// A header that shows and hides its children; opening or closing comes back as
+    /// [`FromHost::Toggled`].
+    Disclosure {
+        id: u32,
+        title: String,
+        #[serde(default)]
+        open: bool,
+        children: Vec<Node>,
+    },
+}
+
+/// One option of a [`Node::RadioGroup`] or one tab of [`Node::Tabs`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Choice {
+    pub key: String,
+    pub label: String,
+}
+
+/// One chip of [`Node::Chips`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Chip {
+    pub key: String,
+    pub label: String,
+    /// A filter chip that is on.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub on: bool,
+}
+
+/// What a set of chips does (design/components/chip.toml).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ChipKind {
+    #[default]
+    Assist,
+    Filter,
+    Input,
+    Suggestion,
+}
+
+/// How a [`Node::Card`] stands off the page (design/components/card.toml).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CardStyle {
+    #[default]
+    Elevated,
+    Filled,
+    Outlined,
+}
+
+/// Options and tabs: 1 to [`MAX_CHOICES`], unique keys, short labels, `selected` one of them.
+pub const MAX_CHOICES: usize = 16;
+
+fn choices_ok<'a>(
+    keys: impl Iterator<Item = (&'a String, &'a String)>,
+    selected: Option<&str>,
+) -> Result<(), String> {
+    let v: Vec<_> = keys.collect();
+    if v.is_empty() || v.len() > MAX_CHOICES {
+        return Err(format!("A group has 1 to {MAX_CHOICES} options."));
+    }
+    unique_keys(v.iter().map(|(k, _)| *k))?;
+    if v.iter().any(|(_, l)| !label_ok(l)) {
+        return Err(format!("An option is one line of 1 to {MAX_LABEL} bytes."));
+    }
+    if let Some(s) = selected
+        && !v.iter().any(|(k, _)| k.as_str() == s)
+    {
+        return Err(format!(
+            "The selected key \"{s}\" is not one of the options."
+        ));
+    }
+    Ok(())
 }
 
 fn yes() -> bool {
@@ -409,7 +532,70 @@ impl Node {
                 }
                 unique(id)
             }
-            Node::Label { .. } | Node::Spacer => Ok(()),
+            Node::Checkbox { id, label, .. } => {
+                if !label_ok(label) {
+                    return Err(format!(
+                        "A checkbox label is one line of 1 to {MAX_LABEL} bytes."
+                    ));
+                }
+                unique(id)
+            }
+            Node::RadioGroup {
+                id,
+                options,
+                selected,
+            } => {
+                choices_ok(options.iter().map(|c| (&c.key, &c.label)), Some(selected))?;
+                unique(id)
+            }
+            Node::Chips { id, chips, .. } => {
+                choices_ok(chips.iter().map(|c| (&c.key, &c.label)), None)?;
+                unique(id)
+            }
+            Node::Tabs {
+                id,
+                tabs,
+                selected,
+                children,
+            } => {
+                choices_ok(tabs.iter().map(|c| (&c.key, &c.label)), Some(selected))?;
+                if children.len() != tabs.len() {
+                    return Err("Tabs have one child per tab.".into());
+                }
+                unique(id)?;
+                children
+                    .iter()
+                    .try_for_each(|c| c.check(depth + 1, count, ids))
+            }
+            Node::Progress { value, label } => {
+                if value.is_some_and(|v| !(0.0..=1.0).contains(&v)) {
+                    return Err("A progress value is between 0 and 1.".into());
+                }
+                if !text_ok(label) {
+                    return Err("A progress label is short text.".into());
+                }
+                Ok(())
+            }
+            Node::Card { children, .. } => children
+                .iter()
+                .try_for_each(|c| c.check(depth + 1, count, ids)),
+            Node::Disclosure {
+                id,
+                title,
+                children,
+                ..
+            } => {
+                if !label_ok(title) {
+                    return Err(format!(
+                        "A disclosure title is one line of 1 to {MAX_LABEL} bytes."
+                    ));
+                }
+                unique(id)?;
+                children
+                    .iter()
+                    .try_for_each(|c| c.check(depth + 1, count, ids))
+            }
+            Node::Label { .. } | Node::Spacer | Node::Divider => Ok(()),
         }
     }
 }
@@ -470,6 +656,13 @@ pub enum FromHost {
         source: u32,
         key: String,
     },
+    /// An option of a radio group, a chip or a tab: `widget` is the part's id, `key` the one
+    /// picked (appended with the design-system parts).
+    Picked {
+        window: u32,
+        widget: u32,
+        key: String,
+    },
 }
 
 /// Reverse-DNS app id: `org.example.hello`.
@@ -524,7 +717,7 @@ impl FromHost {
         match &e {
             Self::Slid { value, .. } if !value.is_finite() => None,
             Self::Edited { text, .. } if text.len() > MAX_TEXT => None,
-            Self::Chose { key, .. } if !key_ok(key) => None,
+            Self::Chose { key, .. } | Self::Picked { key, .. } if !key_ok(key) => None,
             _ => Some(e),
         }
     }
@@ -886,6 +1079,184 @@ mod tests {
         }
         assert_eq!(
             FromHost::parse(r#"{"event":"slid","window":1,"widget":4,"value":1e999}"#),
+            None
+        );
+    }
+
+    /// The design-system parts (DS-COMPONENTS): their JSON shape, and every bound they check.
+    #[test]
+    fn design_system_parts_round_trip_and_validate() {
+        let ch = |k: &str, l: &str| Choice {
+            key: k.into(),
+            label: l.into(),
+        };
+        let n = Node::Stack {
+            spacing: 8,
+            children: vec![
+                Node::Checkbox {
+                    id: 1,
+                    label: "Show hidden files".into(),
+                    checked: true,
+                    mixed: false,
+                },
+                Node::RadioGroup {
+                    id: 2,
+                    options: vec![ch("light", "Light"), ch("dark", "Dark")],
+                    selected: "dark".into(),
+                },
+                Node::Chips {
+                    id: 3,
+                    kind: ChipKind::Filter,
+                    chips: vec![Chip {
+                        key: "installed".into(),
+                        label: "Installed".into(),
+                        on: true,
+                    }],
+                },
+                Node::Tabs {
+                    id: 4,
+                    tabs: vec![ch("a", "Overview"), ch("b", "Details")],
+                    selected: "a".into(),
+                    children: vec![label("One"), label("Two")],
+                },
+                Node::Progress {
+                    value: Some(0.5),
+                    label: "Copying".into(),
+                },
+                Node::Progress {
+                    value: None,
+                    label: String::new(),
+                },
+                Node::Divider,
+                Node::Card {
+                    style: CardStyle::Outlined,
+                    children: vec![label("In a card")],
+                },
+                Node::Disclosure {
+                    id: 5,
+                    title: "Advanced Options".into(),
+                    open: false,
+                    children: vec![label("Hidden")],
+                },
+            ],
+        };
+        assert_eq!(n.validate(), Ok(()));
+        let j = serde_json::to_string(&n).unwrap();
+        assert!(
+            j.contains(r#"{"type":"checkbox","id":1,"label":"Show hidden files","checked":true}"#),
+            "{j}"
+        );
+        assert!(j.contains(r#"{"type":"radio-group","id":2,"options":[{"key":"light","label":"Light"},{"key":"dark","label":"Dark"}],"selected":"dark"}"#), "{j}");
+        assert!(j.contains(r#"{"type":"chips","id":3,"kind":"filter","chips":[{"key":"installed","label":"Installed","on":true}]}"#), "{j}");
+        assert!(j.contains(r#"{"type":"progress","label":""}"#), "{j}");
+        assert!(
+            j.contains(r#"{"type":"divider"}"#) && j.contains(r#""style":"outlined""#),
+            "{j}"
+        );
+        assert_eq!(serde_json::from_str::<Node>(&j).unwrap(), n);
+        // Defaults: a card is elevated, a chip set assists, a box is off.
+        let d: Node = serde_json::from_str(r#"{"type":"card","children":[]}"#).unwrap();
+        assert_eq!(
+            d,
+            Node::Card {
+                style: CardStyle::Elevated,
+                children: vec![]
+            }
+        );
+
+        let bad = |n: Node, why: &str| {
+            let e = n.validate().unwrap_err();
+            assert!(e.contains(why), "{e} lacks {why}");
+        };
+        bad(
+            Node::RadioGroup {
+                id: 1,
+                options: vec![ch("a", "A")],
+                selected: "z".into(),
+            },
+            "is not one of the options",
+        );
+        bad(
+            Node::RadioGroup {
+                id: 1,
+                options: vec![],
+                selected: "a".into(),
+            },
+            "1 to 16 options",
+        );
+        bad(
+            Node::RadioGroup {
+                id: 1,
+                options: vec![ch("a", "A"), ch("a", "B")],
+                selected: "a".into(),
+            },
+            "used twice",
+        );
+        bad(
+            Node::Tabs {
+                id: 1,
+                tabs: vec![ch("a", "A")],
+                selected: "a".into(),
+                children: vec![],
+            },
+            "one child per tab",
+        );
+        bad(
+            Node::Progress {
+                value: Some(1.5),
+                label: String::new(),
+            },
+            "between 0 and 1",
+        );
+        bad(
+            Node::Checkbox {
+                id: 1,
+                label: " ".into(),
+                checked: false,
+                mixed: false,
+            },
+            "checkbox label",
+        );
+        bad(
+            Node::Disclosure {
+                id: 1,
+                title: String::new(),
+                open: true,
+                children: vec![],
+            },
+            "disclosure title",
+        );
+        bad(
+            Node::Row {
+                spacing: 0,
+                children: vec![
+                    Node::Checkbox {
+                        id: 7,
+                        label: "A".into(),
+                        checked: false,
+                        mixed: false,
+                    },
+                    Node::Disclosure {
+                        id: 7,
+                        title: "B".into(),
+                        open: true,
+                        children: vec![],
+                    },
+                ],
+            },
+            "used twice",
+        );
+        // The pick comes back with its key; a key the app could not have sent is dropped.
+        assert_eq!(
+            FromHost::parse(r#"{"event":"picked","window":1,"widget":2,"key":"dark"}"#),
+            Some(FromHost::Picked {
+                window: 1,
+                widget: 2,
+                key: "dark".into()
+            })
+        );
+        assert_eq!(
+            FromHost::parse(r#"{"event":"picked","window":1,"widget":2,"key":"Bad Key"}"#),
             None
         );
     }

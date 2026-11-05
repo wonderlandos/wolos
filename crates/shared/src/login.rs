@@ -58,6 +58,7 @@ pub fn boot_mark(uptime_ms: u64, stage: &str) -> String {
 }
 
 /// [`boot_mark`] for now.
+#[cfg(unix)]
 pub fn boot_mark_now(stage: &str) -> String {
     boot_mark(crate::sys::monotonic_ns() / 1_000_000, stage)
 }

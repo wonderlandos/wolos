@@ -176,7 +176,7 @@ end
 
 `field(value, label, rules...)` makes a `Wolkit::Field(T)` (the type from the literal, as with `signal`; `of:` for anything else). A field has `value` (the signal a control binds to), `error` (a computed: the first rule's sentence, always current), `touched` and `shown` (the error once the person has left the field or tried to submit; nothing before they started). A rule is a `Proc(T, String?)`: `Validate.required`, `length(min, max)`, `matches(regex, message)`, `email`, `integer(min, max)`, `number(min, max)`, `chosen(Type)`, or a block: `form.field("", "Code") { |v| "Six digits." unless v.size == 6 }`. `Form#submit { }` shows every error and runs the block only when all fields are valid; `valid` is a computed (`disabled: !@form.valid?` works), `status` a sentence for `form_status`, `reset` puts everything back. `form_field form:` checks the field with the form while it is shown, so a field in a hidden section does not block the form.
 
-The controls (`kit/forms.cr`): `form_field field:, form:, hint:` (label above, the control, the error below in the danger colour and in an alert for assistive technology; leaving the control marks the field touched), `text_area value:, label:, lines:, placeholder:, max_length:` (Enter starts a new line at the caret, replacing a selection; the text wraps), `segmented options:, selected:, label:` (one control of exclusive choices; Left and Right move and wrap), `combo value:, options:, label:, limit:` (a field with a menu of matches, prefix matches first; Down and Up move, Enter or a click takes one, Escape closes), `date_field value:, label:, today:` (year-month-day, buttons for the day before and after and Today, Up and Down step; `value` is `nil` while nothing valid is entered), `slider_field value:, label:, min:, max:, step:, format:` (a slider with its label and its value).
+The controls (`kit/forms.cr`): `form_field field:, form:, hint:` (label above, the control, the error below in the danger colour and in an alert for assistive technology; leaving the control marks the field touched), `text_area value:, label:, lines:, placeholder:, max_length:, on_submit:` (a text area: see "The text area" below; Ctrl+Enter is `on_submit`), `segmented options:, selected:, label:` (one control of exclusive choices; Left and Right move and wrap), `combo value:, options:, label:, limit:` (a field with a menu of matches, prefix matches first; Down and Up move, Enter or a click takes one, Escape closes), `date_field value:, label:, today:` (year-month-day, buttons for the day before and after and Today, Up and Down step; `value` is `nil` while nothing valid is entered), `slider_field value:, label:, min:, max:, step:, format:` (a slider with its label and its value).
 
 ## Tables and trees
 
@@ -219,6 +219,10 @@ A native window tells the compositor and the menu bar two things about itself, w
 ## Services
 
 `Wolkit::Services` wraps the libwol verbs so a refusal is shown, not raised: `notify(title, body) : String?`, `copy(text) : String?`, `paste : Outcome(String)`, and the blocking panels `open_file`, `save_file`, `share`, which run on `Wol.background` and call a block on the UI context with an `Outcome` (a value, or the sentence libwol wrote, for example "Allow this app to ... in System Settings"). Show the sentence inline as the HIG asks.
+
+## In the browser (ADR 0060)
+
+The same engine draws on the site: `crates/wolkit-web` compiles the portable pipeline (no Wayland, no Vulkan, no Lua) to WebAssembly and draws it on WebGPU into a `<canvas>`. The page `/kit` (`site/public/kit.html`, assets in `site/public/kit/`) shows the libwol sample window (the tree behind the shell's `app-window-parts` golden) with the same kit look, tokens, Inter faces and layout as the desktop, light or dark (`?theme=dark`, else the system setting). Click the switch, type in the field, Tab between the parts. Size: about 1.29 MB gzip for the wasm, the glue, the loader and the two fonts. See the "Render targets" section of `docs/modules/libwolkit.md` for the pieces and the checks.
 
 ## Testing without a display
 
@@ -281,6 +285,30 @@ The numbers are one run each on a machine with many more cores than a target mac
 
 **The loop.** `Wolkit::Loop.run` (`src/wolkit/loop.cr`) is one fiber that takes a turn when woken, plus a small fiber that watches the engine's descriptor. The descriptor is a self-pipe (`src/loop_/mod.rs`): the watcher reads a duplicate of it, which only consumes wake-up bytes, and the turn calls `dispatch(0)`, which runs what is queued whether or not a byte was there, so no wake-up is lost. If the engine ever hands out a descriptor that cannot be read (an epoll descriptor, `EINVAL`), the watcher waits with `Crystal::EventLoop.current.wait_readable`, an internal method of the Crystal runtime, used in that one place. `Runtime.quit` and `Wolkit::Loop.wake` also wake the loop, so a window closed from a timer ends the program at once. The headless engine queues injected events on the calling thread and does not write to the descriptor (the real backends do), so the harness calls `Loop.turn` itself.
 
+## The text area
+
+`text_area` is the engine's `text_input` with `white-space: pre-wrap` (`text::area`, `input::edit`; no new kind, property or ABI symbol). One component in the design spec: the same node paints in every render target, because everything it draws is already a display-list item (glyph runs, solid rectangles for the selection, the preedit underline and the caret, a clip).
+
+| Input | Does |
+|---|---|
+| Enter | a line break at the caret, replacing the selection (every kind of break pasted or typed is one `\n`; a lone `\r` and `\r\n` too) |
+| Ctrl+Enter | `TEXT_SUBMIT` with the text |
+| Up, Down | one line up or down on screen, keeping the column the run began at (the goal x survives short lines); up on the first line goes to the start, down on the last to the end |
+| PageUp, PageDown | a page less one line up or down |
+| Home, End | the start and the end of the line on screen (End stops before the space a wrap swallowed); Ctrl+Home and Ctrl+End the start and end of the text |
+| Shift with any of these | extends the selection |
+| click, Shift+click | puts the caret where it landed, or extends the selection |
+| drag | selects from the press to the pointer; the field scrolls to follow |
+| double click, triple click | selects the word, the paragraph (500 ms, 4 px) |
+| wheel | scrolls the text area; at its end the wheel goes on to the scroll container around it |
+| typing, moving | the field scrolls the least that keeps the caret in view (a one-line field scrolls sideways the same way) |
+| Tab | moves focus to the next control, as everywhere (a tab character comes from a paste) |
+| paste | a multi-line paste is one undo step; Ctrl+Z / Ctrl+Shift+Z step by word (a typed run ends at white space), a delete run, a paste or an input-method commit |
+
+How it fits together. The editor (`text::edit::Editor`: rope, selection by grapheme, undo, input method) is unchanged except `Editor::move_to`, line breaks normalised on the way in, and a multi-line mode. What needs the laid-out text lives in `text::area` as pure functions over a `TextLayout` (`caret_pos`, `move_vertical` with the sticky column, `line_edges`, `hit`, `scroll_to_caret`, `word_at`, `paragraph_at`); the layout is the engine's own shaper (`harfrust`) and line breaker, through the window's paragraph cache, so the input layer and the painter lay out the same text once. After every edit, move, click or scroll `input::edit` copies the drawable state (display text with the preedit in it, caret, selection, scroll) into the scene (`scene::EditView`, read through `SceneRead::edit_view`), and `paint::scene` draws it: selection in the accent colour at 96/255, the preedit underlined, a 1 px caret in the text colour (hidden while a selection exists). A view whose text the app has since replaced is ignored (the node's text wins, and the field takes it on the next patch). A text area keeps its scroll position while it is not focused.
+
+Tests: `crates/wolkit/tests/text_area.rs` (geometry, a model of multi-line editing with undo and redo, the engine's key and pointer routing on a window core, the headless backend's Enter, three goldens in `tests/text_area_golden/`: three paragraphs wrapped, a selection across lines, the state after undoing 12 of 20 edits), and the fuzz target `wolkit_text` (`fuzz/fuzz_targets/wolkit_text.rs`, property in `crates/wolkit/tests/support/text_fuzz.rs`, seeds in `fuzz/regressions/wolkit_text/`).
+
 ## Limits and where this differs from the plan
 
 - Patches carry at most 1 MiB (the writer asks the mount to send early); a window at most 65,536 parts; a text 64 KiB; 8 style classes per part.
@@ -288,7 +316,10 @@ The numbers are one run each on a machine with many more cores than a target mac
 - The kit-backend limits (200 parts, no canvas) apply when the engine runs the Kit backend; `canvas` and `surface` need the native backend.
 - `canvas`, `surface` and the Vulkan surface are exposed as elements and engine verbs; their DSL helpers (`Canvas`, `Surface`) belong to the GPU stream. `vlist` has `table` and `tree` over it.
 - The headless engine hit-tests in tree order without overlay layers, so in a spec a click on a menu or combo item that lies over a later sibling reaches the sibling; use the keys there (the native backend layers overlays). Its key handling is also smaller than the native one's: it delivers `KEY`, Tab, Enter, Space and Backspace, but not the list arrows, Escape or `SHORTCUT`; the kit's own keys ride on `KEY`, so they work in specs.
-- The engine's text field is one line: `text_area` makes Enter insert a line break at the caret through the submit event, and caret movement between lines is the engine's single-line movement.
+- The engine's `text_input` is one line unless its `white-space` is `pre-wrap`, which makes it a text area (below). The Kit backend (a shell hosting the window in GTK) still shows one line for it: its wire has `TextField` and no text area (`shared::view`), so there Enter does nothing. The native backend has the whole text area; the headless backend wraps and draws the text but has no caret (its input appends at the end, and Enter appends a line break), which is what the shard's specs need. Any renderer that draws the engine's display list (`wolkit-render`) draws a caret and a selection when the input routing of `input::*` feeds the window.
+- Text areas move in logical order: Left and Right go by grapheme and Ctrl+Left and Ctrl+Right by word, also in right-to-left and mixed text. The paragraphs of such text are shaped, reordered and wrapped correctly, and a selection is highlighted on screen as the visual stretches it covers, but arrow keys do not follow the visual order and a click inside a mixed run snaps to the nearest cluster boundary. Visual caret movement (and caret affinity at a bidi boundary) is deferred to a second package.
+- The caret is steady (no blink); the input method is told the caret's rectangle, not the rectangle of its preedit.
+- A text area holds at most 64 KiB; undo keeps 1000 steps or 1 MiB.
 
 ## Adding to the shard
 

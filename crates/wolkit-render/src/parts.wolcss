@@ -1,0 +1,40 @@
+/* wolkit: off-scale */
+/* The design-system parts (DS-COMPONENTS: checkbox, radio, chip, tabs, progress, card, disclosure).
+   The numbers that are fields of design/components/<id>.toml (box 16, control 24, tab 40, card
+   inset 12 and radius 12, disclosure row 40, chip 24) are held to the specs by
+   tests/spec_sheet.rs `the_design_system_parts_follow_the_specs`; radii, gaps and the 36 % hairline
+   are the specs' anatomy prose. Class order is the id order (view.rs `class`). */
+.part-row { background: transparent; min-height: 24px; padding: 0; gap: 8px; align-items: center; justify-content: start; }
+.part-row:hover { background: transparent; }
+.part-row:active { background: transparent; transform: scale(1); }
+.check { width: 16px; height: 16px; border-radius: 4px; background: card; border: 1px alpha(text, 36%); align-items: center; justify-content: center; }
+.check-on { width: 16px; height: 16px; border-radius: 4px; background: accent; border: 1px accent; align-items: center; justify-content: center; }
+.check-dash { width: 8px; height: 2px; border-radius: 1px; background: accentText; }
+.radio { width: 16px; height: 16px; border-radius: 8px; background: card; border: 1px alpha(text, 36%); align-items: center; justify-content: center; }
+.radio-on { width: 16px; height: 16px; border-radius: 8px; background: accent; border: 1px accent; align-items: center; justify-content: center; }
+.radio-dot { width: 6px; height: 6px; border-radius: 3px; background: accentText; }
+.chip { min-height: 24px; padding: 0 8px; gap: 4px; border-radius: 8px; background: control; color: text; align-items: center; justify-content: center; }
+.chip-on { min-height: 24px; padding: 0 8px; gap: 4px; border-radius: 8px; background: alpha(accent, 18%); color: text; align-items: center; justify-content: center; }
+.chip-ghost { min-height: 24px; padding: 0 8px; gap: 4px; border-radius: 8px; background: transparent; border: 1px line; color: text; align-items: center; justify-content: center; }
+.chip-set { gap: 8px; align-items: center; }
+.tab-cell { gap: 0; }
+.view-tab { min-height: 38px; padding: 0 12px; border-radius: 0; background: transparent; color: dim; font-weight: 600; }
+.view-tab:hover { background: transparent; }
+.view-tab-on { min-height: 38px; padding: 0 12px; border-radius: 0; background: transparent; color: accent; font-weight: 600; }
+.view-tab-on:hover { background: transparent; }
+.view-tab-on:selected { background: transparent; color: accent; }
+.tab-line { min-height: 2px; align-self: stretch; background: transparent; }
+.tab-line-on { min-height: 2px; align-self: stretch; background: accent; }
+.tab-panel { padding: 12px 0 0 0; gap: 8px; }
+.progress { align-self: stretch; min-height: 4px; height: 4px; border-radius: 2px; background: control; }
+.progress-fill { height: 4px; border-radius: 2px; background: text; }
+.surface-card { border-radius: 12px; padding: 12px; gap: 8px; }
+.card-elevated { background: card; box-shadow: sm; }
+.card-filled { background: control; }
+.card-outlined { background: card; border: 1px line; }
+.disclosure-head { min-height: 40px; }
+.disclosure-body { padding: 0 0 0 20px; gap: 8px; }
+.icon-dim { color: dim; }
+.icon-ink { color: accentText; }
+.icon-accent { color: accent; }
+.group { gap: 4px; }

@@ -79,6 +79,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0051](adr/0051-house-in-order.md) | 0.13: put the house in order before adding anything (proof rule, root-cause standards, wave gates) | proposed |
 | [0053](adr/0053-atlas-private-and-tor-tabs.md) | Atlas private and Tor tabs: the kernel is the kill switch | proposed |
 | [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
+| [0060](adr/0060-wolkit-on-webgpu-and-wasm.md) | libWolkit on WebGPU and WebAssembly: one renderer trait, wgpu as the portable target | proposed |
 
 ## Modules
 

@@ -10,7 +10,9 @@
 
 pub mod dump;
 pub mod headless;
+#[cfg(feature = "native")]
 pub mod kit;
+#[cfg(feature = "native")]
 pub mod native;
 pub mod pipeline;
 pub mod route;
@@ -20,7 +22,11 @@ use crate::error::{Error, Result};
 use crate::event::EventQueue;
 use crate::scene::ids::to_u32;
 use crate::scene::{Idx, Journal, NIL, Scene, SceneRead, patch::Scratch};
+#[cfg(unix)]
 use std::os::fd::RawFd;
+/// A descriptor number where the platform has none (the web build never waits on one).
+#[cfg(not(unix))]
+pub type RawFd = i32;
 use std::sync::Arc;
 
 /// Windows per engine (plan section 2.8).
@@ -306,9 +312,20 @@ pub const MOD_SUPER: u32 = 8;
 pub fn choose(flags: u32) -> u32 {
     if flags & crate::abi::ENGINE_HEADLESS != 0 {
         BACKEND_HEADLESS
-    } else if flags & crate::abi::ENGINE_FORCE_KIT != 0 || !native::available() {
+    } else if flags & crate::abi::ENGINE_FORCE_KIT != 0 || !native_available() {
         BACKEND_KIT
     } else {
         BACKEND_NATIVE
     }
+}
+
+#[cfg(feature = "native")]
+fn native_available() -> bool {
+    native::available()
+}
+
+/// Without the `native` feature there is no display backend to choose.
+#[cfg(not(feature = "native"))]
+fn native_available() -> bool {
+    false
 }

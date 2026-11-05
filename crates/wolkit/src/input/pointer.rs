@@ -14,7 +14,7 @@
 //! container), so a coalesced record loses no distance: the app takes the difference to the
 //! offset of the record before.
 
-use super::{BUTTON_RIGHT, InputState, Request, edit, focus, hit};
+use super::{BUTTON_LEFT, BUTTON_RIGHT, InputState, Request, edit, focus, hit};
 use crate::error::{Error, Result};
 use crate::event::kind as ev;
 use crate::scene::ids::Ix;
@@ -22,8 +22,8 @@ use crate::scene::prop::id;
 use crate::scene::{Idx, Kind, NIL, PropValue, SceneRead, SceneWrite, dirty, state};
 use crate::window::route::{disabled, receiver};
 use crate::window::{
-    POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL, POINTER_UP, PointerInput, Sink,
-    WindowCore,
+    MOD_SHIFT, POINTER_DOWN, POINTER_LEAVE, POINTER_MOVE, POINTER_SCROLL, POINTER_UP, PointerInput,
+    Sink, WindowCore,
 };
 
 fn f32s(a: f32, b: f32) -> [u8; 8] {
@@ -203,10 +203,14 @@ fn hover(w: &mut WindowCore, s: &mut Sink, st: &mut InputState, hit: Idx, x: f32
 }
 
 /// Scroll the nearest scroll container under the pointer by `(dx, dy)` logical pixels.
-fn scroll(w: &mut WindowCore, s: &mut Sink, st: &InputState, dx: f32, dy: f32) {
+fn scroll(w: &mut WindowCore, s: &mut Sink, st: &mut InputState, dx: f32, dy: f32) {
     let (px, py) = w.pointer;
     let mut n = hit::hit_test(&w.scene, &st.layers, px, py);
     if surface_scroll(w, s, n, dx, dy) {
+        return;
+    }
+    // A text area that can scroll that way takes the wheel before the container around it.
+    if n != NIL && dy != 0.0 && edit::wheel(w, st, n, dy) {
         return;
     }
     while n != NIL && !matches!(w.scene.kind(n), Kind::Scroll | Kind::Vlist) {
@@ -291,6 +295,10 @@ pub fn pointer(
                 if f != NIL {
                     focus::set_focus(w, s, st, f, false);
                     req = edit::focus_changed(w, st);
+                    // A press in a text field puts the caret where it landed.
+                    if f == hit && w.scene.kind(f) == Kind::TextInput && p.button == BUTTON_LEFT {
+                        edit::pointer_down(w, st, p.x, p.y, p.mods & MOD_SHIFT != 0);
+                    }
                 }
                 if f != NIL && w.scene.kind(f) == Kind::Slider {
                     w.pressed = f;
@@ -302,12 +310,15 @@ pub fn pointer(
             let n = w.pressed;
             if w.scene.kind(n) == Kind::Slider && !disabled(&w.scene, n) {
                 slider_at(w, s, n, p.x);
+            } else if w.scene.kind(n) == Kind::TextInput {
+                edit::pointer_drag(w, st, p.x, p.y);
             }
             // A drag that started in a surface goes on in it, outside it too (a text selection).
             surface_move(w, s, n, p.x, p.y);
         }
         POINTER_MOVE if stayed => surface_move(w, s, hit, p.x, p.y),
         POINTER_UP => {
+            edit::pointer_up(st);
             let pressed = std::mem::replace(&mut w.pressed, NIL);
             if pressed == NIL || !w.scene.is_live(pressed) {
                 return Ok(req);
