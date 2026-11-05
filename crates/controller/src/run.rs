@@ -417,8 +417,8 @@ pub(crate) fn dispatch(inv: &Invocation, env: &mut dyn Env) -> i32 {
         "pkg" => crate::pkg::pkg_verb(env, inv),
         "hint" => crate::hint::run(env, inv),
         "install.info" | "install.probe" | "install.check" | "install.layout"
-        | "install.settings" | "install.account" | "install.facts" | "install.mounts"
-        | "install.hostname" => crate::install::verb(env, inv),
+        | "install.settings" | "install.locales" | "install.account" | "install.facts"
+        | "install.mounts" | "install.hostname" => crate::install::verb(env, inv),
         "encrypt.decide" => crate::seal::decide(env, inv),
         "encrypt.enroll" => crate::seal::enroll(env, inv),
         "encrypt.words" => crate::seal::words(env, inv),

@@ -365,6 +365,10 @@ fi
 if [ -n "$plan" ]; then
   say settings 68 "Setting the language and keyboard"
   wol install settings "$plan" "$T" || fail "could not set the language and time zone"
+else
+  # No plan (autoinstall): the languages Settings offers are still generated here, the root is sealed
+  # later and the first boot cannot (QA-FDAY-2).
+  wol install locales "$T" || fail "could not generate the languages"
 fi
 say initramfs 70 "Building the startup image"
 # `wol mirror gate` turns the optimized x86-64-v3 repo sections on only where the CPU runs them (ADR

@@ -340,6 +340,15 @@ fn install_writes_slot_a_home_var_and_a_counted_boot_entry() {
         log(&d)
     );
     let l = log(&d);
+    // No plan (autoinstall): the languages are still generated, before the initramfs and before the
+    // seal (QA-FDAY-2).
+    let t = d.join("target");
+    let gen_at = l.find(&format!("wol install locales {}", t.display()));
+    assert!(gen_at.is_some(), "locales generated without a plan: {l}");
+    assert!(
+        gen_at < l.find("mkinitcpio -P") && gen_at < l.find("wol seal apply"),
+        "{l}"
+    );
     // Only the picked disk and its partitions are ever named (read-only queries may name the
     // boot medium to leave it out).
     for line in l.lines().filter(|x| {
@@ -960,6 +969,34 @@ fn the_keyboard_is_set_before_the_initramfs_is_built() {
         1,
         "written once, before the initramfs"
     );
+}
+
+/// QA-FDAY-2 / QA-SET-27: an install with no plan (autoinstall) still generates the languages
+/// Settings offers. The root is sealed at the end of the install and `/usr/lib/locale` with it, so
+/// the first boot's Setup Assistant (which writes LANG into /etc/locale.conf) cannot do it.
+#[test]
+fn an_install_without_a_plan_still_generates_the_locales() {
+    let run = read("files/usr/lib/wolos/install-run");
+    let lines: Vec<&str> = run.lines().map(str::trim).collect();
+    let at = |w: &str| {
+        lines
+            .iter()
+            .position(|x| x.starts_with(w))
+            .unwrap_or_else(|| panic!("{w} not in install-run"))
+    };
+    let settings = at("wol install settings");
+    let locales = at("wol install locales");
+    assert_eq!(
+        lines[settings + 1],
+        "else",
+        "the no-plan branch of the same if"
+    );
+    assert!(locales > settings && locales < at("arch-chroot \"$T\" mkinitcpio -P"));
+    assert!(
+        lines[locales].contains("|| fail"),
+        "a failed locale-gen stops the install"
+    );
+    assert_eq!(run.matches("wol install locales").count(), 1);
 }
 
 /// audit2 B4: `echo 'white rabbit' > passphrase` made the LUKS key "white rabbit\n", which no
