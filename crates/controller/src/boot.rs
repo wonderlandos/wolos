@@ -321,9 +321,45 @@ pub fn bless(env: &mut dyn Env) -> i32 {
             );
         }
     }
+    // QA-LIVE4-3: the other slot spent the one counted try it gets at every shutdown
+    // (boot-rearm) and did not finish that start, yet its image is whole: the cut came from
+    // elsewhere (a power cut while it started). It gets three tries again and is the newest, so
+    // the next start goes back to it; a damaged image stays behind (above).
+    if let Some(other) = update::other_slot(running)
+        && names.lines().any(|n| n == format!("{other}+0-1.conf"))
+        && !crate::seal::image_damaged(env, other)
+        && let Err(msg) = rearm_probe(env, &dir, other)
+    {
+        return fail(env, ErrorCode::Failed, &msg);
+    }
     // The line the service log shows: which slot was marked good and where the floor stands.
     env.out(&format!(
         "{running} is marked as a good start; the rollback floor is {floor}.\n"
     ));
     0
+}
+
+/// `other+0-1.conf` -> `other+3.conf` in the entries folder `dir`: the new name on the disk
+/// before the old one goes (FAT, a power cut: never a moment without the slot's entry).
+fn rearm_probe(env: &mut dyn Env, dir: &str, other: &str) -> Result<(), String> {
+    let from = PathBuf::from(format!("{dir}/{other}+0-1.conf"));
+    let to = PathBuf::from(format!("{dir}/{other}+3.conf"));
+    let text = env
+        .read_file(&from)
+        .ok_or_else(|| format!("could not read {}", from.display()))?;
+    env.write_file(&to, &text)
+        .map_err(|e| format!("could not give {other} its tries back: {e}"))?;
+    let flushed = env
+        .exec(&["sync".to_owned(), "-f".to_owned(), update::ESP.to_owned()])
+        .unwrap_or(1);
+    if flushed != 0 {
+        return Err(format!("could not flush the startup partition for {other}"));
+    }
+    env.remove_file(&from)
+        .map_err(|e| format!("could not remove {}: {e}", from.display()))?;
+    env.err(&format!(
+        "The other version of WolOS ({other}) did not finish its last start, but its image is \
+         whole: it starts again next time, with three tries.\n"
+    ));
+    Ok(())
 }

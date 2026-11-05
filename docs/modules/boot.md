@@ -22,6 +22,25 @@ Words come from `/etc/kernel/cmdline`, the slot from `/etc/wolos/slot`; `wolos.e
 A boot is good when `wolos-boot-ok.service` sees wold (login window) up, before `boot-complete.target`; `systemd-bless-boot` then drops the counter and `wol boot bless` moves the epoch floor.
 Three failed boots: the entry sorts last and the other slot boots.
 
+A blessed entry (`wolos-<slot>.conf`) has no counter, and an image the firmware cannot load
+(`Failed to execute ... Load error`) is outside what a counter-less entry can survive: systemd-boot
+gives up and the firmware shows its own screen. So `wolos-boot-rearm.service` counts the next start
+again at every shutdown (QA-LIVE4-3): `wolos-<slot>+3.conf` when this boot saw a reason (the image
+no longer matches `<slot>/image.sha256`, it is not the image blessed last, or this boot's seal or
+floor check failed), otherwise `wolos-<slot>+1.conf`. systemd-boot (262 on the image) takes the try
+before it loads the image, and with a counted entry its `reboot-on-error` default (`auto`) restarts
+the machine when the image fails: the entry then has no tries left, sorts last, and the other slot
+starts with nobody at the keyboard. The other slot's good start gives an intact image its three
+tries back (`wol boot bless`: the one try went to a power cut, not to the image) and pins itself as
+the default when the image is damaged (QA-LIVE4-4).
+
+What this does not cover, said plainly:
+- A computer that loses power while it runs skips the shutdown step: its next start is not counted,
+  and an image damaged in that cut needs the menu (hold Space at power-on, "previous version").
+- A slot that falls back once costs one failed start (about 5 s plus the firmware's restart).
+- The firmware itself (a broken loader, an unreadable startup partition) is below systemd-boot; no
+  entry order helps there.
+
 ## /etc across slots (ADR 0044)
 `/etc` is an overlay over the running slot's own `/etc`, with one upper in `/var/lib/wolos/etc/upper` shared by both slots. Its fstab line is `wol_core::update::ETC_FSTAB` (`index=off,metacopy=off,...`): the installer writes it and every slot build rewrites it, after `files/usr/lib/wolos/etc-settle` has copied the data of metacopy-only files up, so a switch to the other slot (or the fall-back after failed boots) mounts `/etc` instead of stopping in emergency mode.
 

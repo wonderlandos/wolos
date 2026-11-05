@@ -143,14 +143,23 @@ pub fn plan_from(
         return None;
     }
     let release = date.unwrap_or("current").to_owned();
+    let moved = date.is_some();
     let date = date.map(str::to_owned);
     let prep = move |root: &str| repo_date_steps(date.as_deref(), root);
+    let after = move |root: &str| {
+        if moved {
+            release_mirrorlist_steps(root)
+        } else {
+            Vec::new()
+        }
+    };
     let args = pkg::update_now_args(holds);
     let pacman: Vec<&str> = args.iter().map(String::as_str).collect();
     build(&Build {
         slot,
         from,
         prep: &prep,
+        after: &after,
         pacman: &pacman,
         files: &[],
         release: &release,
@@ -158,32 +167,79 @@ pub fn plan_from(
     })
 }
 
-/// Moves the repos in `root` to release date `d`.
+/// Moves the repos in `root` to release date `d`, on the release's own channel (QA-UPG-6). WolOS
+/// offers one channel (`shared::packages::OFFERED`, stable): the section that reads
+/// [`MIRRORLIST`] becomes `[wolos]` again on a system installed from a testing image
+/// (`install-channel` named it `[wolos-testing]`), and every `Server =` line ends in the
+/// release's tag `$repo-YYYY-MM-DD`, whatever tag it had (`wolos-testing` has no date the old
+/// expression could match, so the slot kept the testing channel for good). With the dates of the
+/// comments moved too, the list is the release package's own file and pacman installs it in
+/// place; [`release_mirrorlist_steps`] takes care of a list that still differs.
 fn repo_date_steps(d: Option<&str>, root: &str) -> Vec<Step> {
     let Some(d) = d else {
         return Vec::new();
     };
-    let sed = |expr: String, file: &str| {
-        Step::Run(
-            ["sed", "-i", "-E", &expr, &format!("{root}{file}")]
-                .map(String::from)
-                .to_vec(),
-        )
+    let day = d.replace('/', "-");
+    let sed = |exprs: &[String], file: &str| {
+        let mut a: Vec<String> = ["sed", "-i", "-E"].map(String::from).to_vec();
+        for e in exprs {
+            a.push("-e".into());
+            a.push(e.clone());
+        }
+        a.push(format!("{root}{file}"));
+        Step::Run(a)
     };
     vec![
         sed(
-            format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
+            &[
+                format!("s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/{d}/#"),
+                // The one channel offered: the section that reads the WolOS mirrorlist.
+                r"s#^\[wolos-[a-z0-9]+\][[:space:]]*$#[wolos]#".to_owned(),
+            ],
             PACMAN_CONF,
         ),
         // [wolos] moves with Arch: both at one release date (the [cachyos-*-v3] mirrorlist has no date).
         sed(
-            format!(
-                "s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{}#g",
-                d.replace('/', "-")
-            ),
+            &[
+                // install-channel's first line names the channel the image had.
+                "/^# Channel [^ ]+: the image this system was installed from/d".to_owned(),
+                format!(
+                    r"s#^(\#?Server[[:space:]]*=[[:space:]]*[^[:space:]]*/)[^/[:space:]]+[[:space:]]*$#\1$repo-{day}#"
+                ),
+                format!("s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#{day}#g"),
+            ],
             MIRRORLIST,
         ),
     ]
+}
+
+/// After pacman in a copy moved to a new release: the release's mirrorlist is the one used. A
+/// list pacman still found changed (ranked by `wol mirror rank`, edited) left the package's as
+/// `wolos-mirrorlist.pacnew` and kept the old servers; the release's file replaces it (QA-UPG-6).
+/// Nothing to do when there is none.
+fn release_mirrorlist_steps(root: &str) -> Vec<Step> {
+    let list = format!("{root}{MIRRORLIST}");
+    let dir = Path::new(&list)
+        .parent()
+        .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+    vec![Step::Run(
+        [
+            "find",
+            &dir,
+            "-maxdepth",
+            "1",
+            "-name",
+            "wolos-mirrorlist.pacnew",
+            "-exec",
+            "mv",
+            "-f",
+            "{}",
+            &list,
+            ";",
+        ]
+        .map(String::from)
+        .to_vec(),
+    )]
 }
 
 /// Marks a system installed with one copy (a layout without btrfs, ADR 0023).
@@ -280,6 +336,8 @@ pub struct Build<'a> {
     pub from: Base,
     /// Steps between the snapshot and pacman, given the working root (repo dates).
     pub prep: &'a dyn Fn(&str) -> Vec<Step>,
+    /// Steps right after pacman, given the working root (the release's mirrorlist).
+    pub after: &'a dyn Fn(&str) -> Vec<Step>,
     /// Arguments of the real pacman, run in the slot.
     pub pacman: &'a [&'a str],
     /// Package files on the running system that `pacman` names by [`staged`] path: copied into
@@ -320,6 +378,8 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     // A scratch copy a cut left behind (QA-STORE-8, QA-LIVE4-8: the next try failed with "File
     // exists"): unmounted and deleted first; nothing to do when there is none.
     steps.extend(clear_scratch());
+    // What a cut left of this slot's seal record on the ESP (QA-LIVE4-7: `verity.<pid>.wol-tmp`).
+    steps.push(esp_leftovers(slot));
     let from = match b.from {
         Base::Running { .. } => "/",
         Base::Pending => root.as_str(),
@@ -409,6 +469,7 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     let mut pacman = vec![PACMAN];
     pacman.extend(b.pacman);
     steps.push(in_copy(&work, &pacman));
+    steps.extend((b.after)(&work));
     steps.push(in_copy(&work, &["mkinitcpio", "-P"]));
     if !b.files.is_empty() {
         steps.push(v(&["rm", "-rf", "--", &stage]));
@@ -432,12 +493,19 @@ pub fn build(b: &Build) -> Option<Vec<Step>> {
     steps.push(v(&["wol", "seal", "apply", &work, &digest_new]));
     steps.extend(swap_steps(slot));
     steps.push(v(&["mv", "-f", &digest_new, &digest]));
-    // After the seal: the signed image carries the slot's root digest.
+    // QA-LIVE4-7: the new root (its rename, the old one's delete) and its seal record are on the
+    // disk before an entry names them. btrfs commits on its own clock (30 s) and FAT has no
+    // journal: a cut after the entry but before that would boot an entry with no root.
+    steps.push(v(&["sync"]));
+    // After the seal: the signed image carries the slot's root digest. esp-sync syncs every file
+    // before its rename and the ESP before it ends.
     steps.push(esp_sync_step(&root, slot, b));
     // The new slot boots next from here on: no longer an interrupted update (review 5).
     steps.push(v(&["rm", "-f", BUILDING]));
     // A rollback the person chose earlier stops being the default: newest good entry boots.
     steps.push(v(&["bootctl", "set-default", ""]));
+    // QA-LIVE4-7: "updated" is said after the last step; everything is on the disk first.
+    steps.push(v(&["sync"]));
     Some(steps)
 }
 
@@ -507,6 +575,32 @@ fn on_subvolume(name: &str, argv: &[&str], strict: bool) -> Step {
     a.push("{}".into());
     a.push(if strict { "+" } else { ";" }.into());
     Step::Run(a)
+}
+
+/// `slot`'s seal record half written by a cut-off build: `verity.new` and the atomic writer's
+/// temporaries (`shared::atomic::TMP_SUFFIX`). Nothing to do when there are none.
+fn esp_leftovers(slot: &str) -> Step {
+    let dir = format!("{ESP}/{slot}");
+    Step::Run(
+        [
+            "find",
+            ESP,
+            "-mindepth",
+            "2",
+            "-maxdepth",
+            "2",
+            "(",
+            "-path",
+            &format!("{dir}/verity.new"),
+            "-o",
+            "-path",
+            &format!("{dir}/verity*{}", shared::atomic::TMP_SUFFIX),
+            ")",
+            "-delete",
+        ]
+        .map(String::from)
+        .to_vec(),
+    )
 }
 
 /// Unmounts and deletes the scratch copy if there is one.
@@ -731,6 +825,14 @@ pub mod be {
                 if !super::is_valid_be(name) {
                     return None;
                 }
+                // QA-LIVE4-7: an entry file a power cut left empty or garbled names no image
+                // (bootctl reads it from its `path` and finds no `uki`, `linux` or `efi`): not a
+                // restore point anyone can start.
+                if e["path"].is_string()
+                    && !["uki", "linux", "efi"].iter().any(|k| e[*k].is_string())
+                {
+                    return None;
+                }
                 let active = e["isSelected"].as_bool().unwrap_or(false);
                 Some(BootEnv {
                     name: name.into(),
@@ -930,6 +1032,9 @@ mod tests {
                 "write /var/lib/wolos/update-building",
                 "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec umount -R {} ;",
                 "find /run/wolos/top -maxdepth 1 -name @wolos-tx -exec btrfs subvolume delete {} +",
+                // QA-LIVE4-7: what a cut left of the slot's seal record.
+                "find /efi -mindepth 2 -maxdepth 2 ( -path /efi/wolos-b/verity.new -o -path \
+/efi/wolos-b/verity*.wol-tmp ) -delete",
                 &format!("btrfs subvolume snapshot / {tx}"),
                 &format!("wol layers fold {tx}"),
                 &format!(
@@ -943,19 +1048,25 @@ mod tests {
                     "find {tx}/etc -maxdepth 2 -path {tx}/etc/kernel/cmdline -exec sed -i -E \
 s#subvol=/?@wolos-[ab]([ ,]|$)#subvol=@wolos-b\\1# {{}} +"
                 ),
+                // QA-UPG-6: the release's date and its one channel, [wolos].
                 &format!(
-                    "sed -i -E s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/2026/11/02/# \
-{tx}/etc/pacman.conf"
+                    "sed -i -E -e s#/repos/[0-9]{{4}}/[0-9]{{2}}/[0-9]{{2}}/#/repos/2026/11/02/# \
+-e s#^\\[wolos-[a-z0-9]+\\][[:space:]]*$#[wolos]# {tx}/etc/pacman.conf"
                 ),
                 &format!(
-                    "sed -i -E s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#2026-11-02#g \
-{tx}/etc/pacman.d/wolos-mirrorlist"
+                    "sed -i -E -e /^# Channel [^ ]+: the image this system was installed from/d \
+-e s#^(\\#?Server[[:space:]]*=[[:space:]]*[^[:space:]]*/)[^/[:space:]]+[[:space:]]*$#\\1$repo-2026-11-02# \
+-e s#[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}#2026-11-02#g {tx}/etc/pacman.d/wolos-mirrorlist"
                 ),
                 // RH-192: each in a mount namespace of its own (`wol update chroot` binds the copy
                 // and the shared cache there); nothing is left mounted, not even after a cut.
                 &format!(
                     "unshare --mount --propagation private wol update chroot {tx} -- \
 /usr/bin/pacman -Syu --noconfirm"
+                ),
+                &format!(
+                    "find {tx}/etc/pacman.d -maxdepth 1 -name wolos-mirrorlist.pacnew -exec mv -f {{}} \
+{tx}/etc/pacman.d/wolos-mirrorlist ;"
                 ),
                 &format!(
                     "unshare --mount --propagation private wol update chroot {tx} -- mkinitcpio -P"
@@ -970,6 +1081,8 @@ s#subvol=/?@wolos-[ab]([ ,]|$)#subvol=@wolos-b\\1# {{}} +"
                 "find /run/wolos/top -maxdepth 1 -name @wolos-b -exec btrfs subvolume delete {} +",
                 &format!("mv {tx} {b}"),
                 "mv -f /efi/wolos-b/verity.new /efi/wolos-b/verity",
+                // QA-LIVE4-7: the root and its record on the disk before an entry names them.
+                "sync",
                 &format!(
                     "env WOLOS_ROOT={b} WOLOS_SLOT=wolos-b WOLOS_RELEASE=2026/11/02 \
 WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
@@ -978,12 +1091,14 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
                 "rm -f /var/lib/wolos/update-building",
                 // No pinned default: the newest good entry boots, a bad one sorts last.
                 "bootctl set-default ",
+                // QA-LIVE4-7: all of it on the disk before "updated".
+                "sync",
             ]
         );
         // First update: no previous slot; same release: no new date.
         let first = plan("wolos-a", false, None).unwrap();
         assert_eq!(
-            first[3].to_string(),
+            first[4].to_string(),
             "btrfs subvolume snapshot / /run/wolos/top/@wolos-tx"
         );
         // Only the fstab line is rewritten: no repo date moves.
@@ -1175,6 +1290,38 @@ WOLOS_CMDLINE=root=LABEL=WolOS rootflags=subvol=@wolos-b ro quiet splash \
  {"id":"wolos-b+2-1.conf","version":"2026/11/02","isDefault":true,"isSelected":false,"triesLeft":2},
  {"id":"auto-efi-shell","isDefault":false,"isSelected":false}
 ]"#;
+
+    /// QA-LIVE4-7: after a cut the entry `wolos-b+3.conf` was 0 bytes and `wol restore list`
+    /// offered it (`created: ""`, `rollback: true`): activating it booted nothing. bootctl 262's
+    /// own output for a whole entry, an empty one and a garbled one.
+    #[test]
+    fn an_entry_without_an_image_is_no_restore_point() {
+        let real = concat!(
+            r#"[{"type":"type1","source":"esp","id":"wolos-a.conf","#,
+            r#""path":"/esp/loader/entries/wolos-a.conf","root":"/esp","title":"WolOS 0.12.1","#,
+            r#""showTitle":"WolOS 0.12.1","sortKey":"wolos","version":"3-2026.11.02","#,
+            r#""uki":"/EFI/wolos/wolos-a.efi","isReported":false,"isDefault":true,"#,
+            r#""isSelected":true,"addons":null},"#,
+            r#"{"type":"type1","source":"esp","id":"wolos-b.conf","#,
+            r#""path":"/esp/loader/entries/wolos-b+3.conf","root":"/esp","showTitle":"wolos-b.conf","#,
+            r#""isReported":false,"triesLeft":3,"isDefault":false,"addons":null},"#,
+            r#"{"type":"type1","source":"esp","id":"wolos-b.conf","#,
+            r#""path":"/esp/loader/entries/wolos-b.conf","root":"/esp","showTitle":"wolos-b.conf","#,
+            r#""isReported":false,"isDefault":false,"addons":null}]"#
+        );
+        let b = be::parse(real);
+        assert_eq!(
+            b.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(),
+            ["wolos-a"],
+            "{b:?}"
+        );
+        // An older entry with loose kernels (0.11) still is one.
+        let old = real.replace(
+            r#""uki":"/EFI/wolos/wolos-a.efi""#,
+            r#""linux":"/wolos-a/vmlinuz-linux-wolos""#,
+        );
+        assert_eq!(be::parse(&old).len(), 1);
+    }
 
     #[test]
     fn slots_from_bootctl() {

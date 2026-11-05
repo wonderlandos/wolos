@@ -675,7 +675,8 @@ fn update_check_without_arch_audit_says_so_and_lists_nothing() {
     fs::create_dir_all(&bin).unwrap();
     for t in [
         "date", "cat", "mkdir", "mv", "rm", "chmod", "od", "tr", "mktemp", "ln", "cp", "wc",
-        "head", "df", "awk",
+        "head", "df", "awk", // update-settle basis (QA-UPG-5):
+        "find", "sort", "cksum",
     ] {
         let o = Command::new("sh")
             .args(["-c", &format!("command -v {t}")])

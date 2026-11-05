@@ -8,6 +8,11 @@
 #   audit    installed packages with a known vulnerability (arch-audit -q)
 #   kernels  installed package names (pacman -Qq): kernels besides linux-wolos are reported
 #   base     the latest release manifest; base.sig its signature in hex (verified when read)
+#   basis    the installed-package records the lists were read against (`update-settle basis`):
+#            the slot's own, so another after a slot switch, a rollback or a layer change.
+#            update-settle (every start, before any session) drops pkg, audit, kernels and checked
+#            when it is not the running one (QA-UPG-5). A changed basis makes the next hourly run
+#            check, whatever the 20-hour stamp says.
 #   checked  when the package check finished (seconds since 1970): written only when the package
 #            lists were refreshed and read, so "checked now" never stands for a check that could
 #            not run (QA-STORE-12)
@@ -28,12 +33,16 @@ URL=${WOLOS_RELEASE_URL:-https://cdn.wolos.org/latest/release.json}
 MIRROR=${WOLOS_RELEASE_MIRROR-https://wolos.squareweb.app/latest/release.json}
 FALLBACK=${WOLOS_RELEASE_FALLBACK-https://github.com/wonderlandos/wolos-packages/releases/latest/download/release.json}
 EVERY=72000
+# The basis has one definition, next to this script (update-settle).
+here=${0%/*}
+[ "$here" != "$0" ] || here=/usr/lib/wolos
+basis() { "$here/update-settle" basis; }
 now=$(date +%s)
 last=$(cat "$D/checked" 2>/dev/null)
 case $last in '' | *[!0-9]*) last=0 ;; esac
 # A stamp from the future (the clock was ahead when it was written) is stale, not fresh (C9-5).
 [ "$last" -le "$now" ] || last=0
-[ "${1:-}" = now ] || [ $((now - last)) -ge $EVERY ] || exit 0
+[ "${1:-}" = now ] || [ $((now - last)) -ge $EVERY ] || [ "$(basis)" != "$(cat "$D/basis" 2>/dev/null)" ] || exit 0
 umask 022
 # fail CODE SENTENCE: say it in the journal and stop, nothing stamped.
 fail() {
@@ -60,10 +69,12 @@ if [ -d "$db/sync" ]; then cp -a "$db/sync" "$tmp/" || fail 1 "could not copy th
 # Offline (the refresh fails) leaves no stamp: the next hour tries.
 pacman --dbpath "$tmp" -Sy --noprogressbar >/dev/null 2>&1 || fail 75 "could not refresh the package lists (offline?)"
 # -Qu: 0 = updates listed, 1 = none (or an error, which says so on stderr).
+now_basis=$(basis)
 pacman --dbpath "$tmp" -Qu >"$D/pkg.new" 2>"$tmp/err"
 st=$?
 if [ "$st" -eq 0 ] || { [ "$st" -eq 1 ] && [ ! -s "$tmp/err" ]; }; then
 	mv "$D/pkg.new" "$D/pkg" || fail 1 "could not write $D/pkg"
+	{ printf '%s\n' "$now_basis" >"$D/basis.new" && mv -f "$D/basis.new" "$D/basis"; } || fail 1 "could not write $D/basis"
 else
 	rm -f "$D/pkg.new"
 	fail 1 "pacman -Qu failed: $(head -n 1 "$tmp/err")"
@@ -109,6 +120,6 @@ else
 	chmod 644 "$D/base.error"
 fi
 { date +%s >"$D/checked.new" && mv -f "$D/checked.new" "$D/checked"; } || fail 1 "could not write $D/checked"
-chmod 644 "$D/pkg" "$D/checked"
+chmod 644 "$D/pkg" "$D/checked" "$D/basis"
 chmod 644 "$D/audit" "$D/kernels" "$D/base" "$D/base.sig" 2>/dev/null
 exit 0

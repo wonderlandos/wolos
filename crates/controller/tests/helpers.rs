@@ -316,7 +316,12 @@ fn first_update_has_no_previous_slot_to_replace() {
         !ran.iter().any(|r| r.starts_with("btrfs subvolume delete")),
         "{ran:?}"
     );
-    assert_eq!(ran.last().unwrap(), "bootctl set-default ");
+    assert_eq!(ran[ran.len() - 2], "bootctl set-default ");
+    assert_eq!(
+        ran.last().unwrap(),
+        "sync",
+        "on the disk before \"updated\" (QA-LIVE4-7)"
+    );
     assert!(e.out.contains("updated into wolos-b"));
 }
 

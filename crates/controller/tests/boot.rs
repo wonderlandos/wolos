@@ -365,6 +365,60 @@ fn manual_fallback_sets_default() {
     assert!(e.execs.is_empty(), "{:?}", e.execs);
 }
 
+/// QA-LIVE4-3: boot-rearm counts a blessed slot's next start once; when that start does not
+/// finish (`wolos-b+0-1.conf`: no tries left, one used) the other slot starts. If the image is
+/// whole the try was lost to something else (a power cut while it started): the good start here
+/// gives it three tries back, the new name on the disk before the old one goes, and says so. A
+/// damaged image, or a slot that used three tries, stays behind.
+#[test]
+fn probe_failed_slot_gets_its_tries_back() {
+    let sum = |c: char| c.to_string().repeat(64);
+    let with = |entry: &str, got: char| {
+        let mut e = booted("rootflags=subvol=@wolos-a wolos.epoch=7", "6\n");
+        e.files.retain(|(p, _)| !p.ends_with("wolos-b+3.conf"));
+        e.files.push((
+            PathBuf::from(format!("/efi/loader/entries/{entry}")),
+            "title WolOS 1.2\nsort-key wolos\nversion 8-2026.12.01\nuki /EFI/wolos/wolos-b.efi\n"
+                .into(),
+        ));
+        e.captures[0].1 = format!("wolos-a.conf\n{entry}\n");
+        e.files.push((
+            PathBuf::from("/efi/wolos-b/image.sha256"),
+            format!("{}\n", sum('a')),
+        ));
+        e.captures.push((
+            "sha256sum /efi/EFI/wolos/wolos-b.efi".into(),
+            format!("{}  /efi/EFI/wolos/wolos-b.efi\n", sum(got)),
+        ));
+        e
+    };
+    let mut e = with("wolos-b+0-1.conf", 'a');
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    let w = e
+        .written
+        .iter()
+        .find(|(p, _)| p.ends_with("wolos-b+3.conf"))
+        .unwrap_or_else(|| panic!("{:?}", e.written));
+    assert!(w.1.contains("uki /EFI/wolos/wolos-b.efi"), "{}", w.1);
+    assert_eq!(
+        e.removed,
+        [PathBuf::from("/efi/loader/entries/wolos-b+0-1.conf")]
+    );
+    let ran: Vec<String> = e.execs.iter().map(|a| a.join(" ")).collect();
+    assert_eq!(ran, ["sync -f /efi"], "{}", e.err);
+    assert!(e.err.contains("three tries"), "{}", e.err);
+    // Damaged: pinned behind (QA-LIVE4-4), never re-armed.
+    let mut e = with("wolos-b+0-1.conf", 'f');
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    assert!(!e.written.iter().any(|(p, _)| p.ends_with("wolos-b+3.conf")));
+    assert!(e.removed.is_empty(), "{:?}", e.removed);
+    // Three tries used (a real failure, not the one counted try): stays behind.
+    let mut e = with("wolos-b+0-3.conf", 'a');
+    assert_eq!(run("boot bless", &mut e), 0, "{}", e.err);
+    assert!(!e.written.iter().any(|(p, _)| p.ends_with("wolos-b+3.conf")));
+    assert!(e.execs.is_empty(), "{:?}", e.execs);
+}
+
 /// QA-LIVE3-16 on the boot check's pass path: the notice goes once no slot is marked and the
 /// other image is sound; a mark on the other slot or a damaged image keeps it.
 #[test]

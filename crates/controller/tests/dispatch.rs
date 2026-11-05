@@ -573,7 +573,7 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
     );
     let mut env = FakeEnv {
         root: true,
-        exec_codes: vec![0, 0, 0, 1],
+        exec_codes: vec![0, 0, 0, 0, 1],
         files: vec![cmdline.clone()],
         captures: vec![bootctl.clone()],
         ..Default::default()
@@ -587,12 +587,18 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
             .to_string(),
     ];
     assert_eq!(ran[..2], clean, "a scratch copy a cut left goes first");
-    assert_eq!(ran[2], format!("btrfs subvolume snapshot / {tx}"));
-    assert_eq!(ran[3], format!("wol layers fold {tx}"));
+    // QA-LIVE4-7: and what a cut left of the slot's seal record.
+    assert_eq!(
+        ran[2],
+        "find /efi -mindepth 2 -maxdepth 2 ( -path /efi/wolos-b/verity.new -o -path \
+/efi/wolos-b/verity*.wol-tmp ) -delete"
+    );
+    assert_eq!(ran[3], format!("btrfs subvolume snapshot / {tx}"));
+    assert_eq!(ran[4], format!("wol layers fold {tx}"));
     // QA-STORE-3: the fold failed before the swap: only the scratch copy goes; wolos-b (the
     // earlier restore point), its entries and its image stay.
     assert_eq!(
-        ran[4..],
+        ran[5..],
         [
             clean[0].clone(),
             clean[1].clone(),
@@ -629,8 +635,13 @@ fn update_apply_needs_yes_and_root_and_rolls_back() {
         env.out
             .contains("unshare --mount --propagation private wol update chroot /run/wolos/top/@wolos-tx -- /usr/bin/pacman -Syu --noconfirm\n")
     );
-    // QA-STORE-76: an empty argument reads as '' (not a bare "bootctl set-default ").
-    assert!(env.out.ends_with("bootctl set-default ''\n"), "{}", env.out);
+    // QA-STORE-76: an empty argument reads as '' (not a bare "bootctl set-default "); QA-LIVE4-7:
+    // everything on the disk before "updated".
+    assert!(
+        env.out.ends_with("bootctl set-default ''\nsync\n"),
+        "{}",
+        env.out
+    );
 }
 
 /// QA-STORE-76: `wol --version` prints the version, not the help; `wol layers` names its
@@ -1006,8 +1017,10 @@ fn retry_after_cut_succeeds() {
         ran[1].contains("-name @wolos-tx -exec btrfs subvolume delete"),
         "{ran:?}"
     );
-    assert!(ran[2].starts_with("btrfs subvolume snapshot / "), "{ran:?}");
-    assert_eq!(ran[ran.len() - 2], "rm -f /var/lib/wolos/update-building");
+    assert!(ran[3].starts_with("btrfs subvolume snapshot / "), "{ran:?}");
+    assert_eq!(ran[ran.len() - 3], "rm -f /var/lib/wolos/update-building");
+    // QA-LIVE4-7: "restart to use it" only once everything is on the disk.
+    assert_eq!(ran[ran.len() - 1], "sync");
     assert!(env.out.contains("restart"), "{}", env.out);
 }
 

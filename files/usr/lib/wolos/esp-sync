@@ -36,7 +36,8 @@ E=$ESP/loader/entries; D=$ESP/EFI/wolos; old=$ESP/$slot
 here=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$E" "$D" "$old"
 # What an earlier run cut off left (BOOT2-7): this slot's half-written files only.
-rm -f "$D/$slot".efi.new "$D/$slot"-*.efi.new "$E/$slot".conf.new "$E/$slot"+*.conf.new "$E/$slot"-*.conf.new
+rm -f "$D/$slot".efi.new "$D/$slot"-*.efi.new "$E/$slot".conf.new "$E/$slot"+*.conf.new "$E/$slot"-*.conf.new \
+  "$old/image.sha256.new" "$old/image.inputs.new"
 
 # The newest generation on the ESP; a new slot goes one above it, so it sorts first.
 top=0
@@ -95,9 +96,16 @@ for k in "$R"/boot/vmlinuz-*; do
   ukify build "$@" >/dev/null
   sync "$D/$img.efi.new"
   mv -f "$D/$img.efi.new" "$D/$img.efi"
+  # The image under its name on the disk before an entry names it (QA-LIVE4-7: FAT renames are
+  # directory writes a file's own sync does not cover).
+  sync -f "$ESP/"
   if [ "$kb" = linux-wolos ]; then
-    sha256sum "$D/$img.efi" | cut -d' ' -f1 > "$old/image.sha256"
-    printf '%s\n' "$inputs" > "$old/image.inputs"
+    # Whole or not at all: boot-ok, boot-rearm and `wol boot bless` compare against them.
+    sha256sum "$D/$img.efi" | cut -d' ' -f1 > "$old/image.sha256.new"
+    printf '%s\n' "$inputs" > "$old/image.inputs.new"
+    sync "$old/image.sha256.new" "$old/image.inputs.new"
+    mv -f "$old/image.sha256.new" "$old/image.sha256"
+    mv -f "$old/image.inputs.new" "$old/image.inputs"
   fi
   {
     echo "title $title"

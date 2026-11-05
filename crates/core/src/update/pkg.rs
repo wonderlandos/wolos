@@ -188,6 +188,7 @@ pub fn plan(
         slot,
         from,
         prep: &|_| Vec::new(),
+        after: &|_| Vec::new(),
         pacman: &pacman,
         files: &files,
         release,
@@ -605,7 +606,12 @@ https://example.org/x.pkg.tar.zst --cachedir /c"
             .position(|x| x.ends_with("esp-sync --new"))
             .unwrap();
         assert!(pacman < seal && seal < mv && mv < entry, "{t:?}");
-        assert_eq!(t[t.len() - 1], "bootctl set-default ");
+        assert_eq!(t[t.len() - 2], "bootctl set-default ");
+        assert_eq!(
+            t[t.len() - 1],
+            "sync",
+            "on the disk before \"updated\" (QA-LIVE4-7)"
+        );
     }
 
     #[test]

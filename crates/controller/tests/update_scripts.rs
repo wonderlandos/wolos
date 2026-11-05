@@ -287,3 +287,90 @@ fn update_download_fails_when_the_check_fails() {
     assert!(err.contains("did not run"), "{err}");
     assert!(!log(&d).contains("pacman "), "{}", log(&d));
 }
+
+/// update-check with `args` (or update-settle for `settle`) and the fake tools already in `d`.
+fn check_with(d: &Path, args: &[&str]) -> (Option<i32>, String) {
+    // `settle`: the boot step next to the check (update-settle).
+    let script = if args.first() == Some(&"settle") {
+        repo("files/usr/lib/wolos/update-settle")
+    } else {
+        check_script()
+    };
+    let o = Command::new("sh")
+        .arg(script)
+        .args(args.iter().filter(|a| **a != "settle"))
+        .env("PATH", format!("{}:/usr/bin:/bin", d.join("bin").display()))
+        .env("WOLOS_PACMAN_DB", d.join("db"))
+        .env("TMPDIR", d.join("tmp"))
+        .env("WOLOS_UPDATES", d.join("out"))
+        .output()
+        .unwrap();
+    (
+        o.status.code(),
+        String::from_utf8_lossy(&o.stderr).into_owned(),
+    )
+}
+
+/// QA-UPG-5: right after the 0.12.0 -> 0.12.1 upgrade Software Update said "10 updates
+/// available" and offered packages the new slot already had: the findings in the shared /var
+/// were read against the old slot's installed packages. The check records which ones (`basis`);
+/// at every start (`settle`, before sessions) findings that describe another package set are
+/// dropped (the release manifest stays: it does not depend on the slot), and the next hourly run
+/// checks again whatever the 20-hour stamp says. Findings of the running slot stay as they are.
+#[test]
+fn stale_findings_dropped_after_slot_switch() {
+    let d = scratch("settle");
+    let pacman = "case \"$*\" in *-Qu*) echo 'hyprland-wolos 1-1 -> 2-1'; echo 'linux-wolos 7.3.0-1 -> 7.3.1-1' ;; esac";
+    for p in [
+        "db/local/hyprland-wolos-1-1",
+        "db/local/linux-wolos-7.3.0-1",
+    ] {
+        fs::create_dir_all(d.join(p)).unwrap();
+    }
+    let (code, err) = check(&d, &check_script(), pacman, CURL_OK, 1 << 20);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(
+        d.join("out/basis").exists(),
+        "the check records what it read"
+    );
+    // The same slot at the next start: nothing changes.
+    let (code, err) = check_with(&d, &["settle"]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(d.join("out/pkg").exists() && d.join("out/checked").exists());
+    // A fresh stamp and the same packages: the hourly run waits.
+    fs::write(d.join("log"), "").unwrap();
+    let (code, _) = check_with(&d, &[]);
+    assert_eq!(code, Some(0));
+    assert!(!log(&d).contains("pacman"), "{}", log(&d));
+    // The new slot holds the new versions: its first start drops what described the old one.
+    fs::remove_dir_all(d.join("db/local")).unwrap();
+    for p in [
+        "db/local/hyprland-wolos-2-1",
+        "db/local/linux-wolos-7.3.1-1",
+    ] {
+        fs::create_dir_all(d.join(p)).unwrap();
+    }
+    let (code, err) = check_with(&d, &["settle"]);
+    assert_eq!(code, Some(0), "{err}");
+    for f in ["pkg", "audit", "kernels", "checked", "basis"] {
+        assert!(
+            !d.join("out").join(f).exists(),
+            "{f} described the other slot"
+        );
+    }
+    assert!(d.join("out/base").exists(), "the release manifest stays");
+    // Findings from a check that recorded nothing (the 0.12.0 script) are another slot's too.
+    fs::write(d.join("out/pkg"), "hyprland-wolos 1-1 -> 2-1\n").unwrap();
+    fs::write(d.join("out/checked"), "1\n").unwrap();
+    let (code, _) = check_with(&d, &["settle"]);
+    assert_eq!(code, Some(0));
+    assert!(!d.join("out/pkg").exists());
+    // A package change with a fresh stamp (a layer): the hourly run checks again.
+    let (code, err) = check(&d, &check_script(), pacman, CURL_OK, 1 << 20);
+    assert_eq!(code, Some(0), "{err}");
+    fs::create_dir_all(d.join("db/local/htop-3.4-1")).unwrap();
+    fs::write(d.join("log"), "").unwrap();
+    let (code, err) = check_with(&d, &[]);
+    assert_eq!(code, Some(0), "{err}");
+    assert!(log(&d).contains("pacman --dbpath"), "{}", log(&d));
+}
