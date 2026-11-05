@@ -897,12 +897,19 @@ pub fn read_facts(t: &mut dyn Tools, path: &str) -> Option<disk::Facts> {
 fn read_only(env: &mut dyn Env, inv: &Invocation, t: &mut dyn Tools) -> Option<i32> {
     match inv.action {
         "install.facts" | "install.mounts" => {
-            let Some(f) = inv.get("disk").and_then(|d| read_facts(t, d)) else {
+            let Some(mut f) = inv.get("disk").and_then(|d| read_facts(t, d)) else {
                 return Some(fail(env, ErrorCode::NotFound, "no such disk"));
             };
             env.out(&if inv.action == "install.facts" {
                 f.lines()
             } else {
+                // Loops over the disk hold it too (IMG013-INSTALL-AFTER-CUT); no losetup: none.
+                let mut argv = vec!["losetup"];
+                argv.extend(disk::LOOPS_LOSETUP);
+                let lo = t.run(&argv, None);
+                if lo.ok {
+                    f.add_loops(&lo.stdout);
+                }
                 f.mount_lines()
             });
             Some(0)

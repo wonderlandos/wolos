@@ -533,7 +533,7 @@ pub const TREE: &[Cmd] = &[
         &["install", "mounts"],
         "install.mounts",
         &[opt("disk")],
-        "Installer: what of a disk is in use, as lines: mount <path> (deepest first), swap <device>",
+        "Installer: what holds a disk, as lines in release order: detach <loop>, mount <path> (deepest first), swap <device>, close <volume> (topmost first)",
     ),
     cmd(
         &["install", "hostname"],

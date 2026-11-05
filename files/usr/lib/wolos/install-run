@@ -33,7 +33,7 @@
 # Without a plan (autoinstall) the same choices come from the environment: WOLOS_HOSTNAME (checked
 # by `wol install hostname`, default wolos), WOLOS_AUTOLOGIN=yes|no, WOLOS_SWAP=none|zram|swapfile:<GiB> (default zram).
 # Env (tests): WOLOS_INSTALL_PATH, WOLOS_INSTALL_ROOT (/mnt/wolos), WOLOS_SOURCE_SFS, WOLOS_NO_INHIBIT,
-# WOLOS_RESULT_DIR, WOLOS_INSTALL_LOG.
+# WOLOS_RESULT_DIR, WOLOS_INSTALL_LOG, WOLOS_PROC (/proc: who holds the disk open).
 set -u
 PATH=${WOLOS_INSTALL_PATH:-/usr/bin:/usr/sbin}; export PATH
 # Closing the lid or idling must not sleep the machine mid-install; the hold ends with the install.
@@ -155,6 +155,42 @@ wol install mounts "$disk" | while read -r what m; do
     swap:*) swapoff "$m" ;;
   esac
 done
+# Right before the partition table changes, everything still holding the disk lets go: the
+# target's mounts, loops over it, its mounts and swap, the volumes opened over its partitions
+# (a try cut short by a power loss or a stop leaves any of them; IMG013-INSTALL-AFTER-CUT), then
+# udev finishes probing what changed. Only after every check: a refused disk keeps them.
+release() {
+  ! mountpoint -q "$T" 2>/dev/null || umount -R "$T" || :
+  wol install mounts "$disk" | while read -r what m; do
+    case $what:$m in
+      mount:/ | mount:/run/archiso*) ;;
+      detach:*) losetup -d "$m" || : ;;
+      mount:*) umount "$m" || : ;;
+      swap:*) swapoff "$m" || : ;;
+      close:*) cryptsetup close "$m" 2>/dev/null || dmsetup remove --retry "$m" || : ;;
+    esac
+  done
+  udevadm settle || :
+}
+# What still holds the disk, for the fail line: `wol install mounts`, then the processes that
+# have one of its devices open: the disk or a partition named as part() names them
+# (/dev/nvme0n1p2, /dev/sda2; never /dev/nvme0n10, another disk).
+held() {
+  h=$(wol install mounts "$disk" | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+  case $disk in *[0-9]) pp=${disk}p ;; *) pp=$disk ;; esac
+  for f in "${WOLOS_PROC:-/proc}"/[0-9]*/fd/*; do
+    t=$(readlink "$f" 2>/dev/null) || continue
+    if [ "$t" != "$disk" ]; then
+      case $t in "$pp"[0-9]*) ;; *) continue ;; esac
+      case ${t#"$pp"} in *[!0-9]*) continue ;; esac
+    fi
+    p=${f#"${WOLOS_PROC:-/proc}"/}; p=${p%%/*}
+    # A process names itself: one line, no pipes, as why() keeps the fail line.
+    c=$(tr -d '|\n\r' < "${WOLOS_PROC:-/proc}/$p/comm" 2>/dev/null) && [ -n "$c" ] || c='?'
+    case ", $h," in *", process $p ($c),"*) ;; *) h="${h:+$h, }process $p ($c)" ;; esac
+  done
+  echo "${h:-nothing it can name}"
+}
 # Every check before the first write: a refused disk is left exactly as it was.
 facts=$(sh "$here/install-check" "$disk") || refuse "not a disk the installer may erase: $disk"
 others=$(printf '%s\n' "$facts" | grep -c '^os ')
@@ -189,30 +225,37 @@ KEYDIR=${WOLOS_KEYDIR:-/run/wolos/install-keys}
 if [ "$unlock" != off ]; then
   (umask 077 && mkdir -p "$KEYDIR" && head -c 64 /dev/urandom > "$KEYDIR/key") || fail "could not make the disk key"
 fi
+# systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
+# The live system may still hold the old partitions (udev probing what a cut install left): repart's
+# first add then fails 'Device or resource busy' (QA-DOC-28). release() (above) lets go of what
+# holds the disk; forget() has the kernel forget the old partitions and drops the old table first.
+forget() {
+  udevadm settle
+  partx -d "$disk" >/dev/null 2>&1 || :
+  wipefs -a -q "$disk" >/dev/null 2>&1 || :
+  udevadm settle
+}
+repart() {
+  if [ "$unlock" = off ]; then
+    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d" "$disk" >&2
+  else
+    systemd-repart --empty=force --dry-run=no --no-pager --definitions="$here/repart.d-crypt" \
+      --key-file="$KEYDIR/key" "$disk" >&2
+  fi
+}
+release
 if [ "$wipe" = 1 ]; then
   say disk 5 "Erasing $disk"
-  # systemd-repart lays out the disk from repart.d (ESP + btrfs root with the slot subvolumes, ADR 0018).
-  # The live system may still hold the old partitions (udev probing what a cut install left):
-  # repart's first add then fails 'Device or resource busy' (QA-DOC-28). The kernel forgets them
-  # and the old table goes first; a partition still busy gets one more try after a second.
-  forget() {
-    udevadm settle
-    partx -d "$disk" >/dev/null 2>&1 || :
-    wipefs -a -q "$disk" >/dev/null 2>&1 || :
-    udevadm settle
-  }
-  repart() {
-    forget
-    systemd-repart --empty=force --dry-run=no --no-pager "$@" "$disk" >&2 && return 0
+  # Busy (something opened a partition after the release, udev still probing): let go once more,
+  # forget the old table again and try once more; still busy, the fail line says what holds it.
+  forget
+  repart || {
+    echo "install-run: $disk was busy; letting it go again and trying once more" >&2
     sleep 1
+    release
     forget
-    systemd-repart --empty=force --dry-run=no --no-pager "$@" "$disk" >&2
-  }
-  if [ "$unlock" = off ]; then
-    repart --definitions="$here/repart.d" || fail "could not partition $disk"
-  else
-    repart --definitions="$here/repart.d-crypt" --key-file="$KEYDIR/key" || fail "could not partition $disk"
-  fi
+    repart
+  } || fail "could not partition $disk (held by: $(held))"
   udevadm settle
   esp=$(part 1); root=$(part 2); fsdev=$root
   # Erased: whatever install-check saw on the disk is gone, so no menu waits for it.
