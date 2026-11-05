@@ -173,7 +173,7 @@ fn loads_past_the_workers_and_the_queue_get_503_at_once() {
     let limits = Limits {
         workers: 1,
         queue: 1,
-        idle: None,
+        ..Limits::default()
     };
     let (path, _end) = serve(&dir, handler, limits);
     let send = |p: &Path| {
@@ -224,6 +224,65 @@ fn an_idle_helper_returns_and_a_second_one_is_refused_while_it_runs() {
     assert_eq!(end.recv_timeout(Duration::from_secs(20)), Ok(true));
     // Gone and its lock released: a new helper binds the same path (the stale socket replaced).
     assert!(atlas_fed::bind(&path).is_ok());
+}
+
+/// QA-A9-WEB-ATLAS-10: a real client that connects at the moment of the idle exit (after the
+/// decision to stop, before the wake) is answered, not dropped as if it were the wake.
+#[test]
+fn a_client_arriving_during_the_idle_exit_is_served() {
+    let dir = scratch("idle-race");
+    let limits = Limits {
+        idle: Some(Duration::from_millis(200)),
+        wake_delay: Duration::from_millis(1500),
+        ..Limits::default()
+    };
+    let (path, end) = serve(&dir, resolver_handler(Box::new(captured())), limits);
+    // The idle thread decides at about 200 ms and wakes at about 1700 ms: 800 ms is inside.
+    thread::sleep(Duration::from_millis(800));
+    assert_eq!(ask(&path, "fed://home.fed", Load::Document).status, 200);
+    assert_eq!(end.recv_timeout(Duration::from_secs(20)), Ok(true));
+}
+
+/// A client that finds no socket starts a helper while the old one is still leaving: the new one
+/// waits for the lock and takes the socket over, instead of exiting on AddrInUse.
+#[test]
+fn a_helper_started_during_the_exit_takes_over_when_the_old_one_lets_go() {
+    let dir = scratch("handover");
+    let path = dir.join("run").join("atlas").join("fed.sock");
+    let old = atlas_fed::bind(&path).unwrap();
+    let release = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        drop(old);
+    });
+    let started = std::time::Instant::now();
+    let new = atlas_fed::bind_wait(&path, atlas_fed::LOCK_WAIT);
+    assert!(
+        new.is_ok(),
+        "the new helper must take over: {:?}",
+        new.err()
+    );
+    assert!(started.elapsed() >= Duration::from_millis(250));
+    release.join().unwrap();
+    // While nobody lets go, it is still AddrInUse after the wait.
+    let e = match atlas_fed::bind_wait(&path, Duration::from_millis(100)) {
+        Ok(_) => panic!("bound a socket that is served"),
+        Err(e) => e,
+    };
+    assert_eq!(e.kind(), std::io::ErrorKind::AddrInUse);
+}
+
+/// The exit takes the socket file away before the listener closes: nobody can connect to a
+/// socket nobody accepts on.
+#[test]
+fn the_socket_file_is_gone_when_the_idle_exit_returns() {
+    let dir = scratch("idle-unlink");
+    let limits = Limits {
+        idle: Some(Duration::from_millis(200)),
+        ..Limits::default()
+    };
+    let (path, end) = serve(&dir, resolver_handler(Box::new(captured())), limits);
+    assert_eq!(end.recv_timeout(Duration::from_secs(20)), Ok(true));
+    assert!(!path.exists(), "the socket file outlived the listener");
 }
 
 #[test]

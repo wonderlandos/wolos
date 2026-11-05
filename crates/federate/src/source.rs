@@ -88,7 +88,11 @@ impl Https {
             .http_status_as_error(false)
             .timeout_connect(Some(CONNECT_WAIT))
             .timeout_per_read(Some(READ_WAIT))
-            .max_redirects(4)
+            // Redirects are followed by `get` itself, to the same host only: the anchors certify
+            // any Let's Encrypt host, so a distributor could otherwise send every fetch (and so
+            // which fed:// names a person loads) to another host (QA-A9-SEC-9).
+            .max_redirects(0)
+            .max_redirects_will_error(false)
             .user_agent(concat!("wolos-federate/", env!("CARGO_PKG_VERSION")))
             .build()
             .into();
@@ -99,15 +103,79 @@ impl Https {
     }
 }
 
+/// Most same-host redirects one fetch follows.
+const MAX_HOPS: usize = 4;
+
+/// The `https://host[:port]` part of an absolute https URL, lower-cased; None for anything else.
+fn origin_of(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("https://")?;
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    (!authority.is_empty() && !authority.contains('@'))
+        .then(|| format!("https://{}", authority.to_ascii_lowercase()))
+}
+
+/// Where a redirect from `current` to `location` goes, only when it stays on the same host (same
+/// scheme, host and port): an absolute https URL of that origin, or a path starting with `/`.
+/// Anything else (another host, plain http, a relative name, a protocol-relative `//host`) is Err.
+fn same_host_redirect(current: &str, location: &str) -> Result<String, String> {
+    let origin = origin_of(current).ok_or("not an https address")?;
+    if let Some(path) = location.strip_prefix('/') {
+        if path.starts_with('/') || path.starts_with('\\') {
+            return Err("the redirect names another host".into());
+        }
+        return Ok(format!("{origin}{location}"));
+    }
+    match origin_of(location) {
+        Some(o) if o == origin => Ok(location.to_owned()),
+        _ => Err("the redirect names another host".into()),
+    }
+}
+
+/// Follow `first` through [`MAX_HOPS`] same-host redirects with `hop(url)`, which answers either the
+/// final response or the `Location` of a redirect.
+fn follow<T>(
+    first: &str,
+    mut hop: impl FnMut(&str) -> Result<Hop<T>, String>,
+) -> Result<T, String> {
+    let mut url = first.to_owned();
+    for _ in 0..=MAX_HOPS {
+        match hop(&url)? {
+            Hop::Done(t) => return Ok(t),
+            Hop::Redirect(location) => url = same_host_redirect(&url, &location)?,
+        }
+    }
+    Err("too many redirects".into())
+}
+
+/// One step of [`follow`].
+enum Hop<T> {
+    Done(T),
+    Redirect(String),
+}
+
 impl Source for Https {
     fn get(&self, path: &str, max: u64) -> Result<Vec<u8>, String> {
         let url = format!("{}{path}", self.base);
         let host = self.base.trim_start_matches("https://");
-        let resp = self
-            .agent
-            .get(&url)
-            .call()
-            .map_err(|e| format!("{host} could not be reached ({e})"))?;
+        let resp = follow(&url, |u| {
+            let r = self
+                .agent
+                .get(u)
+                .call()
+                .map_err(|e| format!("{host} could not be reached ({e})"))?;
+            let status = r.status().as_u16();
+            if matches!(status, 301 | 302 | 303 | 307 | 308) {
+                let to = r
+                    .headers()
+                    .get("location")
+                    .and_then(|v| v.to_str().ok())
+                    .ok_or_else(|| format!("{host} redirected {path} without saying where"))?;
+                return Ok(Hop::Redirect(to.to_owned()));
+            }
+            Ok(Hop::Done(r))
+        })
+        .map_err(|e| format!("{host}: {e} ({path})"))?;
         match resp.status().as_u16() {
             200 => {}
             404 => return Err(format!("{host} does not have {path}")),
@@ -130,6 +198,65 @@ impl Source for Https {
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+
+    /// QA-A9-SEC-9: a redirect stays on the host it started from.
+    #[test]
+    fn a_redirect_to_another_host_is_refused() {
+        let from = "https://federate.network/v1/root";
+        assert_eq!(
+            same_host_redirect(from, "/v1/root2").unwrap(),
+            "https://federate.network/v1/root2"
+        );
+        assert_eq!(
+            same_host_redirect(from, "https://FEDERATE.network/x").unwrap(),
+            "https://FEDERATE.network/x"
+        );
+        for bad in [
+            "https://evil.example/v1/root",
+            "https://federate.network.evil.example/v1/root",
+            "https://federate.network@evil.example/",
+            "http://federate.network/v1/root",
+            "https://federate.network:8443/v1/root",
+            "//evil.example/v1/root",
+            "/\\evil.example",
+            "relative/name",
+            "",
+        ] {
+            assert!(same_host_redirect(from, bad).is_err(), "{bad}");
+        }
+    }
+
+    /// The fetch ends in an error (so the resolver reports `Outcome::Network`) when a distributor
+    /// redirects to another host, never reaching that host; same-host hops are bounded.
+    #[test]
+    fn a_fetch_never_reaches_the_host_it_was_redirected_to() {
+        let mut asked = Vec::new();
+        let r: Result<(), String> = follow("https://federate.network/v1/root", |u| {
+            asked.push(u.to_owned());
+            Ok(Hop::Redirect("https://evil.example/v1/root".into()))
+        });
+        assert!(r.is_err());
+        assert_eq!(
+            asked,
+            ["https://federate.network/v1/root"],
+            "the other host was never asked"
+        );
+        let mut n = 0;
+        let r: Result<(), String> = follow("https://h/x", |_| {
+            n += 1;
+            Ok(Hop::Redirect("/x".into()))
+        });
+        assert!(r.unwrap_err().contains("too many"));
+        assert_eq!(n, MAX_HOPS + 1);
+        let r = follow("https://h/x", |u| {
+            Ok(if u.ends_with("/x") {
+                Hop::Redirect("/y".into())
+            } else {
+                Hop::Done(7)
+            })
+        });
+        assert_eq!(r, Ok(7));
+    }
 
     #[test]
     fn the_hybrid_group_is_offered_first_and_x25519_after_it() {

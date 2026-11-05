@@ -53,8 +53,6 @@ void wwe_engine_spin(void *e) { engine *en = e; if (en->dirty) { en->frames++; e
 #else
 void wwe_engine_spin(void *e) { (void)e; }
 #endif
-void wwe_engine_spin(void *e) { (void)e; }
-#endif
 void *wwe_view_new(void *e, const void *t, const char *url, char *err, size_t n) {
     view *v = calloc(1, sizeof *v);
     (void)t; (void)url; (void)err; (void)n;

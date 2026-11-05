@@ -149,7 +149,7 @@ fn main() -> ExitCode {
             }
         };
     }
-    let bound = match atlas_fed::bind(&path) {
+    let bound = match atlas_fed::bind_wait(&path, atlas_fed::LOCK_WAIT) {
         Ok(b) => b,
         Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
             eprintln!("atlas-fed: {e}");
