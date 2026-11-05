@@ -13,9 +13,27 @@ pub struct Client {
     next: u64,
 }
 
+/// `Ok` when the process serving the socket runs as `me`: whoever answers on a path is taken as
+/// the browser's truth, and a directory another account made first (`/tmp/atlas-<uid>` with
+/// `XDG_RUNTIME_DIR` unset) would let that account answer (QA-A10-CS-3).
+fn same_account(peer: Option<shared::sys::Peer>, me: u32, path: &Path) -> std::io::Result<()> {
+    match peer {
+        Some(p) if p.uid == me => Ok(()),
+        other => Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "the process on {} is {}, not this account (uid {me}): not talking to it",
+                path.display(),
+                other.map_or_else(|| "an unknown account".into(), |p| format!("uid {}", p.uid)),
+            ),
+        )),
+    }
+}
+
 impl Client {
     pub fn connect(path: &Path) -> std::io::Result<Client> {
         let s = UnixStream::connect(path)?;
+        same_account(shared::sys::peer(&s), shared::sys::euid(), path)?;
         let w = s.try_clone()?;
         Ok(Client {
             w,
@@ -74,5 +92,27 @@ impl Client {
     /// Raw CDP on the same socket.
     pub fn cdp(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.request(method, params, &mut |_| {})
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shared::sys::Peer;
+
+    /// QA-A10-CS-3: only a daemon of this account is the daemon.
+    #[test]
+    fn a_daemon_of_another_account_is_refused() {
+        let p = Path::new("/tmp/atlas-1000/drive.sock");
+        assert!(same_account(Some(Peer { pid: 7, uid: 1000 }), 1000, p).is_ok());
+        for peer in [
+            Some(Peer { pid: 7, uid: 1001 }),
+            Some(Peer { pid: 7, uid: 0 }),
+            None,
+        ] {
+            let e = same_account(peer, 1000, p).unwrap_err();
+            assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{peer:?}");
+            assert!(e.to_string().contains("/tmp/atlas-1000/drive.sock"), "{e}");
+        }
     }
 }

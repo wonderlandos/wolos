@@ -11,6 +11,7 @@
 //! default port dropped, dot segments resolved), so this is matching, not parsing; anything that
 //! does not look like that is refused.
 use crate::policy::{Policy, TelemetryOff};
+use std::borrow::Cow;
 use std::path::Path;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,8 +43,11 @@ pub struct Gate {
 }
 
 /// Split `scheme://authority/rest` into its parts (authority without user info). `*` is accepted in
-/// the host so policy entries can use it; a URL host with one is refused by [`Gate::allows`].
-fn split_web(url: &str) -> Option<(&str, &str, Option<u16>, &str)> {
+/// the host so policy entries can use it; a URL host with one is refused by [`Gate::allows`]. The
+/// host comes back in federate's one spelling ([`federate::uri::web_host`]: no trailing dot), the
+/// one the fed-only rule and the policy match both read (QA-A10-CS-2); a host with an empty label
+/// (`a..b`, `.a`, `a..`) is not a host.
+fn split_web(url: &str) -> Option<(&str, Cow<'_, str>, Option<u16>, &str)> {
     let (scheme, rest) = url.split_once("://")?;
     let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let (authority, path) = rest.split_at(end);
@@ -67,7 +71,13 @@ fn split_web(url: &str) -> Option<(&str, &str, Option<u16>, &str)> {
         && host
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-.[]:*".contains(&b));
-    host_ok.then_some((scheme, host, port, path))
+    let labels_ok = host.starts_with('[')
+        || host
+            .strip_suffix('.')
+            .unwrap_or(host)
+            .split('.')
+            .all(|l| !l.is_empty());
+    (host_ok && labels_ok).then(|| (scheme, federate::uri::web_host(host), port, path))
 }
 
 fn parse_rule(entry: &str) -> Option<Rule> {
@@ -89,10 +99,10 @@ fn parse_rule(entry: &str) -> Option<Rule> {
     if !(path.is_empty() || path == "/") {
         return None;
     }
-    let base = host.strip_prefix("*.").unwrap_or(host);
+    let base = host.strip_prefix("*.").unwrap_or(&host);
     (!base.contains('*') && !base.is_empty()).then(|| Rule::Web {
         https,
-        host: host.to_owned(),
+        host: host.into_owned(),
         port,
     })
 }
@@ -117,7 +127,7 @@ impl Gate {
         for o in &policy.origins {
             if let Some((scheme, host, _, _)) = split_web(o)
                 && matches!(scheme, "http" | "https" | "ws" | "wss")
-                && crate::fed::is_fed_host(host)
+                && crate::fed::is_fed_host(&host)
             {
                 return Err(format!(
                     "origin {o:?} is a Federate name: it is fed://, never http(s)"
@@ -214,7 +224,7 @@ impl Gate {
             "http" | "ws" => false,
             _ => return false,
         };
-        self.web_allowed(https, host, port, path)
+        self.web_allowed(https, &host, port, path)
     }
 }
 
@@ -288,19 +298,62 @@ mod tests {
             "wss://home.fed/socket",
             "ws://x.pagina:8080/",
             "https://lobo.pagina/",
+            // QA-A10-CS-2: the root label spelled out is the same name.
+            "https://home.fed./style.css",
+            "https://home.fed.:443/",
+            "wss://www.home.fed./socket",
+            "https://home.fed../",
         ] {
             assert!(!g.allows(no, Load::Navigation), "{no}");
             assert!(!g.allows(no, Load::Resource), "{no}");
         }
         assert!(g.allows("https://example.com/", Load::Resource));
-        // A policy cannot name one: not as an origin, not as a wildcard.
-        for entry in ["https://home.fed", "http://lobo.pagina", "https://*.fed"] {
+        // A policy cannot name one: not as an origin, not as a wildcard, with or without the dot.
+        for entry in [
+            "https://home.fed",
+            "http://lobo.pagina",
+            "https://*.fed",
+            "https://home.fed.",
+            "https://*.fed.",
+            "wss://home.fed.:8443",
+        ] {
             let p = Policy {
                 origins: vec![entry.into()],
                 ..Policy::default()
             };
             let err = Gate::new(&p, Path::new("/p")).unwrap_err();
             assert!(err.contains("fed://"), "{entry}: {err}");
+        }
+        // A rule naming one with the dot (as `Gate::new` used to accept) still opens nothing.
+        let web = |host: &str| Rule::Web {
+            https: true,
+            host: host.into(),
+            port: None,
+        };
+        let g = Gate {
+            rules: vec![web("home.fed."), web("*.fed.")],
+            telemetry: TelemetryOff::default(),
+        };
+        for no in ["https://home.fed./style.css", "https://www.home.fed./"] {
+            assert!(!g.allows(no, Load::Resource), "{no}");
+        }
+    }
+
+    /// QA-A10-CS-2: the gate reads a host with one normaliser (federate's `web_host`): the root
+    /// label (`example.com.`) is the same host to the policy and to the telemetry list, and a host
+    /// with an empty label is not a host.
+    #[test]
+    fn a_trailing_dot_is_the_same_host() {
+        let g = gate(&["https://*.example.com"], &["t.example.com"], &[]);
+        assert!(g.allows("https://cdn.example.com./x.js", Load::Resource));
+        assert!(!g.allows("https://t.example.com./beacon", Load::Resource));
+        for no in [
+            "https://cdn..example.com/",
+            "https://.cdn.example.com/",
+            "https://cdn.example.com../",
+            "https://./",
+        ] {
+            assert!(!g.allows(no, Load::Resource), "{no}");
         }
     }
 

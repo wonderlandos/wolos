@@ -281,10 +281,11 @@ impl Resolver {
         KNOWN_TLDS.contains(&tld)
     }
 
-    /// Whether `host` (as [`FedUrl::http_host`] gives it) ends in a Federate TLD, however many
-    /// labels it has.
+    /// Whether `host` ends in a Federate TLD, however many labels it has, read in the one spelling
+    /// [`crate::uri::web_host`] gives (a trailing dot and the case do not make it another name).
     pub fn is_fed_host(&self, host: &str) -> bool {
-        host.rsplit_once('.')
+        crate::uri::web_host(host)
+            .rsplit_once('.')
             .is_some_and(|(_, tld)| self.knows_tld(tld))
     }
 
@@ -457,6 +458,28 @@ impl Resolver {
         match parsed {
             Ok(u) => page::reply(&u.to_url(), self.resolve_load(&u, time::now(), kind)),
             Err(e) => page::reply(url, Outcome::BadAddress(e)),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// QA-A10-CS-2: a host spelled with its root label (`home.fed.`) or in another case is the same
+    /// name to every reader, so the fed-only rule cannot be stepped around by spelling.
+    #[test]
+    fn a_fed_host_is_one_whatever_its_trailing_dot_or_case() {
+        let r = super::shared();
+        for fed in [
+            "home.fed",
+            "home.fed.",
+            "HOME.Fed",
+            "www.home.fed.",
+            "home.fed..",
+        ] {
+            assert!(r.is_fed_host(fed), "{fed}");
+        }
+        for web in ["example.com", "example.com.", "fed", "fed.example.com", ""] {
+            assert!(!r.is_fed_host(web), "{web}");
         }
     }
 }

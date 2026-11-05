@@ -557,6 +557,9 @@ fn handle(conn: UnixStream, sh: &Arc<Shared>) {
 }
 
 /// Bind the socket: directory 0700, socket 0600, a stale socket file replaced only if nothing answers on it.
+/// The directory is made 0700 when missing and refused when it is not this account's own private
+/// directory: with `XDG_RUNTIME_DIR` unset it is `/tmp/atlas-<uid>`, a name any account can make
+/// first, and whoever owns the directory owns the socket in it (QA-A10-CS-3).
 pub fn bind(path: &std::path::Path) -> std::io::Result<UnixListener> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     if let Some(dir) = path.parent() {
@@ -564,6 +567,7 @@ pub fn bind(path: &std::path::Path) -> std::io::Result<UnixListener> {
             .recursive(true)
             .mode(0o700)
             .create(dir)?;
+        private_dir(dir)?;
     }
     if path.exists() {
         if UnixStream::connect(path).is_ok() {
@@ -577,6 +581,36 @@ pub fn bind(path: &std::path::Path) -> std::io::Result<UnixListener> {
     let l = UnixListener::bind(path)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     Ok(l)
+}
+
+/// `Ok` when `dir` itself (not through a symlink) is a directory of this effective uid with no
+/// group or other bits, as `DirBuilder` makes it; otherwise a refusal that names the directory.
+/// A directory in sticky `/tmp` or under our own one cannot be swapped by another account after
+/// this check.
+fn private_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::symlink_metadata(dir)?;
+    let me = shared::sys::euid();
+    if m.file_type().is_dir() && m.uid() == me && m.mode() & 0o077 == 0 {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        format!(
+            "{} is not a private directory of this account ({}, owner uid {}, mode {:o}; uid {me} \
+             and mode 700 needed): not serving from it; remove it or set XDG_RUNTIME_DIR",
+            dir.display(),
+            if m.file_type().is_symlink() {
+                "a symlink"
+            } else if m.file_type().is_dir() {
+                "a directory"
+            } else {
+                "not a directory"
+            },
+            m.uid(),
+            m.mode() & 0o7777,
+        ),
+    ))
 }
 
 #[cfg(test)]
@@ -656,6 +690,51 @@ mod tests {
             terse(failed, None),
             json!({"values": [], "failed": "1", "error": "not_found: x"})
         );
+    }
+
+    /// QA-A10-CS-3: the socket's directory is this account's own and private, or nothing is
+    /// served from it: a directory someone made first (wider mode, a symlink, another owner such
+    /// as `/tmp` itself) is refused, never adopted.
+    #[test]
+    fn bind_refuses_a_fallback_directory_it_does_not_own() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("ad-a10-cs3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        // made by someone else first, open to all (a pre-made /tmp/atlas-<uid>)
+        let open = root.join("open");
+        std::fs::create_dir(&open).unwrap();
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let e = bind(&open.join("drive.sock")).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::PermissionDenied, "{e}");
+        assert!(e.to_string().contains(&*open.to_string_lossy()), "{e}");
+        assert!(!open.join("drive.sock").exists());
+        // a group-readable one of ours is not private either
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o750)).unwrap();
+        assert!(bind(&open.join("drive.sock")).is_err());
+        // a symlink to a directory of ours is not that directory
+        let real = root.join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        assert!(bind(&link.join("drive.sock")).is_err());
+        // another owner: /tmp is root's (1777)
+        if shared::sys::euid() != 0 {
+            let p = std::env::temp_dir().join(format!("ad-a10-cs3-{}.sock", std::process::id()));
+            assert!(bind(&p).is_err());
+            assert!(!p.exists());
+        }
+        // ours and 0700, made now or before: served
+        assert!(bind(&real.join("drive.sock")).is_ok());
+        assert!(bind(&root.join("fresh/drive.sock")).is_ok());
+        let mode = std::fs::metadata(root.join("fresh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
