@@ -82,6 +82,14 @@ fn sheet(cat: &Value) -> String {
         n(cat, "switch", "sizes.regular.width"),
         n(cat, "switch", "sizes.regular.height"),
     ));
+    // slider: the regular height, on the row's background (the kit sheet's `slider` is the
+    // Crystal default look, a 24 px control pill: the Control Center surface, not this component;
+    // QA-A10-SD-01). The trough (4 px) and the knob (16 px) are drawn inside it by wolkit.
+    s.push_str(&format!(
+        "/* slider: the regular height; the trough and the knob are drawn inside it. */\n\
+         slider {{ height: {h}px; min-height: {h}px; background: transparent; border-radius: 0; }}\n",
+        h = n(cat, "slider", "sizes.regular.height"),
+    ));
     // label: the six roles, as the Kit draws them (kit/data.rs role classes, kit.css), with the
     // numbers of design/tokens/type.json (label.toml says which token each role reads).
     s.push_str(

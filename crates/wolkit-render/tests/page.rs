@@ -302,6 +302,62 @@ fn center_of(p: &mut Page, node: u32) -> (f32, f32) {
     (r[0] + r[2] / 2.0, r[1] + r[3] / 2.0)
 }
 
+/// How many rows of column `x` within `y0..y1` are painted over `bg`: from the first pixel that
+/// differs from it to the last (the knob is card-white inside its hairline, like the card).
+fn painted_rows(img: &Image, x: u32, y0: u32, y1: u32, bg: [u8; 4]) -> u32 {
+    let differs = |y: &u32| {
+        let i = ((y * img.width + x) * 4) as usize;
+        img.data[i..i + 4] != bg
+    };
+    match ((y0..y1).find(differs), (y0..y1).rev().find(differs)) {
+        (Some(a), Some(b)) => b - a + 1,
+        _ => 0,
+    }
+}
+
+/// QA-A10-SD-01: the slider of the sample window is design/components/slider.toml, at zero
+/// tolerance: a 4 px trough and a 16 px knob on the row's own background. The kit sheet's
+/// default look (a 24 px control-filled pill, the Control Center's fat slider) drew a pill around
+/// the trough and the knob, and the re-baked goldens held that.
+#[test]
+fn the_slider_is_a_4px_trough_and_a_16px_knob() {
+    for dark in [false, true] {
+        let Some(mut p) = page(dark) else {
+            return;
+        };
+        let [x, y, w, h] = p.node_rect(3).expect("the slider is laid out");
+        let img = p.draw(|f| CpuRenderer.render_image(f)).unwrap();
+        save(&format!("slider-{}.png", tag(dark)), &img);
+        let (y0, y1) = ((y - 8.0) as u32, (y + h + 8.0) as u32);
+        // The row's background: just left of the slider, on its middle line.
+        let at = |px: u32, py: u32| {
+            let i = ((py * img.width + px) * 4) as usize;
+            [
+                img.data[i],
+                img.data[i + 1],
+                img.data[i + 2],
+                img.data[i + 3],
+            ]
+        };
+        let bg = at((x - 2.0) as u32, (y + h / 2.0) as u32);
+        // The value is 50 of 0..100: the knob is in the middle, the bare trough near the end.
+        let trough = painted_rows(&img, (x + w - 12.0) as u32, y0, y1, bg);
+        let knob = painted_rows(&img, (x + w / 2.0) as u32, y0, y1, bg);
+        assert_eq!(
+            (trough, knob),
+            (4, 16),
+            "trough and knob heights ({})",
+            tag(dark)
+        );
+        assert_eq!(
+            h,
+            16.0,
+            "the slider is the spec's regular height ({})",
+            tag(dark)
+        );
+    }
+}
+
 #[test]
 fn a_click_on_the_switch_flips_it_and_reports_the_toggle() {
     let Some(mut p) = page(false) else {

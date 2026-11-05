@@ -426,3 +426,16 @@ repositories); RC-08 object lifetime past re-realise (6);
 RC-38 error arms with no test that feeds them (6, shadow coverage); RC-43 account and session
 policy decided per file (3); RC-05 developer text reaches the person (3, RU-004/RU-005 catch the
 literals, not the ones built at run time); RC-26, RC-25, RC-27, RC-04, RC-44 (2 each).
+
+**AUDIT-10 SHELL-DS fixes (2026-11-05, FIX-A10-SHELL).** One row per class; each fix has its own
+test, red on the tree before the fix and green after it. No ratchet rose: `main_thread.rs` gained
+two needles and counted the sites they found (reasons beside each row).
+
+| Class (origin) | Rows | Rule | Enforcing test | Debt row |
+|---|---|---|---|---|
+| RC-28 geometry hard-coded in a default sheet instead of the spec | QA-A10-SD-01 (the Kit page's slider was the kit sheet's 24 px pill) | the slider rule of `crates/wolkit-render/src/view.wolcss` is generated from `design/components/slider.toml` | `crates/wolkit-render/tests/spec_sheet.rs` (`the_view_sheet_is_generated_from_the_specs`), `tests/page.rs` (`the_slider_is_a_4px_trough_and_a_16px_knob`, zero tolerance) | none |
+| RC-30 a picture file from outside decoded whole on the GTK thread | QA-A10-SD-02 (Store > Web Apps row icon, Dock web-app tile) | `kit::picture` is the one way (`file_image`, `show_in`) | `crates/shell/tests/main_thread.rs` needles `set_from_file(`, `Texture::from_filename(` | `kit/controls.rs` (MPRIS art) and `ui/tray_items.rs` (tray icon path): outside input still decoded on the spot, counted with the reason |
+| RC-02 one slot for the let-go Allow | QA-A10-SD-03 (`AuthQueue::gave_up`, `cancelled`) | sets keyed by Allow number, emptied when no retry is out | `auth_queue.rs` `a_cancel_of_a_later_allow_keeps_an_earlier_let_go`, `a_later_let_go_keeps_an_earlier_cancel` | none |
+| RC-30 / RC-13 a sentinel of outside input read as a value, by two readers | QA-A10-SD-04 (`focusHistoryID: -1`: Minimise, the switcher) | one reader: `hypr::Client` maps a negative id to the farthest | `appmenu.rs` `a_window_outside_the_focus_history_does_not_get_the_keyboard`, `switcher.rs` `a_never_focused_window_sorts_last` | none |
+| RC-21 a destructive step with no gate on what else depends on it | QA-A10-SD-05 (Undo Fix removed a package another device uses) | `hardware::undo_packages` skips a package another device has installed and lists | `hardware.rs` `undo_fix_keeps_a_package_another_device_uses` | none |
+| RC-03 the verb's reason dropped on the way to the person | QA-A10-SD-06 (Web Apps make/remove said only "not made") | `store_webapps::failure` maps the verb's `wol:` line to a copy sentence | `store_webapps.rs` `a_failed_change_says_why` (copy lint on every sentence) | none |
