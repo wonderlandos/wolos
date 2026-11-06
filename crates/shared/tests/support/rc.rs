@@ -231,6 +231,12 @@ pub fn assert_ratchet(id: &str, rule: &str, baseline: &[Row], hits: &Hits) {
             "BASELINE-ROW    (\"{id}\", \"{k}\", {}, \"{owner}\"),",
             v.len()
         );
+        // RULES_FILES=1: every hit of the key, to see which one is new after a merge.
+        if std::env::var_os("RULES_FILES").is_some() {
+            for line in v {
+                println!("RC-HIT {id} {k} {line}");
+            }
+        }
         if v.len() > base {
             over.push(format!(
                 "{id} {k}: {} hits, baseline {base}:\n  {}",
