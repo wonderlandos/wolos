@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause
-//! CLDR cardinal plural rules for whole numbers, for the seven languages (CLDR 46, `plurals.xml`).
+//! CLDR cardinal plural rules for whole numbers, for every [`Lang`] (CLDR 46, `plurals.xml`).
 //! A count picks a [`Plural`] category; a plural key has one form per category its language
 //! uses ([`categories`]). Only integers: a count of files, minutes or updates is whole.
 use super::Lang;
@@ -15,7 +15,7 @@ pub enum Plural {
     Two,
     /// Few (Russian 2-4, 22-24: "2 файла").
     Few,
-    /// Many (French, Italian and Portuguese for whole millions: "1 000 000 de fichiers"; Russian
+    /// Many (French, Italian, Portuguese and Spanish for whole millions: "1 000 000 de fichiers"; Russian
     /// 0, 5-20, 25-30: "5 файлов").
     Many,
     /// Other: every count the rules above do not take.
@@ -58,15 +58,16 @@ pub fn categories(l: Lang) -> &'static [Plural] {
     const OTHER: [Plural; 1] = [Plural::Other];
     match l {
         Lang::En | Lang::De | Lang::Xx => &ONE_OTHER,
-        Lang::PtBr | Lang::Fr | Lang::It => &ONE_MANY_OTHER,
+        Lang::PtBr | Lang::Fr | Lang::It | Lang::Es => &ONE_MANY_OTHER,
         Lang::Ru => &ONE_FEW_MANY_OTHER,
-        Lang::Ja => &OTHER,
+        Lang::Tl => &ONE_OTHER,
+        Lang::Ja | Lang::Ko | Lang::ZhHans | Lang::Id => &OTHER,
     }
 }
 
 /// The category of the count `n` in `l`.
 pub fn category(l: Lang, n: u64) -> Plural {
-    // fr, it, pt: many = e = 0 and i != 0 and i % 1000000 = 0 and v = 0.
+    // es, fr, it, pt: many = e = 0 and i != 0 and i % 1000000 = 0 and v = 0.
     let million = n != 0 && n.is_multiple_of(1_000_000);
     match l {
         // one: i = 1 and v = 0.
@@ -77,8 +78,8 @@ pub fn category(l: Lang, n: u64) -> Plural {
                 Plural::Other
             }
         }
-        // one: i = 1 and v = 0.
-        Lang::It => {
+        // it: one: i = 1 and v = 0. es: one: n = 1 (the same for whole numbers).
+        Lang::It | Lang::Es => {
             if n == 1 {
                 Plural::One
             } else if million {
@@ -109,7 +110,16 @@ pub fn category(l: Lang, n: u64) -> Plural {
                 Plural::Many
             }
         }
-        Lang::Ja => Plural::Other,
+        // fil/tl: one: v = 0 and i = 1,2,3 or v = 0 and i % 10 != 4,6,9 ("1 file", "2 file",
+        // "10 file"; "4 na file" is other).
+        Lang::Tl => {
+            if matches!(n % 10, 4 | 6 | 9) {
+                Plural::Other
+            } else {
+                Plural::One
+            }
+        }
+        Lang::Ja | Lang::Ko | Lang::ZhHans | Lang::Id => Plural::Other,
     }
 }
 
@@ -120,7 +130,7 @@ mod tests {
     #[test]
     fn counts_pick_the_cldr_category() {
         use Plural::{Few, Many, One, Other};
-        let cases: [(Lang, u64, Plural); 26] = [
+        let cases: [(Lang, u64, Plural); 41] = [
             (Lang::En, 0, Other),
             (Lang::En, 1, One),
             (Lang::En, 2, Other),
@@ -147,6 +157,21 @@ mod tests {
             (Lang::Ru, 111, Many),
             (Lang::Ja, 1, Other),
             (Lang::Ja, 0, Other),
+            (Lang::Es, 0, Other),
+            (Lang::Es, 1, One),
+            (Lang::Es, 2, Other),
+            (Lang::Es, 1_000_000, Many),
+            (Lang::Ko, 1, Other),
+            (Lang::ZhHans, 1, Other),
+            (Lang::ZhHans, 2, Other),
+            (Lang::Id, 1, Other),
+            (Lang::Tl, 0, One),
+            (Lang::Tl, 1, One),
+            (Lang::Tl, 3, One),
+            (Lang::Tl, 4, Other),
+            (Lang::Tl, 6, Other),
+            (Lang::Tl, 9, Other),
+            (Lang::Tl, 14, Other),
         ];
         for (l, n, want) in cases {
             assert_eq!(category(l, n), want, "{l:?} {n}");

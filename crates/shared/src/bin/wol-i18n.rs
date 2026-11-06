@@ -47,11 +47,22 @@ fn check(dirs: &[PathBuf]) -> Result<bool, String> {
         }
         match files::compile_dir(d) {
             Ok(tables) => {
-                for (l, _, warnings) in tables {
+                for (l, _, warnings) in &tables {
                     if !warnings.is_empty() {
                         eprintln!("{warnings}");
                     }
                     println!("{}: {} ok", files::unit_name(d), l.tag());
+                }
+                // A language with a file but no row translated yet compiles to no table: it
+                // reads English. Its file is checked all the same (compile_dir stops on errors).
+                for l in Lang::CATALOGUED {
+                    if !tables.iter().any(|t| t.0 == l) && files::lang_file(d, l).exists() {
+                        println!(
+                            "{}: {} ok, nothing translated yet (reads English)",
+                            files::unit_name(d),
+                            l.tag()
+                        );
+                    }
                 }
             }
             Err(e) => {
@@ -74,7 +85,7 @@ fn status_of(dirs: &[PathBuf]) -> Result<bool, String> {
             files::unit_name(d),
             unit.rows().len()
         );
-        for l in Lang::SHIPPED {
+        for l in Lang::CATALOGUED {
             let rows = files::load_lang(d, l)?;
             let (c, _) = status::coverage(&unit, l, &rows).map_err(|e| e.to_string())?;
             ok &= c.errors == 0;
@@ -102,7 +113,7 @@ fn budgets(dirs: &[PathBuf]) -> Result<bool, String> {
     for d in dirs {
         let unit = files::load_unit(d)?;
         let mut langs = Vec::new();
-        for l in Lang::SHIPPED.into_iter().skip(1) {
+        for l in Lang::CATALOGUED.into_iter().skip(1) {
             langs.push((l, files::load_lang(d, l)?));
         }
         let rooms = status::budgets(&unit, &langs);
@@ -133,7 +144,7 @@ fn budgets(dirs: &[PathBuf]) -> Result<bool, String> {
 
 fn sync(dir: &Path, which: &str) -> Result<bool, String> {
     let langs: Vec<Lang> = if which == "all" {
-        Lang::SHIPPED.into_iter().skip(1).collect()
+        Lang::CATALOGUED.into_iter().skip(1).collect()
     } else {
         vec![
             Lang::from_tag(which)

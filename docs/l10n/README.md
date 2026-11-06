@@ -4,24 +4,26 @@ This is the guide for people who translate WolOS and for the people who add text
 
 ## Supported languages and the order they are translated in
 
-WolOS is offered in seven official languages, in this order (the order the installer, Setup and Settings list them, `wol_core::region::LANGUAGES`). Five more are planned next (`wol_core::region::LATER`): their rules are written, and they are not offered until their translation is complete and checked. A language not on this list shows English. The test `rules_set_equals_languages` (`crates/core/src/region.rs`) keeps the rule pages below and the two lists the same.
+WolOS offers English and the lead's nine languages (2026-11-06), in this order (the order the installer, Setup and Settings list them, `wol_core::region::LANGUAGES` = `shared::i18n::Lang::OFFERED`). Each language has a stage (`Lang::stage`): official (complete), being translated (offered; its file has every row, an empty row reads English), draft (`wol_core::region::DRAFTS`: the table is kept and compiles, no picker lists it) or planned next (`wol_core::region::LATER`: rules only). A language not on this list shows English. The test `rules_set_equals_languages` (`crates/core/src/region.rs`) keeps the rule pages below and the two lists the same.
 
 | Step | Language | File | Rules | Status |
 |---|---|---|---|---|
 | 1 | English, the source, written and debugged first (every pane in the catalog, every `xx` golden clean) | `en.tsv` | [RULES-en.md](RULES-en.md) | official |
 | 2 | Brazilian Portuguese | `pt-BR.tsv` | [RULES-pt-BR.md](RULES-pt-BR.md) | official |
-| 3 | Japanese | `ja.tsv` | [RULES-ja.md](RULES-ja.md) | official |
+| 3 | Spanish | `es.tsv` | [RULES-es.md](RULES-es.md) | offered, being translated (empty rows read English) |
 | 4 | French | `fr.tsv` | [RULES-fr.md](RULES-fr.md) | official |
-| 5 | Russian | `ru.tsv` | [RULES-ru.md](RULES-ru.md) | official |
-| 6 | Italian | `it.tsv` | [RULES-it.md](RULES-it.md) | official |
-| 7 | German | `de.tsv` | [RULES-de.md](RULES-de.md) | official |
-| 8 | Korean | `ko.tsv` | [RULES-ko.md](RULES-ko.md) | planned next |
-| 9 | Indonesian | `id.tsv` | [RULES-id.md](RULES-id.md) | planned next |
-| 10 | Tagalog | `tl.tsv` | [RULES-tl.md](RULES-tl.md) | planned next |
-| 11 | Dutch | `nl.tsv` | [RULES-nl.md](RULES-nl.md) | planned next |
-| 12 | Polish | `pl.tsv` | [RULES-pl.md](RULES-pl.md) | planned next |
+| 5 | German | `de.tsv` | [RULES-de.md](RULES-de.md) | official |
+| 6 | Japanese | `ja.tsv` | [RULES-ja.md](RULES-ja.md) | official |
+| 7 | Korean | `ko.tsv` | [RULES-ko.md](RULES-ko.md) | offered, being translated |
+| 8 | Simplified Chinese | `zh-Hans.tsv` | [RULES-zh-Hans.md](RULES-zh-Hans.md) | offered, being translated |
+| 9 | Indonesian | `id.tsv` | [RULES-id.md](RULES-id.md) | offered, being translated |
+| 10 | Tagalog | `tl.tsv` | [RULES-tl.md](RULES-tl.md) | offered, being translated |
+| - | Russian | `ru.tsv` | [RULES-ru.md](RULES-ru.md) | draft, not offered (the lead, 2026-11-06; the table stays) |
+| - | Italian | `it.tsv` | [RULES-it.md](RULES-it.md) | draft, not offered (the lead, 2026-11-06; the table stays) |
+| - | Dutch | `nl.tsv` | [RULES-nl.md](RULES-nl.md) | planned next |
+| - | Polish | `pl.tsv` | [RULES-pl.md](RULES-pl.md) | planned next |
 
-An official language ships whole: every line of every unit translated, none stale (`wol-i18n status` at 100 %, test `every_official_language_is_complete` in `crates/shell/tests/locale_source.rs`).
+An official language ships whole: every line of every unit translated, none stale (`wol-i18n status` at 100 %, test `every_official_language_is_complete` in `crates/shell/tests/locale_source.rs`). A language being translated becomes official when it reaches the same bar; its stage in `crates/shared/src/i18n/mod.rs` (`LANGS`) is then changed to `Complete`, and the test holds it there.
 
 How a language is translated (the rules of the project, which every `RULES-<lang>.md` repeats for its language):
 
@@ -72,13 +74,13 @@ The English file also has a comment for each text (where it appears, what a `{na
 If you break one of these, the build stops and tells you the file and the key. That is on purpose: a wrong line never reaches a person.
 
 - **Keep every `{placeholder}` exactly.** `Join “{name}”.` must keep `{name}` in your translation, spelled the same, with nothing added and nothing missing. It is filled in with a real value (a network name, a number). You may move it anywhere in the sentence. To show a real brace write `{{` or `}}`.
-- **Plurals.** Some texts come in forms for a count, written as `files_count#one` and `files_count#other`. Write one line for each form your language uses; the tool lists exactly those. English and German use `one` and `other`. French, Italian and Portuguese also have `many` (for whole millions: "1 000 000 de arquivos"). Russian uses `one`, `few`, `many` and `other` ("1 минута", "2 минуты", "5 минут"). Japanese uses `other` only. `{n}` is the count.
+- **Plurals.** Some texts come in forms for a count, written as `files_count#one` and `files_count#other`. Write one line for each form your language uses; the tool lists exactly those. English and German use `one` and `other`. French, Italian, Portuguese and Spanish also have `many` (for whole millions: "1 000 000 de arquivos"). Russian uses `one`, `few`, `many` and `other` ("1 минута", "2 минуты", "5 минут"). Tagalog uses `one` and `other`, but `one` is every count not ending in 4, 6 or 9 ("1 file", "10 file"; `other`: "4 na file"). Japanese, Korean, Simplified Chinese and Indonesian use `other` only. `{n}` is the count.
 - **Length.** Screens do not stretch. Some texts have a length limit (the `budget` column in `en.tsv`, counted in columns; a Japanese character counts as two). Your text may not be longer. If it will not fit, say the same thing with fewer words. Tell the developers about a limit that is too small instead of cutting meaning.
 - **One tab per column, no tab or line break inside a text.** If you need a line break inside a text, write `\n`; for a real backslash write `\\`.
 - **Plain, kind, short.** WolOS says what happened and what to do, in one or two sentences, and never blames the person. Keep that. Do not translate names of products and programs (WolOS, Wi-Fi, Bluetooth). Use the words people already know in your language for things like "Wi-Fi" and "password", not a literal copy of the English.
 - **Do not name other projects or people.** WolOS never mentions the software it is built from; if the English does not, you do not.
 
-Each language has its own written rules (formal or informal "you", quotation marks, number formats, plural forms, length, what `xx` tests for it): [en](RULES-en.md) (the source), [pt-BR](RULES-pt-BR.md), [ja](RULES-ja.md), [fr](RULES-fr.md), [ru](RULES-ru.md), [it](RULES-it.md), [de](RULES-de.md); planned next: [ko](RULES-ko.md), [id](RULES-id.md), [tl](RULES-tl.md), [nl](RULES-nl.md), [pl](RULES-pl.md). Read yours first. A native reviewer confirms each page before the first line of that language is translated.
+Each language has its own written rules (formal or informal "you", quotation marks, number formats, plural forms, length, what `xx` tests for it): [en](RULES-en.md) (the source), [pt-BR](RULES-pt-BR.md), [es](RULES-es.md), [fr](RULES-fr.md), [de](RULES-de.md), [ja](RULES-ja.md), [ko](RULES-ko.md), [zh-Hans](RULES-zh-Hans.md), [id](RULES-id.md), [tl](RULES-tl.md); drafts, not offered: [ru](RULES-ru.md), [it](RULES-it.md); planned next: [nl](RULES-nl.md), [pl](RULES-pl.md). Read yours first. A native reviewer confirms each page before the first line of that language is translated.
 
 ## Check your work
 
@@ -102,15 +104,15 @@ To see your own language before it is shipped, put your language in the session 
 
 ## Where a person chooses the language
 
-- **Installing.** The installer's Language and Keyboard page lists the seven official languages in the order above: English, Português (Brasil), 日本語, Français, Русский, Italiano, Deutsch. The new system gets that language (`LANG` in `/etc/locale.conf`) and every official locale is generated, so a later change needs no root.
-- **First start.** The setup assistant's Language & Region page lists the same seven, in the same order (test `languages_match_settings`). It starts in the language the installer chose and speaks the one the person picks at once; the choice is saved as the new account's language.
+- **Installing.** The installer's Language and Keyboard page lists the ten offered languages in the order above: English, Português (Brasil), Español, Français, Deutsch, 日本語, 한국어, 简体中文, Bahasa Indonesia, Tagalog. The new system gets that language (`LANG` in `/etc/locale.conf`) and every offered locale is generated, so a later change needs no root.
+- **First start.** The setup assistant's Language & Region page lists the same ten, in the same order (test `languages_match_settings`). It starts in the language the installer chose and speaks the one the person picks at once; the choice is saved as the new account's language.
 - **Later.** System Settings, General, Language & Region, "Preferred language", the same list. Apps use the new language the next time the person logs in.
 - **How WolOS decides when it starts.** In order: `WOL_LANG` (for tests), `LC_ALL`, `LC_MESSAGES`, `LANG`. Portuguese of any region reads Brazilian Portuguese; a language with no translation, such as `es_ES` or `zh_CN` saved by an older WolOS, reads English.
 - **Any line missing in your language** shows the English for that line, never a blank.
 
 ## For developers adding text
 
-1. A sentence of a copy module (`copy_*.rs`) is a `pub const` with a `///` comment that tells the translator where it appears and what each `{name}` is; add a line `/// budget: N` after it if its space is limited (N must leave room for the pseudo-language, 40% more). A text written where it is used, or a const without that line, gets its limit from `locale/<unit>/budgets.tsv` (`key`, tab, columns; a key the unit does not have is an error). The shell's unit bounds all 223 of its texts of 40 columns or fewer (buttons, labels, titles, row texts): the larger of the pseudo-language width and the widest of the seven translations plus 15%; longer sentences wrap and have none. A surface shows it with `i18n::tr(copy::X)`.
+1. A sentence of a copy module (`copy_*.rs`) is a `pub const` with a `///` comment that tells the translator where it appears and what each `{name}` is; add a line `/// budget: N` after it if its space is limited (N must leave room for the pseudo-language, 40% more). A text written where it is used, or a const without that line, gets its limit from `locale/<unit>/budgets.tsv` (`key`, tab, columns; a key the unit does not have is an error). The shell's unit bounds every one of its 460 texts: the larger of the pseudo-language width and the widest translation written plus 15% (rounded up). The 223 of 40 columns or fewer (buttons, labels, titles, row texts) were bounded first; the 237 longer sentences, which wrap, got theirs by the same rule on 2026-11-06 (OS-LANGS), so a translation cannot grow a paragraph past what its card was laid out for. A surface shows it with `i18n::tr(copy::X)`.
 2. Text written where it is used is wrapped where it is used: `tr("Choose a password.")`, `tr_fill("Joining “{network}”…", &[("network", ssid)])` for a template, `trn("About {n} minute remaining", "About {n} minutes remaining", n)` for a count, and `n_("Swap file")` inside a `const` table (then `tr(row.1)` where it is shown). A `// l10n: …` line right above the call is the translator's comment. The key is made from the English (`setup.choose_a_password`).
 3. List the file in `locale/<unit>/sources.tsv` and run `wol-i18n extract <unit-dir>` to refresh `en.tsv`. The build refuses a stale `en.tsv`.
 4. Look at the pane in `xx`. If it overflows or breaks, fix the layout before any translator sees it.

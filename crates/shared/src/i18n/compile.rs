@@ -378,7 +378,17 @@ pub fn compile(unit: &Unit, l: Lang, rows: &[LangRow]) -> Result<Compiled, WtxEr
         match l {
             Lang::En => Some(src.source.clone()),
             Lang::Xx => Some(pseudo(&src.source)),
-            Lang::PtBr | Lang::Ja | Lang::Fr | Lang::Ru | Lang::It | Lang::De => rows
+            Lang::PtBr
+            | Lang::Es
+            | Lang::Fr
+            | Lang::De
+            | Lang::Ja
+            | Lang::Ko
+            | Lang::ZhHans
+            | Lang::Id
+            | Lang::Tl
+            | Lang::Ru
+            | Lang::It => rows
                 .iter()
                 .find(|r| r.key == row_key && !r.text.is_empty())
                 .map(|r| r.text.clone()),

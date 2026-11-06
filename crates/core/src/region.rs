@@ -65,18 +65,27 @@ pub fn zone_label(zone: &str) -> String {
 }
 
 /// (locale, label) the languages a person can pick, label in its own language, in the order the
-/// installer, Setup and Settings list them: the lead's priority (L10N-2), English first. Every one
-/// has its translator's rules (`docs/l10n/RULES-<tag>.md`, `rules_set_equals_languages`) and a
-/// complete translation of the installer, Setup and the shell's copy tables.
-pub const LANGUAGES: [(&str, &str); 7] = [
+/// installer, Setup and Settings list them: English first, then the lead's nine (2026-11-06):
+/// exactly `shared::i18n::Lang::OFFERED` (`languages_are_the_offered_ones`). Every one has its
+/// translator's rules (`docs/l10n/RULES-<tag>.md`, `rules_set_equals_languages`) and a
+/// `<tag>.tsv` in the shell's unit; es, ko, zh-Hans, id and tl are still being filled (their
+/// empty rows read English, `Lang::stage`).
+pub const LANGUAGES: [(&str, &str); 10] = [
     ("en_US.UTF-8", "English"),
     ("pt_BR.UTF-8", "Português (Brasil)"),
-    ("ja_JP.UTF-8", "日本語"),
+    ("es_ES.UTF-8", "Español"),
     ("fr_FR.UTF-8", "Français"),
-    ("ru_RU.UTF-8", "Русский"),
-    ("it_IT.UTF-8", "Italiano"),
     ("de_DE.UTF-8", "Deutsch"),
+    ("ja_JP.UTF-8", "日本語"),
+    ("ko_KR.UTF-8", "한국어"),
+    ("zh_CN.UTF-8", "简体中文"),
+    ("id_ID.UTF-8", "Bahasa Indonesia"),
+    ("tl_PH.UTF-8", "Tagalog"),
 ];
+
+/// Languages whose catalogue is kept as a draft and not offered (the lead, 2026-11-06): no picker
+/// lists them, a computer already set to one still reads it (`Lang::from_posix`).
+pub const DRAFTS: [(&str, &str); 2] = [("ru_RU.UTF-8", "Русский"), ("it_IT.UTF-8", "Italiano")];
 
 /// The new system's `/etc/locale.gen`: every locale of [`LANGUAGES`], then `chosen` when it is not
 /// one of them. Settings > Language & Region offers all of them, so all are generated at install;
@@ -101,19 +110,15 @@ pub fn language_of(locale: &str) -> &str {
 }
 
 /// Languages planned next: their translators' rules are written, they are not offered yet.
-pub const LATER: [(&str, &str); 5] = [
-    ("ko_KR.UTF-8", "한국어"),
-    ("id_ID.UTF-8", "Bahasa Indonesia"),
-    ("tl_PH.UTF-8", "Tagalog"),
-    ("nl_NL.UTF-8", "Nederlands"),
-    ("pl_PL.UTF-8", "Polski"),
-];
+pub const LATER: [(&str, &str); 2] = [("nl_NL.UTF-8", "Nederlands"), ("pl_PL.UTF-8", "Polski")];
 
 /// The code a translation table and its rules page use (`pt-BR.tsv`, `RULES-pt-BR.md`): the
-/// language of `locale`, with Brazilian Portuguese named apart from other Portuguese.
+/// language of `locale`, with Brazilian Portuguese named apart from other Portuguese and
+/// Simplified Chinese by its script (`zh_CN`, `zh_SG`: `zh-Hans`).
 pub fn translation_tag(locale: &str) -> &str {
     match locale.split('.').next().unwrap_or_default() {
         "pt_BR" => "pt-BR",
+        "zh_CN" | "zh_SG" => "zh-Hans",
         _ => language_of(locale),
     }
 }
@@ -217,11 +222,13 @@ mod tests {
         assert!(
             LANGUAGES
                 .iter()
+                .chain(DRAFTS.iter())
                 .chain(LATER.iter())
                 .all(|(l, _)| is_valid_locale(l))
         );
-        // A later language is not offered yet.
+        // A later language or a draft is not offered.
         assert!(LATER.iter().all(|l| !LANGUAGES.iter().any(|o| o.0 == l.0)));
+        assert!(DRAFTS.iter().all(|l| !LANGUAGES.iter().any(|o| o.0 == l.0)));
     }
 
     #[test]
@@ -237,11 +244,46 @@ mod tests {
         assert_eq!(translation_tag("pt_BR.UTF-8"), "pt-BR");
         assert_eq!(translation_tag("pt_PT.UTF-8"), "pt");
         assert_eq!(translation_tag("ja_JP.UTF-8"), "ja");
+        assert_eq!(translation_tag("zh_CN.UTF-8"), "zh-Hans");
+        assert_eq!(translation_tag("tl_PH.UTF-8"), "tl");
+    }
+
+    /// The pickers list exactly the languages `Lang` offers (English and the lead's nine), in its
+    /// order, each label the language's own name, each tag the name of its catalogue; the drafts
+    /// (ru, it) still map to their catalogue but are not offered.
+    #[test]
+    fn languages_are_the_offered_ones() {
+        use shared::i18n::Lang;
+        let picked: Vec<Option<Lang>> = LANGUAGES.iter().map(|l| Lang::from_posix(l.0)).collect();
+        let offered: Vec<Option<Lang>> = Lang::OFFERED.into_iter().map(Some).collect();
+        assert_eq!(picked, offered);
+        let tags: Vec<&str> = LANGUAGES.iter().map(|l| translation_tag(l.0)).collect();
+        assert_eq!(
+            tags,
+            [
+                "en", "pt-BR", "es", "fr", "de", "ja", "ko", "zh-Hans", "id", "tl"
+            ]
+        );
+        for (locale, label) in LANGUAGES {
+            let l = Lang::from_posix(locale).expect(locale);
+            assert_eq!(l.tag(), translation_tag(locale), "{locale}");
+            assert_eq!(
+                l.endonym().split(" (").next(),
+                label.split(" (").next(),
+                "{locale}"
+            );
+            assert!(l.offered(), "{locale}");
+        }
+        for (locale, _) in DRAFTS {
+            let l = Lang::from_posix(locale).expect(locale);
+            assert!(!l.offered(), "{locale} is a draft");
+        }
     }
 
     /// QA-ACC-16 / QA-L10N-8: the translators' rule pages (`docs/l10n/RULES-<tag>.md`) are exactly
-    /// the languages people can pick ([`LANGUAGES`]) plus the ones planned next ([`LATER`]): no
-    /// rules for a language no one can choose, no language offered without rules.
+    /// the languages people can pick ([`LANGUAGES`]), the drafts kept ([`DRAFTS`]) and the ones
+    /// planned next ([`LATER`]): no rules for a language no one translates, no language offered
+    /// without rules.
     #[test]
     fn rules_set_equals_languages() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/l10n");
@@ -252,10 +294,11 @@ mod tests {
             .collect();
         let listed: std::collections::BTreeSet<String> = LANGUAGES
             .iter()
+            .chain(DRAFTS.iter())
             .chain(LATER.iter())
             .map(|l| translation_tag(l.0).to_owned())
             .collect();
-        assert_eq!(rules, listed, "RULES-*.md vs LANGUAGES + LATER");
+        assert_eq!(rules, listed, "RULES-*.md vs LANGUAGES + DRAFTS + LATER");
         // The translators' guide lists the same pages.
         let guide = std::fs::read_to_string(dir.join("README.md")).expect("README.md");
         let linked: std::collections::BTreeSet<String> = guide
@@ -265,7 +308,7 @@ mod tests {
             .collect();
         assert_eq!(
             linked, listed,
-            "docs/l10n/README.md links vs LANGUAGES + LATER"
+            "docs/l10n/README.md links vs LANGUAGES + DRAFTS + LATER"
         );
     }
 
