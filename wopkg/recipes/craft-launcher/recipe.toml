@@ -1,0 +1,68 @@
+# Craft Suite (Store kit craft-suite, ADR 0032): ArtCraft Launcher, storytold's self-updating
+# launcher that installs, updates and opens the Craft apps (PhotoCraft, VectorCraft, PDFCraft,
+# WordCraft, DeckCraft, FilmCraft, SoundCraft, CADCraft, DesignCraft, FigCraft, EffectCraft,
+# LightCraft, MaterialCraft, TextureCraft, GridCraft and more). Pinned to one release: the Linux
+# x86_64 AppImage, the release's SHA256SUMS.txt, its OpenPGP signature and the release signing key
+# (ed25519, fingerprint 2B76 741B 414A AD6C D33E 6312 13A0 05C0 B9D7 C3ED, first published with
+# v0.14.1 by the release workflow; pinned here by sha256) are all fetched by sha256. The build
+# imports the key, checks its fingerprint, verifies SHA256SUMS.txt and the AppImage's own
+# signature, and checks the AppImage against SHA256SUMS.txt.
+# Installed as an AppImage for this account only (~/.local/bin/artcraft-launcher, no admin): run
+# as an AppImage, the launcher prefers AppImages for the Craft apps (into ~/Applications, menu
+# entries in ~/.local/share), never pacman through pkexec, and replaces its own AppImage on
+# "Update and restart" (vendor-checked, user-side: Software Update labels it "updates on its own").
+# Needs fusermount (fuse3) at run time. Licence: MIT OR Apache-2.0.
+name = "craft-launcher"
+version = "0.14.1"
+summary = "Craft Suite: installs, updates and opens the Craft creative apps"
+license = "MIT OR Apache-2.0"
+homepage = "https://github.com/storytold/craft-launcher"
+needs = ["gpg", "sha256sum", "grep"]
+
+[[source]]
+url = "https://github.com/storytold/craft-launcher/releases/download/v0.14.1/artcraft-launcher-0.14.1-linux-x86_64.AppImage"
+sha256 = "42c1ce85643919bc87daa3e2441d03b90f004a1682a35f25b95cbb98e5f075db"
+
+[[source]]
+url = "https://github.com/storytold/craft-launcher/releases/download/v0.14.1/artcraft-launcher-0.14.1-linux-x86_64.AppImage.asc"
+sha256 = "29b240bcc63030fbab097ace149042b96baa799ce062bcffe250a05923375d5a"
+
+[[source]]
+url = "https://github.com/storytold/craft-launcher/releases/download/v0.14.1/SHA256SUMS.txt"
+sha256 = "90273743c3a7c4c35abf6b6daa1630ca3afe8252e344f73cedfdf662824b2f47"
+
+[[source]]
+url = "https://github.com/storytold/craft-launcher/releases/download/v0.14.1/SHA256SUMS.txt.asc"
+sha256 = "7b665869761959f7aac9b5bf7474d0359b709fc0a1c063a441dede1d0bcf1f93"
+
+# The ArtCraft Linux release signing key, as published with the release.
+[[source]]
+url = "https://github.com/storytold/craft-launcher/releases/download/v0.14.1/release-signing-key.asc"
+sha256 = "8e6925a173d6a7134118da099948de4d9eeec7c1c0770998aec33c9d3f484740"
+file = "artcraft-release-key.asc"
+
+[build]
+run = [
+  "mkdir -m 700 gnupg",
+  "gpg --batch --homedir ./gnupg --import artcraft-release-key.asc",
+  "gpg --batch --homedir ./gnupg --list-keys 2B76741B414AAD6CD33E631213A005C0B9D7C3ED",
+  "gpg --batch --homedir ./gnupg --trust-model always --verify SHA256SUMS.txt.asc SHA256SUMS.txt",
+  "gpg --batch --homedir ./gnupg --trust-model always --verify artcraft-launcher-0.14.1-linux-x86_64.AppImage.asc artcraft-launcher-0.14.1-linux-x86_64.AppImage",
+  "grep -qx '42c1ce85643919bc87daa3e2441d03b90f004a1682a35f25b95cbb98e5f075db  artcraft-launcher-0.14.1-linux-x86_64.AppImage' SHA256SUMS.txt",
+  "echo '42c1ce85643919bc87daa3e2441d03b90f004a1682a35f25b95cbb98e5f075db  artcraft-launcher-0.14.1-linux-x86_64.AppImage' | sha256sum -c -",
+  "mkdir -p \"$PREFIX/bin\" \"$PREFIX/share/applications\" \"$PREFIX/share/icons/hicolor/scalable/apps\" \"$PREFIX/share/icons/hicolor/256x256/apps\"",
+  "cp artcraft-launcher-0.14.1-linux-x86_64.AppImage \"$PREFIX/bin/artcraft-launcher\"",
+  "chmod 755 \"$PREFIX/bin/artcraft-launcher\"",
+  "\"$PREFIX/bin/artcraft-launcher\" --appimage-extract 'usr/share/icons/hicolor/*/apps/ai.storyteller.artcraft-launcher.*'",
+  "cp squashfs-root/usr/share/icons/hicolor/scalable/apps/ai.storyteller.artcraft-launcher.svg \"$PREFIX/share/icons/hicolor/scalable/apps/\"",
+  "cp squashfs-root/usr/share/icons/hicolor/256x256/apps/ai.storyteller.artcraft-launcher.png \"$PREFIX/share/icons/hicolor/256x256/apps/\"",
+  "printf '%s\\n' '[Desktop Entry]' 'Type=Application' 'Name=Craft Launcher' 'GenericName=Craft Suite' 'Comment=Install, update and open the Craft creative apps' 'Icon=ai.storyteller.artcraft-launcher' 'Terminal=false' 'StartupNotify=true' 'StartupWMClass=ai.storyteller.artcraft-launcher' 'Categories=Graphics;Utility;' 'Keywords=craft;artcraft;photocraft;vectorcraft;filmcraft;launcher;' \"Exec=$TARGET_PREFIX/bin/artcraft-launcher\" > \"$PREFIX/share/applications/ai.storyteller.artcraft-launcher.desktop\"",
+]
+
+[install]
+# Everything is staged already; the AppImage, the icon and the menu entry must exist.
+run = [
+  "test -x \"$PREFIX/bin/artcraft-launcher\"",
+  "test -s \"$PREFIX/share/icons/hicolor/scalable/apps/ai.storyteller.artcraft-launcher.svg\"",
+  "grep -q '^Exec=/' \"$PREFIX/share/applications/ai.storyteller.artcraft-launcher.desktop\"",
+]
