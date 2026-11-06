@@ -93,7 +93,7 @@ jobs:
       WOLOS_RELEASES_TOKEN: ${{ secrets.WOLOS_RELEASES_TOKEN }}
   iso:
     if: inputs.what == 'iso'
-    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@9abbcee67c382434dccd864a8ceeeb1632b52a9d # fix/cve-0121 9abbcee (wolos-iso integration branch, journeys for the 0.13 boot layout 2026-11-05); bump after each wolos-iso push
+    uses: wonderlandos/wolos-iso/.github/workflows/release.yml@a08812fb8639805b99b518b79688de09cd2b0569 # fix/cve-0121 a08812f (wolos-iso integration branch, journeys for the 0.13 boot layout 2026-11-05); bump after each wolos-iso push
     with:
       tag: ${{ inputs.run }}
     secrets:
@@ -133,7 +133,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: wonderlandos/wolos-iso
-          ref: 9abbcee67c382434dccd864a8ceeeb1632b52a9d # fix/cve-0121 3678085; bump with the iso job's pin
+          ref: a08812fb8639805b99b518b79688de09cd2b0569 # fix/cve-0121 a08812f; bump with the iso job's pin
           path: wolos-iso
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
