@@ -81,6 +81,7 @@ Rule: prefer upstream ports + config over new code. The whole build picture: [`.
 | [0054](adr/0054-post-quantum-keyring.md) | Post-quantum local keyring: unlock factors, per-app access lists, signed audit chain, export and LAN move | proposed |
 | [0055](adr/0055-system-wide-tls-policy.md) | System-wide TLS policy: post-quantum hybrid by default | proposed |
 | [0056](adr/0056-wol-tor-system-tor-layer.md) | wol-tor: the Tor layer of the OS (Atlas tabs, chosen apps, the whole machine) | proposed |
+| [0062](adr/0062-atlas-own-interface.md) | Atlas draws its own interface with the WolOS Kit, inside the engine (own views over the engine's models; extensions, profiles and prefs stay the engine's) | proposed |
 
 ## Modules
 
