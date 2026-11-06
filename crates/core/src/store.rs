@@ -665,10 +665,13 @@ impl Kit {
         v
     }
 
-    /// `wopkg` arguments for a wopkg kit (`install <recipe>`), None for a packages kit.
+    /// `wopkg` arguments for a wopkg kit (`recipe install <recipe>`), None for a packages kit.
+    /// Straight to the recipe, never through the search index: an index built before the recipe
+    /// shipped resolves the name to a look-alike (the AUR's craft-launcher-bin), and `-y` never
+    /// answers for a community package, so the click did nothing and still exited 0.
     pub fn wopkg_args(&self) -> Option<Vec<String>> {
         match self.source {
-            KitSource::Wopkg(r) => Some(vec!["install".into(), r.into()]),
+            KitSource::Wopkg(r) => Some(vec!["recipe".into(), "install".into(), r.into()]),
             KitSource::Packages => None,
         }
     }
@@ -1000,7 +1003,11 @@ mod tests {
         assert_eq!(k.source, KitSource::Wopkg("craft-launcher"));
         assert_eq!(
             k.wopkg_args().unwrap(),
-            ["install".to_string(), "craft-launcher".into()]
+            [
+                "recipe".to_string(),
+                "install".into(),
+                "craft-launcher".into()
+            ]
         );
         assert!(k.packages().is_empty());
         // wol-admind never installs it: no system step for a user kit.
@@ -1036,6 +1043,22 @@ mod tests {
             ["/a", "/b", RECIPES_DIR].map(std::path::PathBuf::from)
         );
         assert_eq!(recipe_dirs(None), [std::path::PathBuf::from(RECIPES_DIR)]);
+    }
+
+    #[test]
+    fn the_shipped_recipes_show_the_craft_suite() {
+        // wopkg/recipes is what the wopkg package installs in /usr/share/wopkg/recipes.
+        let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../wopkg/recipes");
+        let ids: Vec<&str> = shown_kits(&[shipped.clone()])
+            .iter()
+            .map(|k| k.id)
+            .collect();
+        assert_eq!(ids, ["codecs-kit", "craft-suite"]);
+        let t = std::fs::read_to_string(shipped.join("craft-launcher/recipe.toml")).unwrap();
+        assert!(
+            t.contains("name = \"craft-launcher\""),
+            "the recipe is the kit's"
+        );
     }
 
     #[test]

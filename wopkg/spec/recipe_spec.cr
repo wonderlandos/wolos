@@ -55,6 +55,25 @@ describe Wopkg::Recipe do
     names.should contain("hvm")
     names.should contain("bend")
     names.should contain("zenc")
+    names.should contain("craft-launcher")
+  end
+
+  # The Store's Craft Suite kit (crates/core/src/store.rs, KitSource::Wopkg("craft-launcher")) is
+  # shown only when this recipe ships; it must stay a signed, pinned, user-side AppImage install.
+  it "craft-launcher installs the signed launcher AppImage for this account" do
+    r = Wopkg::Recipe.parse(File.read("#{__DIR__}/../recipes/craft-launcher/recipe.toml"))
+    r.name.should eq("craft-launcher")
+    r.sources.map(&.url).each(&.should(start_with("https://github.com/storytold/craft-launcher/releases/download/v#{r.version}/")))
+    r.sources.map(&.file).should contain("artcraft-launcher-#{r.version}-linux-x86_64.AppImage")
+    r.fetch.should be_empty
+    steps = r.build.join("\n")
+    steps.should contain("--list-keys 2B76741B414AAD6CD33E631213A005C0B9D7C3ED")
+    steps.should contain("--verify SHA256SUMS.txt.asc SHA256SUMS.txt")
+    steps.should contain("--verify artcraft-launcher-#{r.version}-linux-x86_64.AppImage.asc")
+    steps.should contain("sha256sum -c -")
+    steps.should_not contain("pkexec")
+    steps.should_not contain("sudo")
+    r.install.join("\n").should contain("$PREFIX/bin/artcraft-launcher")
   end
 
   it "installs build output atomically into a prefix" do
